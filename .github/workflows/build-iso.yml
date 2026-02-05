@@ -179,83 +179,88 @@ jobs:
           elif echo "$IMG_TYPE" | grep -qi "erofs"; then
             echo "Detected EROFS image"
 
-            # Strategy: try multiple extraction methods in order of reliability.
-            # 1. Kernel EROFS mount — most efficient; modern kernels (5.4+)
-            #    include EROFS support and the runner has ample RAM+swap.
-            # 2. erofsfuse (FUSE userspace mount) — fallback if kernel module
-            #    is unavailable.
-            # 3. fsck.erofs --extract — last resort, no mount required at all.
-            EROFS_MOUNT=""
-            EROFS_CLEANUP=""
+            # Strategy overview:
+            # Kernel EROFS mount is fine for *probing* (finding rootfs.img,
+            # copying one file).  But bulk "cp -a" of the entire rootfs from
+            # a kernel mount fills the page cache with decompressed data and
+            # gets OOM-killed on CI runners.
+            #
+            # So:
+            #  - Two-layer (inner rootfs.img): kernel mount to copy the single
+            #    file, then native ext4 mount of that file.
+            #  - Direct rootfs: fsck.erofs --extract (file-by-file, no mount)
+            #    or erofsfuse (userspace decompression, no page-cache pressure).
 
-            # --- Method 1: kernel EROFS mount ---
-            echo "Trying kernel EROFS mount..."
+            EROFS_EXTRACTED=false
+
+            # --- Probe with kernel mount for two-layer structure ---
             sudo modprobe erofs 2>/dev/null || true
             sudo mkdir -p /mnt/erofs-kernel
             if sudo mount -t erofs -o loop,ro "$LIVE_IMG" /mnt/erofs-kernel 2>&1; then
-              echo "Kernel EROFS mount succeeded"
-              EROFS_MOUNT=/mnt/erofs-kernel
-              EROFS_CLEANUP="sudo umount /mnt/erofs-kernel"
-            else
-              echo "Kernel EROFS mount failed (module may be missing)"
+              echo "Kernel EROFS mount succeeded — probing for inner rootfs.img..."
+              ROOTFS_IMG=$(sudo find /mnt/erofs-kernel -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1 || true)
 
-              # --- Method 2: erofsfuse ---
-              echo "Trying erofsfuse (FUSE)..."
-              sudo modprobe fuse 2>/dev/null || true
-              if [ ! -c /dev/fuse ]; then
-                echo "Creating /dev/fuse..."
-                sudo mknod /dev/fuse c 10 229 2>/dev/null || true
-                sudo chmod 666 /dev/fuse 2>/dev/null || true
-              fi
-              sudo mkdir -p /mnt/erofs-fuse
-              if sudo erofsfuse "$LIVE_IMG" /mnt/erofs-fuse 2>&1; then
-                echo "erofsfuse mount succeeded"
-                EROFS_MOUNT=/mnt/erofs-fuse
-                EROFS_CLEANUP="sudo fusermount -u /mnt/erofs-fuse"
+              if [ -n "$ROOTFS_IMG" ]; then
+                echo "Found inner rootfs.img: $ROOTFS_IMG"
+                ROOTFS_SIZE=$(sudo du -h "$ROOTFS_IMG" | cut -f1)
+                echo "rootfs.img size: $ROOTFS_SIZE"
+                sudo cp "$ROOTFS_IMG" /mnt/rootfs.img
+                sudo umount /mnt/erofs-kernel
+
+                echo "Mounting rootfs.img (ext4, native kernel mount)..."
+                sudo mkdir -p /mnt/rootfs-inner
+                sudo mount -o loop,ro /mnt/rootfs.img /mnt/rootfs-inner
+                copy_from_mount /mnt/rootfs-inner
+                sudo rm -f /mnt/rootfs.img
+                EROFS_EXTRACTED=true
               else
-                echo "erofsfuse failed"
+                echo "No inner rootfs.img — EROFS contains rootfs directly"
+                sudo umount /mnt/erofs-kernel
+                # Drop page cache from the probe mount to reclaim memory
+                echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
+              fi
+            else
+              echo "Kernel EROFS mount unavailable"
+            fi
 
-                # --- Method 3: fsck.erofs --extract ---
-                echo "Trying fsck.erofs --extract (no mount required)..."
-                sudo mkdir -p /mnt/erofs-extract
-                if sudo fsck.erofs --extract=/mnt/erofs-extract "$LIVE_IMG" 2>&1; then
-                  echo "fsck.erofs extraction succeeded"
-                  EROFS_MOUNT=/mnt/erofs-extract
-                  EROFS_CLEANUP=""
+            # --- Direct rootfs: extract without kernel mount to avoid OOM ---
+            if [ "$EROFS_EXTRACTED" = "false" ]; then
+              echo "Extracting full EROFS rootfs (kernel bulk-copy skipped to avoid OOM)..."
+
+              # Method A: fsck.erofs --extract (file-by-file, no mount needed)
+              if sudo fsck.erofs --extract=squashfs-root "$LIVE_IMG" 2>&1; then
+                echo "fsck.erofs --extract succeeded"
+                EROFS_EXTRACTED=true
+              else
+                echo "fsck.erofs --extract failed or unavailable"
+
+                # Method B: erofsfuse (userspace decompression — avoids kernel
+                # page-cache pressure that causes OOM with kernel mount)
+                echo "Trying erofsfuse + cp..."
+                sudo modprobe fuse 2>/dev/null || true
+                if [ ! -c /dev/fuse ]; then
+                  sudo mknod /dev/fuse c 10 229 2>/dev/null || true
+                  sudo chmod 666 /dev/fuse 2>/dev/null || true
+                fi
+                sudo mkdir -p /mnt/erofs-fuse
+                if sudo erofsfuse "$LIVE_IMG" /mnt/erofs-fuse 2>&1; then
+                  echo "erofsfuse mount succeeded, copying rootfs..."
+                  sudo cp -a /mnt/erofs-fuse/. squashfs-root/
+                  sudo fusermount -u /mnt/erofs-fuse
+                  EROFS_EXTRACTED=true
                 else
-                  echo "ERROR: All EROFS extraction methods failed"
-                  echo "--- diagnostics ---"
-                  echo "Kernel modules:" && lsmod | grep -iE "erofs|fuse" || echo "(none)"
-                  echo "/dev/fuse:" && ls -la /dev/fuse 2>&1 || echo "(missing)"
-                  echo "erofs-utils version:" && fsck.erofs --version 2>&1 || echo "(unknown)"
-                  echo "erofsfuse version:" && erofsfuse --version 2>&1 || echo "(unknown)"
-                  exit 1
+                  echo "erofsfuse also failed"
                 fi
               fi
             fi
 
-            # Look for the Fedora two-layer structure (outer EROFS wraps rootfs.img).
-            # sudo is required because the mounted EROFS contains root-owned files.
-            # "|| true" guards against set -e + pipefail killing the script when
-            # find encounters permission errors on restricted directories.
-            echo "Searching for inner rootfs.img in $EROFS_MOUNT ..."
-            ROOTFS_IMG=$(sudo find "$EROFS_MOUNT" -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1 || true)
-            if [ -n "$ROOTFS_IMG" ]; then
-              echo "Found inner rootfs.img: $ROOTFS_IMG"
-              ROOTFS_SIZE=$(sudo du -h "$ROOTFS_IMG" | cut -f1)
-              echo "rootfs.img size: $ROOTFS_SIZE"
-              sudo cp "$ROOTFS_IMG" /mnt/rootfs.img
-              [ -n "$EROFS_CLEANUP" ] && eval $EROFS_CLEANUP
-
-              echo "Mounting rootfs.img (ext4, native kernel mount)..."
-              sudo mkdir -p /mnt/rootfs-inner
-              sudo mount -o loop,ro /mnt/rootfs.img /mnt/rootfs-inner
-              copy_from_mount /mnt/rootfs-inner
-              sudo rm -f /mnt/rootfs.img
-            else
-              echo "EROFS contains rootfs directly, copying..."
-              sudo cp -a "$EROFS_MOUNT"/. squashfs-root/
-              [ -n "$EROFS_CLEANUP" ] && eval $EROFS_CLEANUP
+            if [ "$EROFS_EXTRACTED" = "false" ]; then
+              echo "ERROR: All EROFS extraction methods failed"
+              echo "--- diagnostics ---"
+              echo "Kernel modules:" && lsmod | grep -iE "erofs|fuse" || echo "(none)"
+              echo "/dev/fuse:" && ls -la /dev/fuse 2>&1 || echo "(missing)"
+              echo "erofs-utils version:" && fsck.erofs --version 2>&1 || echo "(unknown)"
+              exit 1
             fi
 
           elif echo "$IMG_TYPE" | grep -qiE "ext[234] filesystem"; then
