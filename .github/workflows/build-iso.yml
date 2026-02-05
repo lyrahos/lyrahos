@@ -113,8 +113,26 @@ jobs:
           fi
           free -h
 
+      # Cache the extracted rootfs to skip the slow 1.5hr FUSE extraction
+      # on subsequent builds. Key is based on Fedora ISO URL + workflow hash.
+      - name: Restore rootfs cache
+        id: rootfs-cache
+        uses: actions/cache@v4
+        with:
+          path: squashfs-root
+          key: rootfs-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
+
+      - name: Verify rootfs cache
+        if: steps.rootfs-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "Rootfs cache hit — skipping slow FUSE extraction"
+          echo "Cache contents:"
+          ls -la squashfs-root/ | head -20
+          echo "Rootfs size: $(du -sh squashfs-root/ | cut -f1)"
+
       # FIX #30: Robust rootfs extraction supporting SquashFS, ext4, and erofs
       - name: Extract rootfs
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           echo "Extracting rootfs from Live image..."
