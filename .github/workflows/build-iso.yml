@@ -335,6 +335,14 @@ jobs:
           echo "Root entries:"
           ls squashfs-root/ | head -20
 
+      # Save cache immediately after extraction so it persists even if later steps fail
+      - name: Save rootfs cache
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: squashfs-root
+          key: rootfs-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
+
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
         run: |
@@ -579,21 +587,53 @@ jobs:
           echo "Creating Lyrah OS ISO..."
           mkdir -p output
           ISO_NAME="Lyrah-OS-${{ steps.variant.outputs.version }}-${{ steps.variant.outputs.variant }}-x86_64.iso"
-          sudo xorriso -as mkisofs \
-            -o "output/$ISO_NAME" \
-            -V "Lyrah-OS-${{ steps.variant.outputs.version }}" \
-            -J -joliet-long -r \
-            -b isolinux/isolinux.bin \
-            -c isolinux/boot.cat \
-            -no-emul-boot \
-            -boot-load-size 4 \
-            -boot-info-table \
-            -eltorito-alt-boot \
-            -e images/efiboot.img \
-            -no-emul-boot \
-            -isohybrid-gpt-basdat \
-            iso-build/
-          sudo isohybrid --uefi "output/$ISO_NAME" || echo "isohybrid not available, skipping"
+
+          # Build xorriso arguments dynamically based on available boot files
+          XORRISO_ARGS=(
+            -o "output/$ISO_NAME"
+            -V "LyrahOS"
+            -J -joliet-long -r
+          )
+
+          # Check for BIOS boot (isolinux) — not present in newer UEFI-only Fedora ISOs
+          if [ -f iso-build/isolinux/isolinux.bin ]; then
+            echo "Found isolinux — enabling BIOS boot"
+            XORRISO_ARGS+=(
+              -b isolinux/isolinux.bin
+              -c isolinux/boot.cat
+              -no-emul-boot
+              -boot-load-size 4
+              -boot-info-table
+            )
+            HAS_BIOS=true
+          else
+            echo "No isolinux found — BIOS boot disabled"
+            HAS_BIOS=false
+          fi
+
+          # Check for UEFI boot
+          if [ -f iso-build/images/efiboot.img ]; then
+            echo "Found efiboot.img — enabling UEFI boot"
+            if [ "$HAS_BIOS" = "true" ]; then
+              XORRISO_ARGS+=(-eltorito-alt-boot)
+            fi
+            XORRISO_ARGS+=(
+              -e images/efiboot.img
+              -no-emul-boot
+              -isohybrid-gpt-basdat
+            )
+          else
+            echo "WARNING: No efiboot.img found — UEFI boot disabled"
+          fi
+
+          XORRISO_ARGS+=(iso-build/)
+
+          echo "Running xorriso with args: ${XORRISO_ARGS[*]}"
+          sudo xorriso -as mkisofs "${XORRISO_ARGS[@]}"
+
+          if [ "$HAS_BIOS" = "true" ]; then
+            sudo isohybrid --uefi "output/$ISO_NAME" || echo "isohybrid not available, skipping"
+          fi
           ls -lh output/
 
       - name: Verify ISO was created
