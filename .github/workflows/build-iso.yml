@@ -231,16 +231,32 @@ jobs:
                   echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
                 }
 
+                # Helper: copy a large directory by splitting into its children.
+                # Avoids multi-GB single copies that stall through FUSE.
+                fuse_copy_split() {
+                  local src_dir="$1" dst_dir="$2" label="$3"
+                  echo "  Copying $label (split into subdirectories)..."
+                  sudo mkdir -p "$dst_dir"
+                  for child in $(sudo ls -A "$src_dir"); do
+                    fuse_copy_entry "$src_dir/$child" "$dst_dir/" "$label/$child"
+                  done
+                  sudo chmod --reference="$src_dir" "$dst_dir" 2>/dev/null || true
+                  sudo chown --reference="$src_dir" "$dst_dir" 2>/dev/null || true
+                }
+
                 for name in $(sudo ls -A "$FUSE_MNT"); do
                   if [ "$name" = "usr" ]; then
-                    # /usr is ~3-4 GB — copying it as one unit through FUSE
-                    # takes 40+ min and times out.  Split into subdirectories.
+                    # /usr is ~3-4 GB — split into subdirectories, and further
+                    # split /usr/lib and /usr/share which are each ~1-2 GB.
                     echo "  Copying /usr (split into subdirectories)..."
                     sudo mkdir -p squashfs-root/usr
                     for subname in $(sudo ls -A "$FUSE_MNT/usr"); do
-                      fuse_copy_entry "$FUSE_MNT/usr/$subname" squashfs-root/usr/ "/usr/$subname"
+                      if [ "$subname" = "lib" ] || [ "$subname" = "lib64" ] || [ "$subname" = "share" ]; then
+                        fuse_copy_split "$FUSE_MNT/usr/$subname" "squashfs-root/usr/$subname" "/usr/$subname"
+                      else
+                        fuse_copy_entry "$FUSE_MNT/usr/$subname" squashfs-root/usr/ "/usr/$subname"
+                      fi
                     done
-                    # Preserve /usr directory attributes
                     sudo chmod --reference="$FUSE_MNT/usr" squashfs-root/usr 2>/dev/null || true
                     sudo chown --reference="$FUSE_MNT/usr" squashfs-root/usr 2>/dev/null || true
                   else
