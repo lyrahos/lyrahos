@@ -1,0 +1,26 @@
+---
+componentName: lyrah
+
+strings:
+    productName: Lyrah OS
+    shortProductName: Lyrah OS
+    version: 1.0.0
+    shortVersion: 1.0
+    versionedName: Lyrah OS 1.0.0
+    shortVersionedName: Lyrah OS 1.0
+    bootloaderEntryName: Lyrah OS
+    productUrl: https://github.com/lyrah-os/lyrah-os
+    supportUrl: https://github.com/lyrah-os/lyrah-os/issues
+    knownIssuesUrl: https://github.com/lyrah-os/lyrah-os/issues
+    releaseNotesUrl: https://github.com/lyrah-os/lyrah-os/releases
+
+images:
+    productLogo: "logo.svg"
+    productIcon: "logo.svg"
+
+slideshow: "show.qml"
+
+style:
+    sidebarBackground: "#0f1419"
+    sidebarText: "#ffffff"
+    sidebarTextSelect: "#3b82f6"

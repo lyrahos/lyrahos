@@ -1,0 +1,17 @@
+# Lyrah OS Luna Mode Blueprint
+# Packages specific to Luna Mode gaming session
+
+[extends]
+base = "lyrah-base.toml"
+
+[packages]
+include = [
+    "gamescope",
+    "luna-ui",
+    "steam",
+    "wine-staging",
+    "dxvk",
+    "vkd3d",
+    "protontricks",
+    "protonup-qt",
+]

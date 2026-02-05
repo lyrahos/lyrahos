@@ -1,0 +1,64 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+      branch:
+        description: 'Branch to release from'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - testing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Create tag
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a v${{ inputs.version }} -m "Release v${{ inputs.version }}"
+          git push origin v${{ inputs.version }}
+
+      - name: Trigger ISO build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build-iso.yml',
+              ref: 'v${{ inputs.version }}'
+            })
+
+      # FIX #18: Use non-deprecated release action
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: Lyrah OS v${{ inputs.version }}
+          body: |
+            ## Lyrah OS v${{ inputs.version }}
+
+            ### Download
+            ISO will be attached automatically when build completes.
+
+            ### Install
+            ```bash
+            sudo dd if=Lyrah-OS-*.iso of=/dev/sdX bs=4M status=progress
+            ```
+          draft: true
+          prerelease: ${{ inputs.branch != 'main' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

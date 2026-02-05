@@ -1,0 +1,19 @@
+FROM fedora:42
+
+# FIX #39: Include dev tools plus gaming basics
+RUN dnf install -y \
+    https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-42.noarch.rpm \
+    https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-42.noarch.rpm \
+    && dnf install -y \
+    @kde-desktop-environment \
+    @development-tools \
+    gamescope \
+    steam \
+    qt6-qtbase-devel \
+    qt6-qtdeclarative-devel \
+    SDL2-devel \
+    sqlite-devel \
+    cmake \
+    && dnf clean all
+
+RUN echo "Lyrah OS Dev" > /etc/fedora-release

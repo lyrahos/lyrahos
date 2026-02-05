@@ -1,0 +1,15 @@
+# Lyrah OS Desktop Mode Blueprint
+# Packages specific to KDE Plasma desktop session
+
+[extends]
+base = "lyrah-base.toml"
+
+[packages]
+include = [
+    "@kde-desktop-environment",
+    "dolphin",
+    "konsole",
+    "kate",
+    "spectacle",
+    "gwenview",
+]

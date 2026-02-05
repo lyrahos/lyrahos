@@ -1,0 +1,47 @@
+#!/bin/bash
+# /usr/bin/lyrah-configure-autologin
+# Configure auto-login to Luna Mode, Desktop Mode, or disable
+#
+# FIX #1: Use ${SUDO_USER:-$(whoami)} to get the real user, not root
+
+MODE=$1
+SDDM_CONF="/etc/sddm.conf.d/autologin.conf"
+ACTUAL_USER="${SUDO_USER:-$(whoami)}"
+
+case "$MODE" in
+    luna)
+        echo "Configuring auto-login to Luna Mode for user '$ACTUAL_USER'..."
+        cat > "$SDDM_CONF" << EOF
+[Autologin]
+User=$ACTUAL_USER
+Session=luna-mode
+Relogin=false
+EOF
+        echo "Auto-login set to Luna Mode"
+        ;;
+    desktop)
+        echo "Configuring auto-login to Desktop Mode for user '$ACTUAL_USER'..."
+        cat > "$SDDM_CONF" << EOF
+[Autologin]
+User=$ACTUAL_USER
+Session=plasma
+Relogin=false
+EOF
+        echo "Auto-login set to Desktop Mode"
+        ;;
+    none)
+        echo "Disabling auto-login..."
+        rm -f "$SDDM_CONF"
+        # Also remove any session override from mode switching
+        rm -f /etc/sddm.conf.d/next-session.conf
+        echo "Auto-login disabled"
+        ;;
+    *)
+        echo "Usage: sudo lyrah-configure-autologin [luna|desktop|none]"
+        echo ""
+        echo "  luna     - Auto-login to Luna Mode (gaming)"
+        echo "  desktop  - Auto-login to Desktop Mode (KDE Plasma)"
+        echo "  none     - Disable auto-login (show login screen)"
+        exit 1
+        ;;
+esac

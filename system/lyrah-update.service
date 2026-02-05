@@ -1,0 +1,13 @@
+[Unit]
+Description=Lyrah OS Update Check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# FIX #5: Correct path (was lyrah-update-check, should be lyrah-update)
+ExecStart=/usr/bin/lyrah-update --check-only
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

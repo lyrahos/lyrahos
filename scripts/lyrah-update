@@ -1,0 +1,82 @@
+#!/bin/bash
+# Lyrah OS Update Script
+
+set -e
+
+GITHUB_REPO="lyrah-os/lyrah-os"
+CURRENT_BRANCH=$(grep BRANCH /etc/lyrah-release 2>/dev/null | cut -d= -f2)
+CURRENT_VERSION=$(grep VERSION /etc/lyrah-release 2>/dev/null | cut -d= -f2)
+
+# FIX #41: Support --check-only flag for systemd timer (no TTY available)
+CHECK_ONLY=false
+if [ "$1" == "--check-only" ]; then
+    CHECK_ONLY=true
+    shift
+fi
+
+# Handle channel switching
+if [ "$1" == "--channel" ]; then
+    NEW_CHANNEL=$2
+    case $NEW_CHANNEL in
+        stable|main) sed -i 's/BRANCH=.*/BRANCH=main/' /etc/lyrah-release ;;
+        testing)     sed -i 's/BRANCH=.*/BRANCH=testing/' /etc/lyrah-release ;;
+        dev)         sed -i 's/BRANCH=.*/BRANCH=dev/' /etc/lyrah-release ;;
+        *)           echo "Valid channels: stable, testing, dev"; exit 1 ;;
+    esac
+    echo "Update channel switched to: $NEW_CHANNEL"
+    echo "Run 'lyrah-update' to check for updates on this channel."
+    exit 0
+fi
+
+UPDATE_BRANCH="${CURRENT_BRANCH:-main}"
+
+echo "Lyrah OS Update Check"
+echo "Current: $CURRENT_VERSION ($CURRENT_BRANCH)"
+echo "Checking for updates on $UPDATE_BRANCH channel..."
+
+# FIX #29: Proper error handling for curl failure
+LATEST_METADATA=$(curl -sf "https://raw.githubusercontent.com/$GITHUB_REPO/$UPDATE_BRANCH/update-metadata.json" 2>/dev/null)
+if [ -z "$LATEST_METADATA" ] || ! echo "$LATEST_METADATA" | jq -e . >/dev/null 2>&1; then
+    echo "Could not reach update server or received invalid response."
+    exit 1
+fi
+
+LATEST_VERSION=$(echo "$LATEST_METADATA" | jq -r '.version')
+LATEST_IMAGE=$(echo "$LATEST_METADATA" | jq -r '.image')
+
+if [ "$LATEST_VERSION" = "$CURRENT_VERSION" ]; then
+    echo "You are running the latest version"
+    exit 0
+fi
+
+echo "New update available: $LATEST_VERSION"
+
+# In check-only mode (systemd timer), just notify and exit
+if [ "$CHECK_ONLY" = true ]; then
+    notify-send "Lyrah OS Update Available" \
+        "Version $LATEST_VERSION is available. Run 'lyrah-update' to install." \
+        --icon=system-software-update 2>/dev/null || true
+    exit 0
+fi
+
+echo ""
+read -p "Do you want to update? (y/n) " -n 1 -r
+echo
+
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "Downloading update..."
+
+    if command -v rpm-ostree &> /dev/null; then
+        rpm-ostree rebase "ostree-unverified-image:docker://$LATEST_IMAGE"
+        echo "Update downloaded. Reboot to apply."
+    else
+        dnf upgrade --refresh -y
+        echo "Update installed."
+    fi
+
+    sed -i "s/VERSION=.*/VERSION=$LATEST_VERSION/" /etc/lyrah-release
+
+    notify-send "Lyrah OS Update" \
+        "Update to version $LATEST_VERSION complete. Please reboot to apply changes." \
+        --icon=system-software-update 2>/dev/null || true
+fi

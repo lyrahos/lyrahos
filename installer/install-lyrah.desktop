@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install Lyrah OS
+Comment=Install Lyrah OS to your hard drive
+Exec=sudo -E calamares
+Icon=calamares
+Terminal=false
+Categories=System;
+StartupNotify=true

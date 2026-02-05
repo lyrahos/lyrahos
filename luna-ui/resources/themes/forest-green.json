@@ -1,0 +1,23 @@
+{
+  "name": "Forest Green",
+  "version": "1.0",
+  "description": "Nature-inspired calming green theme",
+  "colors": {
+    "background": "#0f1a14",
+    "surface": "#1a2e22",
+    "primary": "#22c55e",
+    "secondary": "#16a34a",
+    "accent": "#86efac",
+    "textPrimary": "#ffffff",
+    "textSecondary": "#9ca3af",
+    "focus": "#22c55e",
+    "hover": "#1e3a2a",
+    "cardBackground": "#1a2e22"
+  },
+  "layout": {
+    "sidebarWidth": 220, "gridColumns": 4, "cardAspectRatio": "3:4",
+    "fontSize": { "small": 14, "medium": 16, "large": 24, "xlarge": 32 }
+  },
+  "effects": { "animations": true, "particles": false, "blur": true, "glow": true, "transitionSpeed": 200 },
+  "fonts": { "heading": "Exo 2", "body": "Inter", "ui": "Inter" }
+}

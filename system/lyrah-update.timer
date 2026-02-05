@@ -1,0 +1,11 @@
+[Unit]
+Description=Lyrah OS Update Check Timer
+After=network-online.target
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

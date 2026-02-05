@@ -1,0 +1,15 @@
+FROM fedora:42
+
+# FIX #39: Include essential packages matching main
+RUN dnf install -y \
+    https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-42.noarch.rpm \
+    https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-42.noarch.rpm \
+    && dnf install -y \
+    @kde-desktop-environment \
+    gamescope \
+    steam \
+    gamemode \
+    mangohud \
+    && dnf clean all
+
+RUN echo "Lyrah OS Testing" > /etc/fedora-release

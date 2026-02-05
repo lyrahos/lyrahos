@@ -1,0 +1,40 @@
+#!/bin/bash
+# Monitor for crashes and save logs with full context
+# FIX #13: Detect mode inside the loop so it stays correct after mode switches
+
+mkdir -p /var/log/lyrah/luna-mode/crashes
+mkdir -p /var/log/lyrah/desktop-mode/crashes
+mkdir -p /var/log/lyrah/unknown-mode/crashes
+
+journalctl -f -p err | while read line; do
+    if echo "$line" | grep -qi "crash\|panic\|segfault\|oops"; then
+        # Re-detect mode on each crash (FIX #13)
+        if pgrep -x "luna-ui" > /dev/null; then
+            MODE="luna"
+        elif pgrep -x "plasmashell" > /dev/null; then
+            MODE="desktop"
+        else
+            MODE="unknown"
+        fi
+
+        CRASH_DIR="/var/log/lyrah/${MODE}-mode/crashes"
+        mkdir -p "$CRASH_DIR"
+        crash_file="$CRASH_DIR/crash-$(date +%Y-%m-%d-%H-%M-%S).log"
+
+        {
+            echo "=== Crash Detected in $MODE Mode ==="
+            echo "Time: $(date)"
+            echo "Type: Kernel/System Error"
+            echo ""
+            echo "=== Journal Context (last 200 lines) ==="
+            journalctl -p err --no-pager -n 200
+            echo ""
+            echo "=== dmesg (last 100 lines) ==="
+            dmesg | tail -n 100
+        } > "$crash_file"
+
+        notify-send "Lyrah OS Crash Detected" \
+            "Crash log saved. Run 'lyrah-upload-log crash' to report." \
+            --urgency=critical 2>/dev/null || true
+    fi
+done

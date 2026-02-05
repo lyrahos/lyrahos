@@ -1,0 +1,13 @@
+# FIX #4: Use graphical.target instead of undefined luna-session.target
+[Unit]
+Description=Luna Mode Session Logger
+After=graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/luna-mode-session-start
+ExecStop=/usr/bin/luna-mode-session-stop
+
+[Install]
+WantedBy=graphical.target

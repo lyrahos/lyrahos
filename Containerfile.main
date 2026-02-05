@@ -1,0 +1,19 @@
+FROM fedora:42
+
+# FIX #10: Enable RPM Fusion before installing Steam and other non-Fedora packages
+RUN dnf install -y \
+    https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-42.noarch.rpm \
+    https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-42.noarch.rpm \
+    && dnf install -y \
+    @kde-desktop-environment \
+    gamescope \
+    steam \
+    gamemode \
+    mangohud \
+    && dnf clean all
+
+# NOTE: wine-staging requires the WineHQ repo; dxvk/vkd3d require Copr.
+# These will be available once the lyrah/lyrah-os Copr repo is set up.
+# RUN dnf copr enable lyrah/lyrah-os -y && dnf install -y luna-ui wine-staging dxvk vkd3d
+
+RUN echo "Lyrah OS" > /etc/fedora-release

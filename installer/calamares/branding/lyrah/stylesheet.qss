@@ -1,0 +1,36 @@
+/* Lyrah OS Installer Stylesheet */
+
+QWidget {
+    background-color: #0f1419;
+    color: #ffffff;
+    font-family: "Inter", sans-serif;
+}
+
+QPushButton {
+    background-color: #3b82f6;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
+QPushButton:hover {
+    background-color: #2563eb;
+}
+
+QLineEdit {
+    background-color: #1a1f2e;
+    color: #ffffff;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 6px;
+}
+
+QComboBox {
+    background-color: #1a1f2e;
+    color: #ffffff;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 6px;
+}

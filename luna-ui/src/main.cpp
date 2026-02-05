@@ -1,0 +1,49 @@
+#include <QGuiApplication>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QTimer>
+#include "thememanager.h"
+#include "gamemanager.h"
+#include "database.h"
+#include "controllermanager.h"
+
+int main(int argc, char *argv[]) {
+    QGuiApplication app(argc, argv);
+    app.setApplicationName("Luna UI");
+    app.setOrganizationName("Lyrah OS");
+
+    Database db;
+    if (!db.initialize()) {
+        qCritical() << "Failed to initialize database!";
+        return 1;
+    }
+
+    ThemeManager themeManager;
+    GameManager gameManager(&db);
+    ControllerManager controllerManager;
+    controllerManager.initialize();
+
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
+    engine.rootContext()->setContextProperty("GameManager", &gameManager);
+    engine.rootContext()->setContextProperty("ControllerManager", &controllerManager);
+
+    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+
+    if (engine.rootObjects().isEmpty())
+        return -1;
+
+    // Poll controller input at 60Hz
+    QTimer controllerTimer;
+    QObject::connect(&controllerTimer, &QTimer::timeout, [&]() {
+        controllerManager.pollEvents();
+    });
+    controllerTimer.start(16); // ~60fps
+
+    // Initial game library scan (background)
+    QTimer::singleShot(500, [&]() {
+        gameManager.scanAllStores();
+    });
+
+    return app.exec();
+}

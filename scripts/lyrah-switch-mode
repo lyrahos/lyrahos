@@ -1,0 +1,49 @@
+#!/bin/bash
+# /usr/bin/lyrah-switch-mode
+# Switch between Luna Mode and Desktop Mode without reboot
+#
+# FIX #2: Use kquitapp6 for KDE Plasma 6 (not kquitapp5)
+# FIX #3: Use SDDM restart with session override instead of undefined systemd targets
+
+MODE=$1
+SDDM_OVERRIDE="/etc/sddm.conf.d/next-session.conf"
+
+if [ "$MODE" == "luna" ]; then
+    # Set next SDDM session to Luna Mode
+    sudo bash -c "cat > $SDDM_OVERRIDE << EOF
+[Autologin]
+User=${SUDO_USER:-$(whoami)}
+Session=luna-mode
+Relogin=false
+EOF"
+
+    # Gracefully close KDE Plasma 6
+    kquitapp6 plasmashell 2>/dev/null
+
+    # Terminate current session and restart SDDM (will auto-login to Luna)
+    loginctl terminate-session "$XDG_SESSION_ID" 2>/dev/null
+    sudo systemctl restart sddm
+
+elif [ "$MODE" == "desktop" ]; then
+    # Set next SDDM session to Desktop Mode
+    sudo bash -c "cat > $SDDM_OVERRIDE << EOF
+[Autologin]
+User=${SUDO_USER:-$(whoami)}
+Session=plasma
+Relogin=false
+EOF"
+
+    # Gracefully close Luna UI
+    killall luna-ui 2>/dev/null
+
+    # Terminate session and restart SDDM
+    loginctl terminate-session "$XDG_SESSION_ID" 2>/dev/null
+    sudo systemctl restart sddm
+
+else
+    echo "Usage: lyrah-switch-mode [luna|desktop]"
+    echo ""
+    echo "  luna     - Switch to Luna Mode (gaming session)"
+    echo "  desktop  - Switch to Desktop Mode (KDE Plasma)"
+    exit 1
+fi

@@ -1,0 +1,21 @@
+# Lyrah OS Base Blueprint
+# Common packages and configuration for all variants
+
+[packages]
+include = [
+    "kernel",
+    "grub2-efi-x64",
+    "NetworkManager",
+    "pipewire",
+    "wireplumber",
+    "sddm",
+    "gamemode",
+    "mangohud",
+]
+
+[services]
+enable = [
+    "sddm",
+    "NetworkManager",
+    "pipewire",
+]

@@ -1,0 +1,12 @@
+[Unit]
+Description=Lyrah OS Crash Monitor
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lyrah-crash-monitor
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

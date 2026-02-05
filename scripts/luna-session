@@ -1,0 +1,23 @@
+#!/bin/bash
+# Luna Mode Session Launcher
+# Starts gamescope with Luna UI (no KDE)
+#
+# NOTE (FIX #31): Targets gamescope 3.14+ (Fedora 42).
+# Verify flags against installed version: gamescope --help
+
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=gamescope
+export QT_QPA_PLATFORM=wayland
+
+# Wine/DXVK environment variables (system-wide for all Windows games)
+# FIX #37: Don't force FPS HUD on all apps. Let users enable per-game.
+export DXVK_LOG_LEVEL=none
+export VKD3D_CONFIG=dxr
+
+# Start gamescope in fullscreen
+exec gamescope \
+  --adaptive-sync \
+  --hdr-enabled \
+  --force-grab-cursor \
+  --fullscreen \
+  -- /usr/bin/luna-ui

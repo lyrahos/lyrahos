@@ -1,0 +1,23 @@
+{
+  "name": "Sunset Orange",
+  "version": "1.0",
+  "description": "Warm orange/red gradients",
+  "colors": {
+    "background": "#1a0f0a",
+    "surface": "#2e1a10",
+    "primary": "#f97316",
+    "secondary": "#ea580c",
+    "accent": "#fdba74",
+    "textPrimary": "#ffffff",
+    "textSecondary": "#9ca3af",
+    "focus": "#f97316",
+    "hover": "#3a1f0e",
+    "cardBackground": "#2e1a10"
+  },
+  "layout": {
+    "sidebarWidth": 220, "gridColumns": 4, "cardAspectRatio": "3:4",
+    "fontSize": { "small": 14, "medium": 16, "large": 24, "xlarge": 32 }
+  },
+  "effects": { "animations": true, "particles": false, "blur": true, "glow": true, "transitionSpeed": 200 },
+  "fonts": { "heading": "Exo 2", "body": "Inter", "ui": "Inter" }
+}

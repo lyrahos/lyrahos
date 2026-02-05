@@ -1,0 +1,43 @@
+name: Test ISO
+
+on:
+  workflow_run:
+    workflows: ["Build Lyrah OS ISO"]
+    types: [completed]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      # FIX #17: Use run-id for workflow_run artifact downloads
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: lyrah-os-*
+          merge-multiple: true
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Test ISO boot
+        run: |
+          ISO_FILE=$(ls *.iso | head -1)
+          timeout 90s qemu-system-x86_64 \
+            -m 2048 -smp 2 \
+            -cdrom "$ISO_FILE" \
+            -display none \
+            -serial stdio &
+          QEMU_PID=$!
+          sleep 60
+          if ps -p $QEMU_PID > /dev/null 2>&1; then
+            echo "ISO boots successfully"
+            kill $QEMU_PID 2>/dev/null || true
+          else
+            echo "Boot failed"
+            exit 1
+          fi

@@ -1,0 +1,104 @@
+# Lyrah OS Plymouth Boot Theme
+# All graphics drawn procedurally - no external image files needed
+
+# Background: deep space gradient
+Window.SetBackgroundTopColor(0.06, 0.08, 0.10);
+Window.SetBackgroundBottomColor(0.02, 0.03, 0.06);
+
+# --- Draw the Lyrah OS logo as a procedural glyph ---
+# We create a 256x256 image and draw a stylized "L" inside a hexagonal ring
+# using Plymouth's pixel-level drawing API.
+
+logo_image = Image(256, 256);
+
+# Helper: draw a filled circle via bounding-box pixel test
+fun draw_circle(img, cx, cy, r, red, green, blue, alpha) {
+    for (y = cy - r; y <= cy + r; y++) {
+        for (x = cx - r; x <= cx + r; x++) {
+            dx = x - cx;
+            dy = y - cy;
+            dist = Math.Sqrt(dx * dx + dy * dy);
+            if (dist <= r) {
+                img.SetPixel(x, y, red, green, blue, alpha);
+            }
+        }
+    }
+}
+
+# Helper: draw a ring (filled circle minus inner circle)
+fun draw_ring(img, cx, cy, outer_r, inner_r, red, green, blue, alpha) {
+    for (y = cy - outer_r; y <= cy + outer_r; y++) {
+        for (x = cx - outer_r; x <= cx + outer_r; x++) {
+            dx = x - cx;
+            dy = y - cy;
+            dist = Math.Sqrt(dx * dx + dy * dy);
+            if (dist <= outer_r && dist >= inner_r) {
+                img.SetPixel(x, y, red, green, blue, alpha);
+            }
+        }
+    }
+}
+
+# Helper: draw a filled rectangle
+fun draw_rect(img, rx, ry, rw, rh, red, green, blue, alpha) {
+    for (y = ry; y < ry + rh; y++) {
+        for (x = rx; x < rx + rw; x++) {
+            img.SetPixel(x, y, red, green, blue, alpha);
+        }
+    }
+}
+
+# Outer ring - secondary purple (#8b5cf6 = 0.545, 0.361, 0.965)
+draw_ring(logo_image, 128, 128, 110, 96, 0.545, 0.361, 0.965, 1.0);
+
+# Inner glow ring - primary blue (#3b82f6 = 0.231, 0.510, 0.965)
+draw_ring(logo_image, 128, 128, 98, 92, 0.231, 0.510, 0.965, 0.6);
+
+# Stylized "L" letterform inside the ring
+# Vertical stroke
+draw_rect(logo_image, 100, 72, 18, 112, 1.0, 1.0, 1.0, 1.0);
+# Horizontal stroke
+draw_rect(logo_image, 100, 166, 72, 18, 1.0, 1.0, 1.0, 1.0);
+
+# Accent dot - cyan (#06b6d4 = 0.024, 0.714, 0.831)
+draw_circle(logo_image, 166, 80, 12, 0.024, 0.714, 0.831, 1.0);
+
+# Position the logo centered on screen
+logo_sprite = Sprite(logo_image);
+logo_sprite.SetX(Window.GetWidth() / 2 - 128);
+logo_sprite.SetY(Window.GetHeight() / 2 - 160);
+
+# --- Procedural spinner: orbiting dots ---
+# Create 8 small dot images at varying opacity for the spinner trail
+
+spinner_dots = [];
+spinner_count = 8;
+spinner_radius = 40;
+
+for (i = 0; i < spinner_count; i++) {
+    dot_img = Image(12, 12);
+    opacity = (i + 1) / spinner_count;
+    draw_circle(dot_img, 6, 6, 5, 0.231, 0.510, 0.965, opacity);
+    spinner_dots[i] = Sprite(dot_img);
+    spinner_dots[i].SetZ(1000);
+}
+
+# Animation state
+angle = 0;
+
+fun refresh_callback() {
+    global.angle += 0.06;
+
+    center_x = Window.GetWidth() / 2;
+    center_y = Window.GetHeight() / 2 + 80;
+
+    for (i = 0; i < global.spinner_count; i++) {
+        a = global.angle - (i * 0.785);  # 2*PI/8 ≈ 0.785 spacing
+        x = center_x + global.spinner_radius * Math.Cos(a) - 6;
+        y = center_y + global.spinner_radius * Math.Sin(a) - 6;
+        global.spinner_dots[i].SetX(x);
+        global.spinner_dots[i].SetY(y);
+    }
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);

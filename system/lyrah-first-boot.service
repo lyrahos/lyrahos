@@ -1,0 +1,12 @@
+[Unit]
+Description=Lyrah OS First Boot Setup
+After=graphical.target
+ConditionPathExists=!/var/lib/lyrah/.first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/lyrah/setup/first-boot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

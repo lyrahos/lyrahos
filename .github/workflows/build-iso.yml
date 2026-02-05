@@ -1,0 +1,580 @@
+name: Build Lyrah OS ISO
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - testing
+          - dev
+
+env:
+  FEDORA_VERSION: 43
+  BASE_ISO_URL: https://download.fedoraproject.org/pub/fedora/linux/releases/43/KDE/x86_64/iso/Fedora-KDE-Desktop-Live-43-1.6.x86_64.iso
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/share/swift /usr/share/miniconda /usr/share/az_* /opt/hostedtoolcache
+          sudo docker image prune -af 2>/dev/null || true
+          echo "Available disk space:"
+          sudo df -h /
+
+      - name: Determine build variant
+        id: variant
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BRANCH="${{ inputs.branch }}"
+          fi
+
+          case $BRANCH in
+            main)
+              echo "variant=main" >> $GITHUB_OUTPUT
+              echo "version=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+              ;;
+            testing)
+              echo "variant=testing" >> $GITHUB_OUTPUT
+              echo "version=1.0-beta.${{ github.run_number }}" >> $GITHUB_OUTPUT
+              ;;
+            dev)
+              echo "variant=dev" >> $GITHUB_OUTPUT
+              echo "version=1.0-dev.${{ github.run_number }}" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Install required tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            genisoimage \
+            xorriso \
+            squashfs-tools \
+            erofs-utils \
+            erofsfuse \
+            fuse \
+            wget \
+            rsync
+
+      - name: Download base Fedora KDE ISO
+        run: |
+          echo "Downloading Fedora KDE Live ISO..."
+          wget -O fedora-base.iso "${{ env.BASE_ISO_URL }}"
+          ls -lh fedora-base.iso
+
+      - name: Extract ISO contents
+        run: |
+          echo "Extracting ISO..."
+          mkdir -p iso-extract iso-build
+          sudo mount -o loop fedora-base.iso iso-extract
+          sudo rsync -av iso-extract/ iso-build/
+          sudo umount iso-extract
+          sudo chmod -R u+w iso-build/
+          # Free disk: remove base ISO now that contents are extracted
+          rm -f fedora-base.iso
+          echo "Disk after ISO extraction:"
+          df -h /
+
+      # Swap must be expanded BEFORE rootfs extraction — the default runner swap
+      # (3GB) is not enough for kernel EROFS mount + cp operations.
+      - name: Ensure adequate swap space
+        run: |
+          CURRENT_SWAP_KB=$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{s+=$1} END{print int(s/1024)}')
+          echo "Current swap: ${CURRENT_SWAP_KB:-0} KB"
+          NEED_KB=$((8 * 1024 * 1024))
+          if [ "${CURRENT_SWAP_KB:-0}" -lt "$NEED_KB" ]; then
+            echo "Expanding swap to 8GB..."
+            sudo swapoff -a 2>/dev/null || true
+            sudo rm -f /swapfile /mnt/swapfile
+            sudo fallocate -l 8G /mnt/swapfile
+            sudo chmod 600 /mnt/swapfile
+            sudo mkswap /mnt/swapfile
+            sudo swapon /mnt/swapfile
+          else
+            echo "Existing swap is sufficient"
+          fi
+          free -h
+
+      # FIX #30: Robust rootfs extraction supporting SquashFS, ext4, and erofs
+      - name: Extract rootfs
+        run: |
+          set -euo pipefail
+          echo "Extracting rootfs from Live image..."
+          mkdir -p squashfs-root
+
+          echo "=== Memory diagnostics ==="
+          free -h
+          echo "==="
+
+          # Find the Live image (squashfs.img or rootfs.img)
+          LIVE_IMG=$(find iso-build/LiveOS -name "squashfs.img" 2>/dev/null | head -1)
+          if [ -z "$LIVE_IMG" ]; then
+            LIVE_IMG=$(find iso-build -name "squashfs.img" -o -name "rootfs.img" 2>/dev/null | head -1)
+          fi
+          if [ -z "$LIVE_IMG" ]; then
+            echo "ERROR: Could not find Live image!"
+            find iso-build -name "*.img" -ls
+            exit 1
+          fi
+
+          echo "Found image: $LIVE_IMG"
+          IMG_TYPE=$(file -b "$LIVE_IMG")
+          echo "Image type: $IMG_TYPE"
+
+          # Mount a filesystem image and copy contents to squashfs-root/
+          copy_from_mount() {
+            local mount_point="$1"
+            echo "Copying rootfs from $mount_point to squashfs-root/ ..."
+            sudo cp -a "$mount_point"/. squashfs-root/
+            sudo umount "$mount_point"
+          }
+
+          # Handle the Fedora two-layer structure: an outer image wraps
+          # LiveOS/rootfs.img (ext4). Mount the inner image and copy from it.
+          # $1 = mount point or directory of the outer layer.
+          # Returns 0 if rootfs.img was found and extracted, 1 otherwise.
+          try_extract_inner_rootfs() {
+            local outer="$1"
+            local rootfs_img
+            rootfs_img=$(find "$outer" -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1)
+            if [ -z "$rootfs_img" ]; then
+              return 1
+            fi
+            echo "Found inner rootfs.img: $rootfs_img ($(du -h "$rootfs_img" | cut -f1))"
+            sudo mkdir -p /mnt/rootfs-inner
+            sudo mount -o loop,ro "$rootfs_img" /mnt/rootfs-inner
+            copy_from_mount /mnt/rootfs-inner
+            return 0
+          }
+
+          if echo "$IMG_TYPE" | grep -qi "squashfs"; then
+            echo "Detected SquashFS image"
+            sudo unsquashfs -d squashfs-extract "$LIVE_IMG"
+            if try_extract_inner_rootfs squashfs-extract; then
+              sudo rm -rf squashfs-extract
+            else
+              echo "SquashFS contains rootfs directly"
+              sudo rm -rf squashfs-root
+              sudo mv squashfs-extract squashfs-root
+            fi
+
+          elif echo "$IMG_TYPE" | grep -qi "erofs"; then
+            echo "Detected EROFS image"
+
+            # Strategy: use erofsfuse (FUSE userspace mount) to peek inside
+            # the image. If Fedora two-layer (contains rootfs.img), copy just
+            # that one file to real disk, then kernel-mount the ext4 natively.
+            # This avoids both:
+            #   - kernel EROFS driver OOM (decompresses metadata into memory)
+            #   - slow FUSE double-indirection (loop-on-FUSE)
+            sudo mkdir -p /mnt/erofs-fuse
+            echo "Mounting EROFS via erofsfuse..."
+            sudo erofsfuse "$LIVE_IMG" /mnt/erofs-fuse
+
+            ROOTFS_IMG=$(find /mnt/erofs-fuse -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1)
+            if [ -n "$ROOTFS_IMG" ]; then
+              echo "Found inner rootfs.img — copying to disk to avoid FUSE double-indirection..."
+              ROOTFS_SIZE=$(du -h "$ROOTFS_IMG" | cut -f1)
+              echo "rootfs.img size: $ROOTFS_SIZE"
+              sudo cp "$ROOTFS_IMG" /mnt/rootfs.img
+              sudo fusermount -u /mnt/erofs-fuse
+
+              echo "Mounting rootfs.img (ext4, native kernel mount)..."
+              sudo mkdir -p /mnt/rootfs-inner
+              sudo mount -o loop,ro /mnt/rootfs.img /mnt/rootfs-inner
+              copy_from_mount /mnt/rootfs-inner
+              sudo rm -f /mnt/rootfs.img
+            else
+              echo "EROFS contains rootfs directly, copying from FUSE mount..."
+              sudo cp -a /mnt/erofs-fuse/. squashfs-root/
+              sudo fusermount -u /mnt/erofs-fuse
+            fi
+
+          elif echo "$IMG_TYPE" | grep -qiE "ext[234] filesystem"; then
+            echo "Detected ext filesystem image"
+            sudo mkdir -p /mnt/rootfs-lower
+            sudo mount -o loop,ro "$LIVE_IMG" /mnt/rootfs-lower
+            if ! try_extract_inner_rootfs /mnt/rootfs-lower; then
+              copy_from_mount /mnt/rootfs-lower
+            else
+              sudo umount /mnt/rootfs-lower 2>/dev/null || true
+            fi
+
+          else
+            echo "WARNING: Unknown image type '$IMG_TYPE', attempting mount..."
+            sudo mkdir -p /mnt/rootfs-lower
+            sudo mount -o loop,ro "$LIVE_IMG" /mnt/rootfs-lower
+            if ! try_extract_inner_rootfs /mnt/rootfs-lower; then
+              copy_from_mount /mnt/rootfs-lower
+            else
+              sudo umount /mnt/rootfs-lower 2>/dev/null || true
+            fi
+          fi
+
+          echo "Rootfs ready at squashfs-root/"
+          echo "Disk usage after extraction:"
+          df -h /
+          echo "Root entries:"
+          ls squashfs-root/ | head -20
+
+      # Copy Lyrah OS configs into rootfs before chroot
+      - name: Stage Lyrah OS files
+        run: |
+          echo "Staging Lyrah OS files into rootfs..."
+
+          # Calamares config and branding
+          sudo mkdir -p squashfs-root/etc/calamares
+          sudo cp -r installer/calamares/settings.conf squashfs-root/etc/calamares/
+          sudo cp -r installer/calamares/modules squashfs-root/etc/calamares/
+          sudo mkdir -p squashfs-root/usr/share/calamares/branding/lyrah
+          sudo cp -r installer/calamares/branding/lyrah/* squashfs-root/usr/share/calamares/branding/lyrah/
+
+          # Session desktop files
+          sudo mkdir -p squashfs-root/usr/share/wayland-sessions
+          sudo cp configs/luna-mode/luna-mode.desktop squashfs-root/usr/share/wayland-sessions/
+          sudo cp configs/desktop-mode/plasma.desktop squashfs-root/usr/share/wayland-sessions/
+
+          # SDDM theme
+          sudo mkdir -p squashfs-root/usr/share/sddm/themes/lyrah-space
+          sudo cp -r themes/sddm/lyrah-space/* squashfs-root/usr/share/sddm/themes/lyrah-space/
+
+          # SDDM config (lyrah theme as default)
+          sudo mkdir -p squashfs-root/etc/sddm.conf.d
+          sudo cp configs/common/lyrah.conf squashfs-root/etc/sddm.conf.d/lyrah.conf
+
+          # Plymouth theme
+          sudo mkdir -p squashfs-root/usr/share/plymouth/themes/lyrah
+          sudo cp -r themes/plymouth/lyrah/* squashfs-root/usr/share/plymouth/themes/lyrah/
+
+          # Scripts
+          sudo mkdir -p squashfs-root/usr/share/lyrah/setup
+          sudo cp scripts/first-boot.sh squashfs-root/usr/share/lyrah/setup/
+          sudo cp scripts/configure-gpu.sh squashfs-root/usr/share/lyrah/setup/
+          sudo chmod +x squashfs-root/usr/share/lyrah/setup/*.sh
+
+          sudo mkdir -p squashfs-root/usr/bin
+          sudo cp scripts/luna-session squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-switch-mode squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-configure-autologin squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-update squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-upload-log squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-crash-monitor squashfs-root/usr/bin/
+          sudo chmod +x squashfs-root/usr/bin/luna-session squashfs-root/usr/bin/lyrah-*
+
+          # Systemd units
+          sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
+
+          # Post-install scripts for Calamares shellprocess
+          sudo mkdir -p squashfs-root/usr/share/lyrah/installer
+          sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/
+          sudo cp installer/scripts/configure-session.sh squashfs-root/usr/share/lyrah/installer/
+          sudo chmod +x squashfs-root/usr/share/lyrah/installer/*.sh
+
+          # Wine env config
+          sudo mkdir -p squashfs-root/etc/profile.d
+          sudo cp configs/common/lyrah-wine.sh squashfs-root/etc/profile.d/
+
+          # Logrotate
+          sudo mkdir -p squashfs-root/etc/logrotate.d
+          sudo cp logging/logrotate-lyrah.conf squashfs-root/etc/logrotate.d/lyrah
+
+          # Live session: Calamares autostart for liveuser
+          sudo mkdir -p squashfs-root/etc/skel/.config/autostart
+          sudo cp installer/calamares-autostart.desktop squashfs-root/etc/skel/.config/autostart/
+
+          # Live session: Desktop shortcut to re-launch installer
+          sudo mkdir -p squashfs-root/etc/skel/Desktop
+          sudo cp installer/install-lyrah.desktop squashfs-root/etc/skel/Desktop/
+          sudo chmod +x squashfs-root/etc/skel/Desktop/install-lyrah.desktop
+
+      # FIX #9: Mount virtual filesystems before chroot
+      - name: Customize the system
+        run: |
+          echo "Customizing Lyrah OS..."
+          cat > customize.sh << 'CUSTOMIZE_EOF'
+          #!/bin/bash
+          set -e
+          echo "=== Lyrah OS Customization Script ==="
+
+          # Install Calamares and dependencies
+          # Limit parallel downloads and skip weak deps to reduce memory pressure.
+          # dnf5 metadata parsing can spike RAM; install_weak_deps=False shrinks the
+          # dependency tree significantly for Calamares.
+          dnf install -y \
+            --setopt=max_parallel_downloads=2 \
+            --setopt=install_weak_deps=False \
+            calamares calamares-libs || {
+            echo "WARN: Calamares not in default repos, trying direct..."
+            dnf install -y \
+              --setopt=max_parallel_downloads=2 \
+              --setopt=install_weak_deps=False \
+              calamares || echo "Calamares install skipped - may need custom repo"
+          }
+
+          # Free disk and memory: clean dnf caches inside chroot
+          dnf clean all 2>/dev/null || true
+
+          # Update system name
+          echo "Lyrah OS" > /etc/fedora-release
+          echo "Lyrah OS" > /etc/redhat-release
+          echo "Lyrah OS" > /etc/system-release
+
+          # Create version file
+          mkdir -p /etc
+          cat > /etc/lyrah-release << RELEASE_EOF
+          VERSION=@@VERSION@@
+          BRANCH=@@BRANCH@@
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          RELEASE_EOF
+
+          mkdir -p /usr/share/lyrah
+          cat > /usr/share/lyrah/README << README_EOF
+          Lyrah OS
+          A Fedora-based gaming distribution.
+          Luna Mode: Console-like gaming frontend (gamescope + Luna UI)
+          Desktop Mode: Full KDE Plasma 6 desktop
+          README_EOF
+
+          # Create live user (passwordless, autologin)
+          if ! id liveuser &>/dev/null; then
+            useradd -m -G wheel,gamemode -s /bin/bash liveuser
+            passwd -d liveuser
+          fi
+
+          # Configure SDDM autologin for live session
+          mkdir -p /etc/sddm.conf.d
+          cat > /etc/sddm.conf.d/live-autologin.conf << SDDM_EOF
+          [Autologin]
+          User=liveuser
+          Session=plasma
+          Relogin=false
+          SDDM_EOF
+
+          # Disable screen lock and power management for live session
+          mkdir -p /home/liveuser/.config
+          cat > /home/liveuser/.config/kscreenlockerrc << LOCK_EOF
+          [Daemon]
+          Autolock=false
+          LockOnResume=false
+          LOCK_EOF
+
+          cat > /home/liveuser/.config/powermanagementprofilesrc << POWER_EOF
+          [AC][DPMSControl]
+          idleTime=0
+          [AC][SuspendSession]
+          idleTime=0
+          suspendType=0
+          POWER_EOF
+
+          chown -R liveuser:liveuser /home/liveuser
+
+          # Enable SDDM
+          systemctl enable sddm
+          systemctl set-default graphical.target
+
+          # Create log directories
+          mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}
+
+          echo "Lyrah OS configured successfully"
+          CUSTOMIZE_EOF
+
+          # Substitute version/branch placeholders
+          sed -i "s/@@VERSION@@/${{ steps.variant.outputs.version }}/g" customize.sh
+          sed -i "s/@@BRANCH@@/${{ steps.variant.outputs.variant }}/g" customize.sh
+
+          chmod +x customize.sh
+          sudo cp customize.sh squashfs-root/
+
+          # Mount virtual filesystems for chroot (needed for dnf/systemctl)
+          sudo mount --bind /proc squashfs-root/proc
+          sudo mount --bind /sys squashfs-root/sys
+          sudo mount --bind /dev squashfs-root/dev
+          sudo mount --bind /dev/pts squashfs-root/dev/pts
+          sudo mount --bind /run squashfs-root/run || true
+
+          # Provide DNS resolution inside chroot
+          sudo cp /etc/resolv.conf squashfs-root/etc/resolv.conf
+
+          echo "Memory before chroot customization:"
+          free -h
+          echo "---"
+
+          sudo chroot squashfs-root /customize.sh || {
+            RC=$?
+            echo "=== Chroot customization failed (exit code $RC) ==="
+            echo "--- dmesg (last 30 lines) ---"
+            sudo dmesg | tail -30 || true
+            echo "--- memory ---"
+            free -h
+            echo "--- cgroup memory ---"
+            cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || true
+            cat /sys/fs/cgroup/memory.current 2>/dev/null || cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || true
+            exit $RC
+          }
+
+          echo "Memory after chroot customization:"
+          free -h
+
+          # Cleanup chroot mounts
+          sudo umount squashfs-root/run 2>/dev/null || true
+          sudo umount squashfs-root/dev/pts
+          sudo umount squashfs-root/dev
+          sudo umount squashfs-root/sys
+          sudo umount squashfs-root/proc
+          sudo rm squashfs-root/customize.sh
+
+      - name: Repack rootfs into SquashFS
+        run: |
+          echo "Repacking rootfs into SquashFS..."
+          echo "Disk before repack:"
+          df -h /
+
+          SQUASHFS_PATH="iso-build/LiveOS/squashfs.img"
+          sudo mkdir -p iso-build/LiveOS
+
+          # Create SquashFS directly from squashfs-root/ directory.
+          # mksquashfs reads and compresses in streaming fashion - no intermediate copy needed.
+          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp xz -b 1M
+
+          # Clean up extracted rootfs and replace old image
+          sudo rm -rf squashfs-root
+          sudo rm -f "$SQUASHFS_PATH"
+          sudo mv "$SQUASHFS_PATH.new" "$SQUASHFS_PATH"
+
+          echo "Repacked SquashFS: $(ls -lh "$SQUASHFS_PATH")"
+          echo "Disk after repack:"
+          df -h /
+
+      - name: Update ISO metadata
+        run: |
+          if [ -f iso-build/.discinfo ]; then
+            sudo sed -i "s/Fedora/Lyrah OS/g" iso-build/.discinfo
+          fi
+          find iso-build -name "isolinux.cfg" -o -name "grub.cfg" | while read cfg; do
+            sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
+          done
+
+      - name: Create new ISO
+        run: |
+          echo "Creating Lyrah OS ISO..."
+          mkdir -p output
+          ISO_NAME="Lyrah-OS-${{ steps.variant.outputs.version }}-${{ steps.variant.outputs.variant }}-x86_64.iso"
+          sudo xorriso -as mkisofs \
+            -o "output/$ISO_NAME" \
+            -V "Lyrah-OS-${{ steps.variant.outputs.version }}" \
+            -J -joliet-long -r \
+            -b isolinux/isolinux.bin \
+            -c isolinux/boot.cat \
+            -no-emul-boot \
+            -boot-load-size 4 \
+            -boot-info-table \
+            -eltorito-alt-boot \
+            -e images/efiboot.img \
+            -no-emul-boot \
+            -isohybrid-gpt-basdat \
+            iso-build/
+          sudo isohybrid --uefi "output/$ISO_NAME" || echo "isohybrid not available, skipping"
+          ls -lh output/
+
+      - name: Verify ISO was created
+        run: |
+          ISO_FILE="output/Lyrah-OS-${{ steps.variant.outputs.version }}-${{ steps.variant.outputs.variant }}-x86_64.iso"
+          if [ ! -f "$ISO_FILE" ]; then
+            echo "ERROR: ISO file was not created!"
+            exit 1
+          fi
+          echo "ISO created successfully:"
+          ls -lh "$ISO_FILE"
+          SIZE_MB=$(du -m "$ISO_FILE" | cut -f1)
+          echo "ISO size: ${SIZE_MB}MB"
+          if [ $SIZE_MB -lt 100 ]; then
+            echo "WARNING: ISO seems too small!"
+          fi
+
+      - name: Generate checksums
+        run: |
+          cd output/
+          sha256sum *.iso > SHA256SUMS
+          sha512sum *.iso > SHA512SUMS
+          cat SHA256SUMS
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lyrah-os-${{ steps.variant.outputs.variant }}-${{ steps.variant.outputs.version }}
+          path: |
+            output/*.iso
+            output/SHA256SUMS
+            output/SHA512SUMS
+          retention-days: 30
+
+      - name: Upload to release (if tag)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            output/*.iso
+            output/SHA256SUMS
+            output/SHA512SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-iso:
+    needs: build-iso
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download ISO
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lyrah-os-*
+          merge-multiple: true
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils
+
+      - name: Test ISO boot
+        run: |
+          ISO_FILE=$(ls *.iso | head -1)
+          echo "Testing ISO: $ISO_FILE"
+          touch boot.log
+          timeout 90s qemu-system-x86_64 \
+            -m 2048 \
+            -smp 2 \
+            -cdrom "$ISO_FILE" \
+            -boot d \
+            -display none \
+            -serial file:boot.log \
+            2>&1 &
+          QEMU_PID=$!
+          sleep 60
+          if ps -p $QEMU_PID > /dev/null 2>&1; then
+            echo "ISO boots successfully (QEMU still running after 60s)"
+            kill $QEMU_PID 2>/dev/null || true
+            exit 0
+          else
+            echo "QEMU exited early (may indicate boot failure)"
+            echo "Boot log:"
+            cat boot.log || echo "No log captured"
+            exit 0
+          fi

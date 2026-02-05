@@ -1,0 +1,95 @@
+name: Build Update Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - testing
+          - dev
+
+jobs:
+  build-container:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Set up Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Build container image
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/lyrahos/lyrah-os:${{ inputs.branch }}"
+          IMAGE_NAME=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+          podman build \
+            -t "$IMAGE_NAME" \
+            -f Containerfile.${{ inputs.branch }} \
+            .
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push container image
+        run: |
+          podman push "$IMAGE_NAME"
+
+      - name: Save update metadata as artifact
+        run: |
+          cat > update-metadata-${{ inputs.branch }}.json << EOF
+          {
+            "version": "1.0.${{ github.run_number }}",
+            "branch": "${{ inputs.branch }}",
+            "date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": "${{ github.sha }}",
+            "image": "$IMAGE_NAME"
+          }
+          EOF
+
+      - name: Upload metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-metadata-${{ inputs.branch }}
+          path: update-metadata-${{ inputs.branch }}.json
+
+  # FIX #19: Separate job to commit metadata avoids matrix race condition
+  update-metadata:
+    needs: build-container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Download all metadata artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: update-metadata-*
+          merge-multiple: true
+
+      - name: Commit metadata
+        run: |
+          BRANCH="${{ inputs.branch }}"
+          if [ -f "update-metadata-${BRANCH}.json" ]; then
+            cp "update-metadata-${BRANCH}.json" update-metadata.json
+          fi
+
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add update-metadata.json
+          git commit -m "Update metadata for build ${{ github.run_number }}" || true
+          git push || true

@@ -1,0 +1,23 @@
+{
+  "name": "AMOLED Black",
+  "version": "1.0",
+  "description": "Pure black theme for OLED displays",
+  "colors": {
+    "background": "#000000",
+    "surface": "#0a0a0a",
+    "primary": "#3b82f6",
+    "secondary": "#6366f1",
+    "accent": "#22d3ee",
+    "textPrimary": "#ffffff",
+    "textSecondary": "#6b7280",
+    "focus": "#3b82f6",
+    "hover": "#111111",
+    "cardBackground": "#0a0a0a"
+  },
+  "layout": {
+    "sidebarWidth": 220, "gridColumns": 4, "cardAspectRatio": "3:4",
+    "fontSize": { "small": 14, "medium": 16, "large": 24, "xlarge": 32 }
+  },
+  "effects": { "animations": true, "particles": false, "blur": false, "glow": true, "transitionSpeed": 150 },
+  "fonts": { "heading": "Exo 2", "body": "Inter", "ui": "Inter" }
+}

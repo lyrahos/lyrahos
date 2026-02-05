@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Lyrah OS
+Description=Space-themed boot splash for Lyrah OS
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/lyrah
+ScriptFile=/usr/share/plymouth/themes/lyrah/lyrah.script

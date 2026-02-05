@@ -1,0 +1,128 @@
+#!/bin/bash
+# Lyrah OS Log Upload Script
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+LOG_DIR="/var/log/lyrah"
+
+if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    cat << 'HELPEOF'
+Lyrah OS Log Upload Utility
+
+USAGE:
+    lyrah-upload-log [MODE] [TYPE] [OPTIONS]
+
+MODES:    luna | desktop
+TYPES:    session | crash | all | <path>
+OPTIONS:  --private
+
+SETUP:    gh auth login
+
+EXAMPLES:
+    lyrah-upload-log luna session
+    lyrah-upload-log desktop crash --private
+    lyrah-upload-log all
+HELPEOF
+    exit 0
+fi
+
+# FIX #26: Check copy success in sanitize_log
+sanitize_log() {
+    local file=$1
+    local sanitized="${file}.sanitized"
+    if ! cp "$file" "$sanitized"; then
+        echo -e "${RED}Error: Could not create sanitized copy of $file${NC}" >&2
+        echo "$file"  # Fall back to original
+        return
+    fi
+    sed -i 's/[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/[REDACTED_IP]/g' "$sanitized"
+    sed -i 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[REDACTED_EMAIL]/g' "$sanitized"
+    sed -i 's/ghp_[a-zA-Z0-9]\{36\}/[REDACTED_TOKEN]/g' "$sanitized"
+    sed -i "s|/home/[a-zA-Z0-9_-]*/|/home/[USER]/|g" "$sanitized"
+    echo "$sanitized"
+}
+
+detect_mode() {
+    if pgrep -x "luna-ui" > /dev/null; then echo "luna"
+    elif pgrep -x "plasmashell" > /dev/null; then echo "desktop"
+    else echo "unknown"; fi
+}
+
+if ! command -v gh &> /dev/null; then
+    echo -e "${RED}Error: GitHub CLI (gh) is not installed${NC}"; exit 1
+fi
+if ! gh auth status &> /dev/null 2>&1; then
+    echo -e "${BLUE}GitHub CLI not authenticated. Please run:${NC}"
+    echo "  gh auth login"; exit 1
+fi
+
+upload_to_gist() {
+    local file=$1 privacy=$2 description=$3
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}Error: File not found: $file${NC}"; return 1
+    fi
+    local sanitized_file
+    sanitized_file=$(sanitize_log "$file")
+    echo -e "${BLUE}Uploading (sanitized) $file...${NC}"
+    local gist_url
+    if [ "$privacy" = "--private" ]; then
+        gist_url=$(gh gist create "$sanitized_file" -d "$description" --private)
+    else
+        gist_url=$(gh gist create "$sanitized_file" -d "$description" --public)
+    fi
+    [ -f "${file}.sanitized" ] && rm -f "${file}.sanitized"
+    echo -e "${GREEN}Uploaded successfully!${NC}"
+    echo -e "${BLUE}Gist URL:${NC} $gist_url"
+    echo "$gist_url" | xclip -selection clipboard 2>/dev/null || true
+    echo -e "${GREEN}(URL copied to clipboard)${NC}"
+}
+
+get_latest_file() { ls -t "$1"/*.log 2>/dev/null | head -n1; }
+
+MODE="" LOG_TYPE="" PRIVACY=""
+if [[ "$1" == "luna" ]] || [[ "$1" == "desktop" ]]; then
+    MODE=$1; LOG_TYPE=$2; PRIVACY=$3
+elif [[ "$1" =~ ^/ ]]; then
+    upload_to_gist "$1" "$2" "Lyrah OS Log - $(basename $1)"; exit 0
+else
+    MODE=$(detect_mode); LOG_TYPE=$1; PRIVACY=$2
+fi
+
+if [ "$MODE" == "unknown" ]; then
+    echo -e "${RED}Error: Could not detect current mode${NC}"
+    echo "Please specify: lyrah-upload-log [luna|desktop] [session|crash|all]"; exit 1
+fi
+
+MODE_DIR="$LOG_DIR/${MODE}-mode"
+case $LOG_TYPE in
+    session)
+        latest=$(get_latest_file "$MODE_DIR/sessions")
+        [ -z "$latest" ] && echo -e "${RED}No session logs found${NC}" && exit 1
+        upload_to_gist "$latest" "$PRIVACY" "Lyrah OS ($MODE mode) Session Log - $(date +%Y-%m-%d)";;
+    crash)
+        latest=$(get_latest_file "$MODE_DIR/crashes")
+        [ -z "$latest" ] && echo -e "${RED}No crash logs found${NC}" && exit 1
+        upload_to_gist "$latest" "$PRIVACY" "Lyrah OS ($MODE mode) Crash Report - $(date +%Y-%m-%d)";;
+    all)
+        echo -e "${BLUE}Creating combined log report for $MODE mode...${NC}"
+        temp_file="/tmp/lyrah-${MODE}-combined-$(date +%Y%m%d-%H%M%S).log"
+        {
+            echo "=== Lyrah OS Combined Log Report ($MODE Mode) ==="
+            echo "Generated: $(date)"; echo "Hostname: $(hostname)"; echo "Kernel: $(uname -r)"; echo ""
+            echo "=== Latest Session Log ==="
+            session_log=$(get_latest_file "$MODE_DIR/sessions")
+            [ -n "$session_log" ] && cat "$session_log" || echo "No session logs"; echo ""
+            echo "=== Latest Crash Log ==="
+            crash_log=$(get_latest_file "$MODE_DIR/crashes")
+            [ -n "$crash_log" ] && cat "$crash_log" || echo "No crash logs"; echo ""
+            echo "=== Systemd Journal (Last 500 lines) ==="
+            journalctl -b --no-pager -n 500
+        } > "$temp_file"
+        upload_to_gist "$temp_file" "$PRIVACY" "Lyrah OS ($MODE mode) Combined Diagnostics - $(date +%Y-%m-%d)"
+        rm -f "$temp_file";;
+    *) echo "Usage: lyrah-upload-log [luna|desktop] [session|crash|all] [--private]"; exit 1;;
+esac

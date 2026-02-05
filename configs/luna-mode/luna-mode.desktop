@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Luna Mode (Gaming)
+Comment=Console-like gaming experience with Luna UI
+Exec=/usr/bin/luna-session
+Type=Application
+DesktopNames=gamescope
