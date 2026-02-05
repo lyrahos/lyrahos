@@ -214,22 +214,23 @@ jobs:
                 sudo rm -f /mnt/rootfs.img
                 EROFS_EXTRACTED=true
               else
-                echo "EROFS contains rootfs directly — copying with periodic cache drops..."
+                echo "EROFS contains rootfs directly — copying per-directory with cache flushing..."
 
-                # Start background page-cache dropper. The kernel EROFS driver
-                # fills page cache with decompressed data; flushing every 10s
-                # keeps total cached data bounded and prevents OOM.
-                (while true; do
-                  sleep 10
+                # Copy each top-level entry separately, flushing after each to
+                # prevent OOM. The kernel EROFS driver fills page cache with
+                # decompressed reads, and cp writes create dirty pages — both
+                # accumulate unboundedly during a single bulk "cp -a" and
+                # trigger the OOM killer. Copying per-directory + sync (flushes
+                # dirty pages to disk) + drop_caches (frees clean pages) bounds
+                # memory to one directory's worth of data at a time.
+                for name in $(sudo ls -A /mnt/erofs-kernel); do
+                  echo "  Copying /$name ..."
+                  sudo cp -a "/mnt/erofs-kernel/$name" squashfs-root/
+                  sync
                   echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
-                done) &
-                CACHE_DROPPER_PID=$!
+                done
 
-                sudo cp -a /mnt/erofs-kernel/. squashfs-root/
                 sudo umount /mnt/erofs-kernel
-
-                kill $CACHE_DROPPER_PID 2>/dev/null || true
-                wait $CACHE_DROPPER_PID 2>/dev/null || true
                 echo "EROFS direct copy complete"
                 EROFS_EXTRACTED=true
               fi
