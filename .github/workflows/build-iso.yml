@@ -220,13 +220,32 @@ jobs:
                 sudo rm -f /mnt/rootfs.img
               else
                 echo "EROFS contains rootfs directly — copying per-directory..."
-                # Copy each top-level entry separately with sync + drop_caches
-                # between each to keep write-side dirty pages bounded.
-                for name in $(sudo ls -A /mnt/erofs-fuse); do
-                  echo "  Copying /$name ..."
-                  sudo cp -a "/mnt/erofs-fuse/$name" squashfs-root/
+                FUSE_MNT=/mnt/erofs-fuse
+
+                # Helper: copy one entry from the FUSE mount with cache flush.
+                fuse_copy_entry() {
+                  local src="$1" dst="$2" label="$3"
+                  echo "  Copying $label ..."
+                  sudo cp -a "$src" "$dst"
                   sync
                   echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
+                }
+
+                for name in $(sudo ls -A "$FUSE_MNT"); do
+                  if [ "$name" = "usr" ]; then
+                    # /usr is ~3-4 GB — copying it as one unit through FUSE
+                    # takes 40+ min and times out.  Split into subdirectories.
+                    echo "  Copying /usr (split into subdirectories)..."
+                    sudo mkdir -p squashfs-root/usr
+                    for subname in $(sudo ls -A "$FUSE_MNT/usr"); do
+                      fuse_copy_entry "$FUSE_MNT/usr/$subname" squashfs-root/usr/ "/usr/$subname"
+                    done
+                    # Preserve /usr directory attributes
+                    sudo chmod --reference="$FUSE_MNT/usr" squashfs-root/usr 2>/dev/null || true
+                    sudo chown --reference="$FUSE_MNT/usr" squashfs-root/usr 2>/dev/null || true
+                  else
+                    fuse_copy_entry "$FUSE_MNT/$name" squashfs-root/ "/$name"
+                  fi
                 done
                 sudo fusermount -u /mnt/erofs-fuse
                 echo "EROFS direct copy complete"
