@@ -437,6 +437,8 @@ jobs:
 
           # Create live user (passwordless, autologin)
           if ! id liveuser &>/dev/null; then
+            # Ensure gamemode group exists (not present in base Fedora KDE image)
+            getent group gamemode &>/dev/null || groupadd gamemode
             useradd -m -G wheel,gamemode -s /bin/bash liveuser
             passwd -d liveuser
           fi
