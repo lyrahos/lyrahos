@@ -180,15 +180,18 @@ jobs:
             echo "Detected EROFS image"
 
             # Strategy overview:
-            # The kernel EROFS driver is fast but decompresses into page cache.
-            # Bulk "cp -a" of the entire rootfs fills memory and gets OOM-killed.
+            # The kernel EROFS driver decompresses metadata into pinned page
+            # cache.  A broad "find" or bulk "cp -a" fills memory and triggers
+            # the OOM killer on CI runners.
             #
-            # Solution: use kernel mount (fast) but run a background loop that
-            # drops page cache every 10 seconds, bounding memory usage to ~1-2GB
-            # of cached pages at any time.
-            #
-            # For two-layer images (inner rootfs.img): just copy the single file
-            # from the mount — no cache pressure issue.
+            # Approach:
+            #  1. Mount EROFS via kernel (fast driver).
+            #  2. Lightweight probe: test one specific path instead of scanning
+            #     the whole tree — avoids loading hundreds of directory entries.
+            #  3. Two-layer (rootfs.img inside): copy that single file, unmount,
+            #     then kernel-mount the ext4 natively.
+            #  4. Direct rootfs: copy top-level entries one at a time with
+            #     sync + drop_caches between each to bound memory.
 
             EROFS_EXTRACTED=false
 
@@ -197,15 +200,18 @@ jobs:
             if sudo mount -t erofs -o loop,ro "$LIVE_IMG" /mnt/erofs-kernel 2>&1; then
               echo "Kernel EROFS mount succeeded"
 
-              # Check for Fedora two-layer structure
-              ROOTFS_IMG=$(sudo find /mnt/erofs-kernel -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1 || true)
-
-              if [ -n "$ROOTFS_IMG" ]; then
-                echo "Found inner rootfs.img: $ROOTFS_IMG"
-                ROOTFS_SIZE=$(sudo du -h "$ROOTFS_IMG" | cut -f1)
+              # Lightweight probe: check the known Fedora path directly.
+              # DO NOT use "find -maxdepth 2" — it scans hundreds of dirs at
+              # depth 2 (/usr/*, /var/*, /etc/*…), decompressing EROFS metadata
+              # into pinned page cache and exhausting memory before any copy.
+              if sudo test -f /mnt/erofs-kernel/LiveOS/rootfs.img; then
+                echo "Found inner rootfs.img (Fedora two-layer structure)"
+                ROOTFS_SIZE=$(sudo du -h /mnt/erofs-kernel/LiveOS/rootfs.img | cut -f1)
                 echo "rootfs.img size: $ROOTFS_SIZE"
-                sudo cp "$ROOTFS_IMG" /mnt/rootfs.img
+                sudo cp /mnt/erofs-kernel/LiveOS/rootfs.img /mnt/rootfs.img
                 sudo umount /mnt/erofs-kernel
+                # Free metadata pages from the probe mount
+                echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
 
                 echo "Mounting rootfs.img (ext4, native kernel mount)..."
                 sudo mkdir -p /mnt/rootfs-inner
@@ -215,14 +221,12 @@ jobs:
                 EROFS_EXTRACTED=true
               else
                 echo "EROFS contains rootfs directly — copying per-directory with cache flushing..."
+                # Free metadata cached by the test -f probe
+                echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
 
-                # Copy each top-level entry separately, flushing after each to
-                # prevent OOM. The kernel EROFS driver fills page cache with
-                # decompressed reads, and cp writes create dirty pages — both
-                # accumulate unboundedly during a single bulk "cp -a" and
-                # trigger the OOM killer. Copying per-directory + sync (flushes
-                # dirty pages to disk) + drop_caches (frees clean pages) bounds
-                # memory to one directory's worth of data at a time.
+                # Copy each top-level entry separately. Between copies, sync
+                # flushes dirty write pages to disk and drop_caches frees clean
+                # read pages, bounding memory to one directory at a time.
                 for name in $(sudo ls -A /mnt/erofs-kernel); do
                   echo "  Copying /$name ..."
                   sudo cp -a "/mnt/erofs-kernel/$name" squashfs-root/
