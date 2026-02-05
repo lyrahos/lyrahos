@@ -234,11 +234,15 @@ jobs:
               fi
             fi
 
-            # Look for the Fedora two-layer structure (outer EROFS wraps rootfs.img)
-            ROOTFS_IMG=$(find "$EROFS_MOUNT" -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1)
+            # Look for the Fedora two-layer structure (outer EROFS wraps rootfs.img).
+            # sudo is required because the mounted EROFS contains root-owned files.
+            # "|| true" guards against set -e + pipefail killing the script when
+            # find encounters permission errors on restricted directories.
+            echo "Searching for inner rootfs.img in $EROFS_MOUNT ..."
+            ROOTFS_IMG=$(sudo find "$EROFS_MOUNT" -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1 || true)
             if [ -n "$ROOTFS_IMG" ]; then
-              echo "Found inner rootfs.img — copying to disk..."
-              ROOTFS_SIZE=$(du -h "$ROOTFS_IMG" | cut -f1)
+              echo "Found inner rootfs.img: $ROOTFS_IMG"
+              ROOTFS_SIZE=$(sudo du -h "$ROOTFS_IMG" | cut -f1)
               echo "rootfs.img size: $ROOTFS_SIZE"
               sudo cp "$ROOTFS_IMG" /mnt/rootfs.img
               [ -n "$EROFS_CLEANUP" ] && eval $EROFS_CLEANUP
