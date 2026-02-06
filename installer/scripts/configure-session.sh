@@ -2,8 +2,8 @@
 # Configure default session based on installer selection
 # Called by Calamares during installation
 
-SESSION=$1
-USER=$2
+SESSION=${1:-luna-mode}
+USER=${2:-$(id -un 1000 2>/dev/null || echo "")}
 
 case "$SESSION" in
     luna-mode)
