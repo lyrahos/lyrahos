@@ -335,6 +335,17 @@ jobs:
           echo "Root entries:"
           ls squashfs-root/ | head -20
 
+      # Make all files readable so the cache action can archive them.
+      # Some rootfs files have restrictive permissions (setuid binaries,
+      # root-only dirs). The actual permissions are preserved in the
+      # SquashFS repack via cp -a's metadata preservation.
+      - name: Fix permissions for caching
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Making squashfs-root readable for caching..."
+          sudo chmod -R a+rX squashfs-root/
+          echo "Done"
+
       # Save cache immediately after extraction so it persists even if later steps fail
       - name: Save rootfs cache
         if: steps.rootfs-cache.outputs.cache-hit != 'true'
