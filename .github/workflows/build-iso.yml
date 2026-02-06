@@ -653,21 +653,27 @@ jobs:
           # key" splash with KDE desktop / media testing options.
           # ISOLINUX (BIOS boot): set timeout to 1 decisecond (instant),
           # disable the "press any key" prompt, default to first entry.
+          # Note: isolinux keywords are case-insensitive; Fedora uses
+          # uppercase (TIMEOUT, PROMPT). The sed I flag handles both.
           find iso-build -name "isolinux.cfg" | while read cfg; do
-            sudo sed -i -E 's/^timeout .*/timeout 1/' "$cfg" || true
-            sudo sed -i -E 's/^totaltimeout .*/totaltimeout 1/' "$cfg" || true
-            # PROMPT 0 = don't wait for user input, boot default immediately
-            if grep -q '^prompt ' "$cfg" 2>/dev/null; then
-              sudo sed -i -E 's/^prompt .*/prompt 0/' "$cfg" || true
+            sudo sed -i 's/^[Tt][Ii][Mm][Ee][Oo][Uu][Tt] .*/timeout 1/' "$cfg" || true
+            sudo sed -i 's/^[Tt][Oo][Tt][Aa][Ll][Tt][Ii][Mm][Ee][Oo][Uu][Tt] .*/totaltimeout 1/' "$cfg" || true
+            if grep -qi '^prompt ' "$cfg" 2>/dev/null; then
+              sudo sed -i 's/^[Pp][Rr][Oo][Mm][Pp][Tt] .*/prompt 0/' "$cfg" || true
             else
               echo "prompt 0" | sudo tee -a "$cfg" > /dev/null
             fi
           done
-          # GRUB (UEFI boot): set timeout to 0 so it boots the default
-          # entry immediately with no menu displayed.
+          # GRUB (UEFI boot): set timeout to 0 and hide the menu so it
+          # boots the default entry immediately.
           find iso-build -name "grub.cfg" | while read cfg; do
-            sudo sed -i -E 's/^set timeout=.*/set timeout=0/' "$cfg" || true
-            sudo sed -i -E 's/^  set timeout=.*/  set timeout=0/' "$cfg" || true
+            sudo sed -i -E 's/^(\s*)set timeout=.*/\1set timeout=0/' "$cfg" || true
+            # Hide the menu entirely (prevents brief flash before timeout)
+            if grep -q 'set timeout_style=' "$cfg" 2>/dev/null; then
+              sudo sed -i -E 's/set timeout_style=.*/set timeout_style=hidden/' "$cfg" || true
+            else
+              sudo sed -i -E '/^set timeout=0/a set timeout_style=hidden' "$cfg" || true
+            fi
           done
 
       - name: Create new ISO
