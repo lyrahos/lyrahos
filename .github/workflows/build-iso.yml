@@ -648,6 +648,28 @@ jobs:
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
 
+          # Skip the boot menu entirely — boot straight into the live
+          # session / installer instead of showing the Fedora "press any
+          # key" splash with KDE desktop / media testing options.
+          # ISOLINUX (BIOS boot): set timeout to 1 decisecond (instant),
+          # disable the "press any key" prompt, default to first entry.
+          find iso-build -name "isolinux.cfg" | while read cfg; do
+            sudo sed -i -E 's/^timeout .*/timeout 1/' "$cfg" || true
+            sudo sed -i -E 's/^totaltimeout .*/totaltimeout 1/' "$cfg" || true
+            # PROMPT 0 = don't wait for user input, boot default immediately
+            if grep -q '^prompt ' "$cfg" 2>/dev/null; then
+              sudo sed -i -E 's/^prompt .*/prompt 0/' "$cfg" || true
+            else
+              echo "prompt 0" | sudo tee -a "$cfg" > /dev/null
+            fi
+          done
+          # GRUB (UEFI boot): set timeout to 0 so it boots the default
+          # entry immediately with no menu displayed.
+          find iso-build -name "grub.cfg" | while read cfg; do
+            sudo sed -i -E 's/^set timeout=.*/set timeout=0/' "$cfg" || true
+            sudo sed -i -E 's/^  set timeout=.*/  set timeout=0/' "$cfg" || true
+          done
+
       - name: Create new ISO
         run: |
           echo "Creating Lyrah OS ISO..."
