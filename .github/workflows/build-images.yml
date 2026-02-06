@@ -22,6 +22,17 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
 
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/share/swift /usr/share/miniconda /usr/share/az_* /opt/hostedtoolcache
+          sudo docker image prune -af 2>/dev/null || true
+          echo "Available disk space:"
+          df -h /
+
       - name: Set up Podman
         run: |
           sudo apt-get update
