@@ -586,6 +586,8 @@ jobs:
 
       - name: Update ISO metadata
         run: |
+          # Fix permissions on iso-build (EFI directory may be restrictive)
+          sudo chmod -R a+rX iso-build/
           if [ -f iso-build/.discinfo ]; then
             sudo sed -i "s/Fedora/Lyrah OS/g" iso-build/.discinfo
           fi
