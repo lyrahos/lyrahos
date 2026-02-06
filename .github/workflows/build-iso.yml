@@ -200,6 +200,7 @@ jobs:
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
                 --exclude=kernel* \
+                --exclude=virtualbox-guest-additions* \
                 filesystem \
                 setup \
                 @kde-desktop-environment \
