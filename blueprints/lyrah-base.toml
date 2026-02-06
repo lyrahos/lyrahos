@@ -5,6 +5,9 @@
 include = [
     "kernel",
     "grub2-efi-x64",
+    "grub2-efi-x64-modules",
+    "efibootmgr",
+    "shim-x64",
     "NetworkManager",
     "pipewire",
     "wireplumber",
