@@ -134,26 +134,6 @@ jobs:
           fi
           free -h
 
-      # Cache the dnf-built rootfs to skip the slow package download + install
-      # on subsequent builds. Key changes when workflow (package list) changes.
-      - name: Restore rootfs cache
-        id: rootfs-cache
-        uses: actions/cache@v4
-        with:
-          path: rootfs-cache.tar
-          key: rootfs-v6-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
-
-      - name: Extract rootfs from cache
-        if: steps.rootfs-cache.outputs.cache-hit == 'true'
-        run: |
-          echo "Rootfs cache hit — extracting from tar archive..."
-          sudo mkdir -p squashfs-root
-          sudo tar --xattrs --xattrs-include='*' -xpf rootfs-cache.tar -C squashfs-root
-          echo "Rootfs restored with preserved permissions, ownership, and xattrs"
-          echo "Root entries:"
-          ls squashfs-root/ | head -20
-          echo "Rootfs size: $(du -sh squashfs-root/ | cut -f1)"
-
       # Build rootfs from scratch using dnf --installroot instead of
       # extracting from the Fedora ISO's EROFS/SquashFS image.
       #
@@ -167,7 +147,6 @@ jobs:
       # Phase 1: Install everything EXCEPT kernel* to keep peak memory low.
       # Phase 2: Install kernel in a separate pass after phase 1 memory is freed.
       - name: Build rootfs (phase 1 - base system, no kernel)
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           echo "Building rootfs from scratch using dnf --installroot..."
@@ -239,7 +218,6 @@ jobs:
           df -h /
 
       - name: Install kernel into rootfs (phase 2)
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           echo "Phase 2: Installing kernel (separate pass to avoid OOM)..."
@@ -312,7 +290,6 @@ jobs:
       # on the second resolution. Running in a separate container frees all
       # phase 1 memory before starting. This mirrors the kernel approach.
       - name: Install Calamares into rootfs (phase 3)
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           echo "Phase 3: Installing Calamares installer..."
@@ -355,24 +332,6 @@ jobs:
           echo "Phase 3 complete. Calamares installed."
           echo "Memory after phase 3:"
           free -h
-
-      # Archive rootfs as tar to preserve permissions, ownership, xattrs
-      # for caching across builds.
-      - name: Create rootfs cache archive
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Creating rootfs tar archive (preserves permissions, xattrs, ownership)..."
-          sudo tar --xattrs --xattrs-include='*' -cpf rootfs-cache.tar -C squashfs-root .
-          sudo chmod 644 rootfs-cache.tar
-          echo "Archive size: $(du -sh rootfs-cache.tar | cut -f1)"
-
-      # Save cache immediately after build so it persists even if later steps fail
-      - name: Save rootfs cache
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: rootfs-cache.tar
-          key: rootfs-v6-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
