@@ -618,6 +618,14 @@ jobs:
             sudo sed -i "s/Fedora/Lyrah OS/g" iso-build/.discinfo
           fi
           find iso-build -name "isolinux.cfg" -o -name "grub.cfg" | while read cfg; do
+            # CRITICAL: Fix CDLABEL to match the ISO volume label set by
+            # xorriso (-V "LyrahOS"). The base Fedora ISO uses something
+            # like CDLABEL=Fedora-KDE-Live-43-1-6. A naive s/Fedora/Lyrah OS/
+            # introduces a SPACE which breaks kernel parameter parsing and
+            # the resulting label doesn't match the actual volume ID anyway.
+            # Fix the label BEFORE the cosmetic rename below.
+            sudo sed -i -E 's/CDLABEL=[^ "]+/CDLABEL=LyrahOS/g' "$cfg" || true
+            # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
 
