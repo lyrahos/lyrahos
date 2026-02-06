@@ -511,13 +511,15 @@ jobs:
 
           chown -R liveuser:liveuser /home/liveuser
 
-          # Set SELinux to permissive for live session.
-          # The ISO remastering process (extract + repack) can lose SELinux
-          # xattrs. With enforcing mode, services like dbus-broker are denied
-          # access to their own config files and fail to start, cascading into
-          # failures of every D-Bus dependent service (logind, upower, etc.).
+          # Disable SELinux for the live session.
+          # The ISO remastering process (extract + repack) loses SELinux
+          # xattrs. Even permissive mode floods the journal with thousands of
+          # AVC denials and delays dbus-broker startup (which cascades into
+          # slow SDDM/graphical session launch). Disable SELinux entirely for
+          # the live session — there's no benefit when all labels are stripped.
           if [ -f /etc/selinux/config ]; then
-            sed -i 's/SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
+            sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
+            sed -i 's/SELINUX=permissive/SELINUX=disabled/' /etc/selinux/config
           fi
 
           # Exclude dracut livenet module — not needed for local ISO boot.
@@ -625,6 +627,10 @@ jobs:
             # the resulting label doesn't match the actual volume ID anyway.
             # Fix the label BEFORE the cosmetic rename below.
             sudo sed -i -E 's/CDLABEL=[^ "]+/CDLABEL=LyrahOS/g' "$cfg" || true
+            # Disable SELinux from the kernel command line. The config-file
+            # change above only takes effect after init; selinux=0 disables
+            # it immediately so no AVC denials are generated at all.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 selinux=0/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
