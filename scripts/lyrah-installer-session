@@ -1,0 +1,9 @@
+#!/bin/bash
+# Lyrah OS Installer Session
+# Runs Calamares as the sole application on a minimal kwin_wayland compositor.
+# No desktop, no taskbar — just the installer, like a Windows setup.
+
+export XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORM=wayland
+
+exec dbus-run-session kwin_wayland --no-lockscreen -- sudo -E calamares

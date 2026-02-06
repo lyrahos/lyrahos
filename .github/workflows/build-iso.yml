@@ -370,12 +370,16 @@ jobs:
 
           sudo mkdir -p squashfs-root/usr/bin
           sudo cp scripts/luna-session squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-installer-session squashfs-root/usr/bin/
           sudo cp scripts/lyrah-switch-mode squashfs-root/usr/bin/
           sudo cp scripts/lyrah-configure-autologin squashfs-root/usr/bin/
           sudo cp scripts/lyrah-update squashfs-root/usr/bin/
           sudo cp scripts/lyrah-upload-log squashfs-root/usr/bin/
           sudo cp scripts/lyrah-crash-monitor squashfs-root/usr/bin/
           sudo chmod +x squashfs-root/usr/bin/luna-session squashfs-root/usr/bin/lyrah-*
+
+          # Installer session .desktop (SDDM can select this as a session)
+          sudo cp installer/lyrah-installer.desktop squashfs-root/usr/share/wayland-sessions/
 
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
@@ -394,11 +398,8 @@ jobs:
           sudo mkdir -p squashfs-root/etc/logrotate.d
           sudo cp logging/logrotate-lyrah.conf squashfs-root/etc/logrotate.d/lyrah
 
-          # Live session: Calamares autostart for liveuser
-          sudo mkdir -p squashfs-root/etc/skel/.config/autostart
-          sudo cp installer/calamares-autostart.desktop squashfs-root/etc/skel/.config/autostart/
-
-          # Live session: Desktop shortcut to re-launch installer
+          # Live session: Desktop shortcut to launch installer if user
+          # switches to the Plasma session from SDDM
           sudo mkdir -p squashfs-root/etc/skel/Desktop
           sudo cp installer/install-lyrah.desktop squashfs-root/etc/skel/Desktop/
           sudo chmod +x squashfs-root/etc/skel/Desktop/install-lyrah.desktop
@@ -449,12 +450,18 @@ jobs:
             passwd -d liveuser
           fi
 
+          # Passwordless sudo for the live session.
+          # Without this, the Calamares autostart (sudo -E calamares) fails
+          # silently because there is no terminal to enter a password.
+          echo "liveuser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/liveuser
+          chmod 440 /etc/sudoers.d/liveuser
+
           # Configure SDDM autologin for live session
           mkdir -p /etc/sddm.conf.d
           cat > /etc/sddm.conf.d/live-autologin.conf << SDDM_EOF
           [Autologin]
           User=liveuser
-          Session=plasma
+          Session=lyrah-installer
           Relogin=false
           SDDM_EOF
 
