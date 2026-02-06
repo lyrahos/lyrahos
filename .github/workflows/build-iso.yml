@@ -121,7 +121,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rootfs-cache.tar
-          key: rootfs-v3-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
+          key: rootfs-v4-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       - name: Extract rootfs from cache
         if: steps.rootfs-cache.outputs.cache-hit == 'true'
@@ -167,12 +167,16 @@ jobs:
             -v "$(pwd)/squashfs-root:/rootfs" \
             fedora:${{ env.FEDORA_VERSION }} \
             bash -c '
+              set -euo pipefail
+
               dnf install -y \
                 --installroot=/rootfs \
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
                 --exclude=kernel* \
+                filesystem \
+                setup \
                 @kde-desktop-environment \
                 NetworkManager \
                 pipewire \
@@ -194,6 +198,14 @@ jobs:
                 calamares-libs
 
               dnf clean all --installroot=/rootfs
+
+              # Verify install actually wrote files
+              if [ ! -x /rootfs/usr/bin/bash ]; then
+                echo "FATAL: /usr/bin/bash missing after dnf install — rootfs is empty"
+                ls -la /rootfs/ || true
+                exit 1
+              fi
+              echo "Rootfs verified inside container: /usr/bin/bash exists"
             '
 
           echo "Phase 1 complete. Rootfs size: $(sudo du -sh squashfs-root/ | cut -f1)"
@@ -225,6 +237,8 @@ jobs:
             -v "$(pwd)/squashfs-root:/rootfs" \
             fedora:${{ env.FEDORA_VERSION }} \
             bash -c '
+              set -euo pipefail
+
               dnf install -y \
                 --installroot=/rootfs \
                 --releasever=${{ env.FEDORA_VERSION }} \
@@ -234,6 +248,12 @@ jobs:
                 kernel-modules-core
 
               dnf clean all --installroot=/rootfs
+
+              # Verify kernel modules were installed
+              ls /rootfs/lib/modules/ || {
+                echo "FATAL: No kernel modules found after dnf install"
+                exit 1
+              }
             '
 
           echo "Phase 2 complete. Rootfs size: $(sudo du -sh squashfs-root/ | cut -f1)"
@@ -262,7 +282,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: rootfs-cache.tar
-          key: rootfs-v3-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
+          key: rootfs-v4-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
