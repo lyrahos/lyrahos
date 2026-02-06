@@ -1,0 +1,5 @@
+---
+type: "view"
+name: "lyrah-session"
+interface: "pythonqt"
+script: "main.py"
