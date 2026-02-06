@@ -555,7 +555,12 @@ jobs:
           sudo mount --bind /dev/pts squashfs-root/dev/pts
           sudo mount --bind /run squashfs-root/run || true
 
-          # Provide DNS resolution inside chroot
+          # Provide DNS resolution inside chroot.
+          # systemd installs /etc/resolv.conf as a symlink to
+          # ../run/systemd/resolve/stub-resolv.conf. After bind-mounting
+          # /run above, that symlink resolves to the host's resolv.conf,
+          # so cp fails with "same file". Remove the symlink first.
+          sudo rm -f squashfs-root/etc/resolv.conf
           sudo cp /etc/resolv.conf squashfs-root/etc/resolv.conf
 
           echo "Memory before chroot customization:"
