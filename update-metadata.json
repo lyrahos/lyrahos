@@ -1,7 +1,7 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.4",
   "branch": "main",
-  "date": "2026-02-05T14:43:15Z",
-  "commit": "2588088f039b96ebde6aa7f2580560274b72c3a6",
+  "date": "2026-02-06T02:12:15Z",
+  "commit": "ae38ab46ead85618dfa9e11ba429df55cc7a86e6",
   "image": "ghcr.io/lyrahos/lyrahos/lyrah-os:main"
 }
