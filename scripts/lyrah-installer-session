@@ -7,8 +7,12 @@ export XDG_SESSION_TYPE=wayland
 export QT_QPA_PLATFORM=wayland
 export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
-# Use sudo -n (non-interactive) so the prompt never blocks inside a
-# headless Wayland session.  The liveuser has NOPASSWD sudo configured
-# in /etc/sudoers.d/liveuser.  Pass -E to preserve the Wayland
-# environment variables that Calamares and Qt need.
-exec dbus-run-session kwin_wayland --no-lockscreen -- sudo -n -E calamares
+# Calamares requires UID 0 to enumerate disks (/dev/sd*, /dev/nvme*)
+# and write partition tables.  Re-exec the entire script as root so
+# both kwin_wayland and calamares inherit UID 0.  The liveuser has
+# NOPASSWD sudo via /etc/sudoers.d/liveuser.
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -n -E "$0" "$@"
+fi
+
+exec dbus-run-session kwin_wayland --no-lockscreen -- calamares
