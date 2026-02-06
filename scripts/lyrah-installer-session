@@ -5,5 +5,10 @@
 
 export XDG_SESSION_TYPE=wayland
 export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
-exec dbus-run-session kwin_wayland --no-lockscreen -- sudo -E calamares
+# Use sudo -n (non-interactive) so the prompt never blocks inside a
+# headless Wayland session.  The liveuser has NOPASSWD sudo configured
+# in /etc/sudoers.d/liveuser.  Pass -E to preserve the Wayland
+# environment variables that Calamares and Qt need.
+exec dbus-run-session kwin_wayland --no-lockscreen -- sudo -n -E calamares
