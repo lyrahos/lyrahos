@@ -215,6 +215,12 @@ jobs:
           # Separate container run so phase 1 memory is fully released.
           # Only the kernel package tree is resolved here — much smaller
           # dependency graph than the full system.
+          #
+          # Use kernel-core + kernel-modules-core instead of the 'kernel'
+          # meta-package. The meta-package triggers kernel-install hooks
+          # that write to /boot and run grub2-mkconfig — all pointless
+          # inside --installroot since boot infrastructure comes from the
+          # base Fedora ISO. We only need modules for runtime hardware support.
           docker run --rm \
             -v "$(pwd)/squashfs-root:/rootfs" \
             fedora:${{ env.FEDORA_VERSION }} \
@@ -224,7 +230,8 @@ jobs:
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
-                kernel
+                kernel-core \
+                kernel-modules-core
 
               dnf clean all --installroot=/rootfs
             '
@@ -412,17 +419,18 @@ jobs:
           fi
 
           # Exclude dracut livenet module — not needed for local ISO boot.
-          # Without this, 29-parse-livenet.sh errors with
-          # "get_url_handler: command not found" because the url-lib dracut
-          # module isn't included in the initramfs.
+          # This config is inert during live boot (the ISO's own initramfs is
+          # used), but benefits the installed system when Calamares writes to
+          # disk and regenerates initramfs.
           mkdir -p /etc/dracut.conf.d
           echo 'omit_dracutmodules+=" livenet "' > /etc/dracut.conf.d/lyrah-live.conf
 
-          # Rebuild initramfs with the new dracut config
-          KVER=$(ls /lib/modules/ | sort -V | tail -1)
-          if [ -n "$KVER" ]; then
-            dracut -f --kver "$KVER" 2>/dev/null || echo "WARN: dracut rebuild skipped"
-          fi
+          # Do NOT rebuild initramfs here. The live ISO boots using the
+          # initramfs from the base Fedora ISO's boot area (outside the
+          # squashfs). Rebuilding dracut inside the squashfs would create a
+          # mismatched initramfs that the bootloader never loads, and
+          # kernel-install hooks from dnf may have already written conflicting
+          # artifacts into /boot.
 
           # Enable SDDM
           systemctl enable sddm
@@ -519,7 +527,10 @@ jobs:
             # Disable SELinux from the kernel command line. The config-file
             # change above only takes effect after init; selinux=0 disables
             # it immediately so no AVC denials are generated at all.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 selinux=0/' "$cfg" || true
+            # Also add rd.live.dir=/LiveOS so dracut explicitly knows where
+            # the squashfs lives — prevents mismatches when the rootfs is
+            # built from scratch rather than extracted from the original ISO.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
