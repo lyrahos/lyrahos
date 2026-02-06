@@ -449,6 +449,12 @@ jobs:
             passwd -d liveuser
           fi
 
+          # Passwordless sudo for the live session.
+          # Without this, the Calamares autostart (sudo -E calamares) fails
+          # silently because there is no terminal to enter a password.
+          echo "liveuser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/liveuser
+          chmod 440 /etc/sudoers.d/liveuser
+
           # Configure SDDM autologin for live session
           mkdir -p /etc/sddm.conf.d
           cat > /etc/sddm.conf.d/live-autologin.conf << SDDM_EOF
