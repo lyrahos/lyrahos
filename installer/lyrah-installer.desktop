@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Install Lyrah OS
+Comment=Lyrah OS installer (Calamares)
+Exec=/usr/bin/lyrah-installer-session
+Type=Application
+DesktopNames=KDE
