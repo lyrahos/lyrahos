@@ -141,7 +141,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rootfs-cache.tar
-          key: rootfs-v5-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
+          key: rootfs-v6-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       - name: Extract rootfs from cache
         if: steps.rootfs-cache.outputs.cache-hit == 'true'
@@ -220,16 +220,6 @@ jobs:
                 bash \
                 glibc-langpack-en \
                 util-linux
-
-              # Calamares: install separately so a repo issue does not
-              # take down the entire base system install.
-              dnf install -y \
-                --installroot=/rootfs \
-                --use-host-config \
-                --releasever=${{ env.FEDORA_VERSION }} \
-                --setopt=install_weak_deps=False \
-                calamares calamares-libs || \
-                echo "WARN: Calamares install failed — may need custom repo"
 
               dnf clean all --installroot=/rootfs
 
@@ -316,6 +306,56 @@ jobs:
           echo "Root entries:"
           ls squashfs-root/ | head -20
 
+      # Install Calamares in its own container run (phase 3).
+      # Previously Calamares was installed inside the phase 1 container,
+      # but after resolving 800+ base packages, dnf OOMs or hits conflicts
+      # on the second resolution. Running in a separate container frees all
+      # phase 1 memory before starting. This mirrors the kernel approach.
+      - name: Install Calamares into rootfs (phase 3)
+        if: steps.rootfs-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Phase 3: Installing Calamares installer..."
+
+          echo "=== Memory before phase 3 ==="
+          free -h
+          echo "==="
+
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
+
+              echo "Installing Calamares..."
+              dnf install -y \
+                --installroot=/rootfs \
+                --use-host-config \
+                --releasever=${{ env.FEDORA_VERSION }} \
+                --setopt=install_weak_deps=False \
+                --setopt=max_parallel_downloads=2 \
+                --exclude=kernel* \
+                --exclude=virtualbox-guest-additions* \
+                calamares
+
+              dnf clean all --installroot=/rootfs
+
+              # Hard verification: calamares binary must exist
+              if [ ! -f /rootfs/usr/bin/calamares ]; then
+                echo "FATAL: /usr/bin/calamares not found after install"
+                echo "Contents of /usr/bin/calam*:"
+                ls -la /rootfs/usr/bin/calam* 2>/dev/null || echo "  (none)"
+                echo "RPM query:"
+                rpm --root=/rootfs -q calamares 2>/dev/null || echo "  calamares not in rpm db"
+                exit 1
+              fi
+              echo "Calamares verified: $(ls -la /rootfs/usr/bin/calamares)"
+            '
+
+          echo "Phase 3 complete. Calamares installed."
+          echo "Memory after phase 3:"
+          free -h
+
       # Archive rootfs as tar to preserve permissions, ownership, xattrs
       # for caching across builds.
       - name: Create rootfs cache archive
@@ -332,7 +372,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: rootfs-cache.tar
-          key: rootfs-v5-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
+          key: rootfs-v6-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
