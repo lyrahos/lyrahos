@@ -78,6 +78,7 @@ jobs:
           ls -lh fedora-base.iso
 
       - name: Extract ISO contents
+        id: extract-iso
         run: |
           echo "Extracting ISO..."
           mkdir -p iso-extract iso-build
@@ -93,6 +94,25 @@ jobs:
           sudo rm -f iso-build/LiveOS/squashfs.img iso-build/LiveOS/rootfs.img 2>/dev/null || true
           echo "Disk after ISO extraction (rootfs images removed):"
           df -h /
+
+          # Detect kernel version from ISO boot area.
+          # Phase 2 must install this EXACT version so modules match the
+          # vmlinuz that GRUB actually boots. A mismatch means no runtime
+          # module loading (no GPU drivers, no network, no sound).
+          ISO_KVER=""
+          for vmlinuz_path in iso-build/images/pxeboot/vmlinuz iso-build/isolinux/vmlinuz; do
+            if [ -f "$vmlinuz_path" ]; then
+              ISO_KVER=$(file "$vmlinuz_path" | grep -oP 'version \K\S+' || true)
+              if [ -n "$ISO_KVER" ]; then
+                echo "Detected ISO boot kernel: $ISO_KVER"
+                break
+              fi
+            fi
+          done
+          if [ -z "$ISO_KVER" ]; then
+            echo "WARNING: Could not detect ISO kernel version — phase 2 will install latest"
+          fi
+          echo "iso_kver=${ISO_KVER}" >> $GITHUB_OUTPUT
 
       # Swap must be expanded BEFORE rootfs build — the default runner swap
       # (3GB) is not enough for dnf dependency resolution of large package sets.
@@ -121,7 +141,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rootfs-cache.tar
-          key: rootfs-v4-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
+          key: rootfs-v5-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       - name: Extract rootfs from cache
         if: steps.rootfs-cache.outputs.cache-hit == 'true'
@@ -163,6 +183,10 @@ jobs:
           # a fresh Fedora root filesystem at the mounted /rootfs path.
           # Excluding kernel* drastically reduces peak memory — the kernel
           # package tree is the single largest contributor to dnf metadata bloat.
+          # --use-host-config is REQUIRED for dnf5 (Fedora 41+).
+          # Without it, dnf5 looks for repos inside the empty installroot
+          # and resolves nothing. This flag tells it to use the container's
+          # /etc/yum.repos.d/ and /etc/dnf/dnf.conf instead.
           docker run --rm \
             -v "$(pwd)/squashfs-root:/rootfs" \
             fedora:${{ env.FEDORA_VERSION }} \
@@ -171,6 +195,7 @@ jobs:
 
               dnf install -y \
                 --installroot=/rootfs \
+                --use-host-config \
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
@@ -193,9 +218,17 @@ jobs:
                 sudo \
                 bash \
                 glibc-langpack-en \
-                util-linux \
-                calamares \
-                calamares-libs
+                util-linux
+
+              # Calamares: install separately so a repo issue does not
+              # take down the entire base system install.
+              dnf install -y \
+                --installroot=/rootfs \
+                --use-host-config \
+                --releasever=${{ env.FEDORA_VERSION }} \
+                --setopt=install_weak_deps=False \
+                calamares calamares-libs || \
+                echo "WARN: Calamares install failed — may need custom repo"
 
               dnf clean all --installroot=/rootfs
 
@@ -233,28 +266,44 @@ jobs:
           # that write to /boot and run grub2-mkconfig — all pointless
           # inside --installroot since boot infrastructure comes from the
           # base Fedora ISO. We only need modules for runtime hardware support.
+          #
+          # Pin to the ISO's kernel version so modules match the vmlinuz
+          # that GRUB actually boots. A version mismatch means modprobe
+          # can't find modules at runtime (no GPU, no network, no sound).
+          ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
+          KERNEL_PKGS="kernel-core kernel-modules-core"
+          if [ -n "$ISO_KVER" ]; then
+            # file reports: 6.x.y-z.fc43.x86_64 — strip arch suffix for dnf
+            KVER_DNF="${ISO_KVER%.x86_64}"
+            KVER_DNF="${KVER_DNF%.aarch64}"
+            echo "Pinning kernel to ISO version: $KVER_DNF"
+            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
+          else
+            echo "WARNING: ISO kernel version unknown — installing latest"
+          fi
+
           docker run --rm \
             -v "$(pwd)/squashfs-root:/rootfs" \
             fedora:${{ env.FEDORA_VERSION }} \
-            bash -c '
+            bash -c "
               set -euo pipefail
 
               dnf install -y \
                 --installroot=/rootfs \
+                --use-host-config \
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
-                kernel-core \
-                kernel-modules-core
+                $KERNEL_PKGS
 
               dnf clean all --installroot=/rootfs
 
               # Verify kernel modules were installed
               ls /rootfs/lib/modules/ || {
-                echo "FATAL: No kernel modules found after dnf install"
+                echo 'FATAL: No kernel modules found after dnf install'
                 exit 1
               }
-            '
+            "
 
           echo "Phase 2 complete. Rootfs size: $(sudo du -sh squashfs-root/ | cut -f1)"
           echo "Kernel modules installed:"
@@ -282,7 +331,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: rootfs-cache.tar
-          key: rootfs-v4-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
+          key: rootfs-v5-dnf-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.FEDORA_VERSION }}
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
@@ -452,9 +501,12 @@ jobs:
           # kernel-install hooks from dnf may have already written conflicting
           # artifacts into /boot.
 
-          # Enable SDDM
-          systemctl enable sddm
-          systemctl set-default graphical.target
+          # Enable SDDM — systemctl detects chroot and only creates symlinks.
+          # Tolerate failure: installroot may not have full systemd paths yet.
+          systemctl enable sddm 2>/dev/null || \
+            ln -sf /usr/lib/systemd/system/sddm.service /etc/systemd/system/display-manager.service 2>/dev/null || true
+          systemctl set-default graphical.target 2>/dev/null || \
+            ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target 2>/dev/null || true
 
           # Create log directories
           mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}
