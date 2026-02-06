@@ -339,7 +339,7 @@ jobs:
         run: |
           echo "Customizing Lyrah OS..."
           cat > customize.sh << 'CUSTOMIZE_EOF'
-          #!/bin/bash
+          #!/usr/bin/bash
           set -e
           echo "=== Lyrah OS Customization Script ==="
 
@@ -448,6 +448,25 @@ jobs:
 
           chmod +x customize.sh
           sudo cp customize.sh squashfs-root/
+
+          # Ensure Fedora usr-merge symlinks exist. The 'filesystem' package
+          # should create these, but --installroot inside a container may not
+          # run all scriptlets. Without /bin -> usr/bin, chroot can't resolve
+          # interpreters and fails with "No such file or directory" (exit 127).
+          for link in bin sbin lib lib64; do
+            if [ ! -e "squashfs-root/$link" ]; then
+              sudo ln -sf "usr/$link" "squashfs-root/$link"
+              echo "Created missing symlink: /$link -> usr/$link"
+            fi
+          done
+
+          # Quick sanity check: verify bash exists inside rootfs
+          if [ ! -x squashfs-root/usr/bin/bash ]; then
+            echo "ERROR: /usr/bin/bash not found in rootfs — dnf install may have failed"
+            ls -la squashfs-root/usr/bin/ | head -20
+            exit 1
+          fi
+          echo "Rootfs verified: /usr/bin/bash exists"
 
           # Mount virtual filesystems for chroot (needed for systemctl/etc).
           # dnf --installroot does not create runtime mountpoints — create them.
