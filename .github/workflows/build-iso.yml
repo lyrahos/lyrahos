@@ -68,9 +68,6 @@ jobs:
             genisoimage \
             xorriso \
             squashfs-tools \
-            erofs-utils \
-            erofsfuse \
-            fuse \
             wget \
             rsync
 
@@ -81,6 +78,7 @@ jobs:
           ls -lh fedora-base.iso
 
       - name: Extract ISO contents
+        id: extract-iso
         run: |
           echo "Extracting ISO..."
           mkdir -p iso-extract iso-build
@@ -90,11 +88,34 @@ jobs:
           sudo chmod -R u+w iso-build/
           # Free disk: remove base ISO now that contents are extracted
           rm -f fedora-base.iso
-          echo "Disk after ISO extraction:"
+          # Remove the squashfs/rootfs image — we build rootfs from scratch
+          # with dnf --installroot instead of extracting from EROFS/SquashFS.
+          # Only the boot infrastructure (EFI, grub, isolinux) is kept.
+          sudo rm -f iso-build/LiveOS/squashfs.img iso-build/LiveOS/rootfs.img 2>/dev/null || true
+          echo "Disk after ISO extraction (rootfs images removed):"
           df -h /
 
-      # Swap must be expanded BEFORE rootfs extraction — the default runner swap
-      # (3GB) is not enough for kernel EROFS mount + cp operations.
+          # Detect kernel version from ISO boot area.
+          # Phase 2 must install this EXACT version so modules match the
+          # vmlinuz that GRUB actually boots. A mismatch means no runtime
+          # module loading (no GPU drivers, no network, no sound).
+          ISO_KVER=""
+          for vmlinuz_path in iso-build/images/pxeboot/vmlinuz iso-build/isolinux/vmlinuz; do
+            if [ -f "$vmlinuz_path" ]; then
+              ISO_KVER=$(file "$vmlinuz_path" | grep -oP 'version \K\S+' || true)
+              if [ -n "$ISO_KVER" ]; then
+                echo "Detected ISO boot kernel: $ISO_KVER"
+                break
+              fi
+            fi
+          done
+          if [ -z "$ISO_KVER" ]; then
+            echo "WARNING: Could not detect ISO kernel version — phase 2 will install latest"
+          fi
+          echo "iso_kver=${ISO_KVER}" >> $GITHUB_OUTPUT
+
+      # Swap must be expanded BEFORE rootfs build — the default runner swap
+      # (3GB) is not enough for dnf dependency resolution of large package sets.
       - name: Ensure adequate swap space
         run: |
           CURRENT_SWAP_KB=$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{s+=$1} END{print int(s/1024)}')
@@ -113,250 +134,207 @@ jobs:
           fi
           free -h
 
-      # Cache the extracted rootfs to skip the slow 1.5hr FUSE extraction
-      # on subsequent builds. Key is based on Fedora ISO URL + workflow hash.
-      - name: Restore rootfs cache
-        id: rootfs-cache
-        uses: actions/cache@v4
-        with:
-          path: rootfs-cache.tar
-          key: rootfs-v2-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
-
-      - name: Extract rootfs from cache
-        if: steps.rootfs-cache.outputs.cache-hit == 'true'
-        run: |
-          echo "Rootfs cache hit — extracting from tar archive..."
-          sudo mkdir -p squashfs-root
-          sudo tar --xattrs --xattrs-include='*' -xpf rootfs-cache.tar -C squashfs-root
-          echo "Rootfs restored with preserved permissions, ownership, and xattrs"
-          echo "Root entries:"
-          ls squashfs-root/ | head -20
-          echo "Rootfs size: $(du -sh squashfs-root/ | cut -f1)"
-
-      # FIX #30: Robust rootfs extraction supporting SquashFS, ext4, and erofs
-      - name: Extract rootfs
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
+      # Build rootfs from scratch using dnf --installroot instead of
+      # extracting from the Fedora ISO's EROFS/SquashFS image.
+      #
+      # The old approach mounted the EROFS image, which triggered OOM:
+      # the kernel EROFS driver allocates non-swappable slab memory for
+      # BIG_PCLUSTER decompression, exceeding the runner's cgroup limit.
+      #
+      # dnf --installroot avoids this entirely — it downloads and installs
+      # packages in userspace with normal swappable memory.
+      #
+      # Phase 1: Install everything EXCEPT kernel* to keep peak memory low.
+      # Phase 2: Install kernel in a separate pass after phase 1 memory is freed.
+      - name: Build rootfs (phase 1 - base system, no kernel)
         run: |
           set -euo pipefail
-          echo "Extracting rootfs from Live image..."
-          mkdir -p squashfs-root
+          echo "Building rootfs from scratch using dnf --installroot..."
+          echo "Phase 1: base system (excluding kernel* to avoid OOM)"
+          sudo mkdir -p squashfs-root
 
-          echo "=== Memory diagnostics ==="
+          echo "=== Memory before phase 1 ==="
           free -h
           echo "==="
 
-          # Find the Live image (squashfs.img or rootfs.img)
-          LIVE_IMG=$(find iso-build/LiveOS -name "squashfs.img" 2>/dev/null | head -1)
-          if [ -z "$LIVE_IMG" ]; then
-            LIVE_IMG=$(find iso-build -name "squashfs.img" -o -name "rootfs.img" 2>/dev/null | head -1)
-          fi
-          if [ -z "$LIVE_IMG" ]; then
-            echo "ERROR: Could not find Live image!"
-            find iso-build -name "*.img" -ls
-            exit 1
-          fi
+          # Use a Fedora container to run dnf --installroot.
+          # The container provides Fedora repo configs; --installroot creates
+          # a fresh Fedora root filesystem at the mounted /rootfs path.
+          # Excluding kernel* drastically reduces peak memory — the kernel
+          # package tree is the single largest contributor to dnf metadata bloat.
+          # --use-host-config is REQUIRED for dnf5 (Fedora 41+).
+          # Without it, dnf5 looks for repos inside the empty installroot
+          # and resolves nothing. This flag tells it to use the container's
+          # /etc/yum.repos.d/ and /etc/dnf/dnf.conf instead.
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
 
-          echo "Found image: $LIVE_IMG"
-          IMG_TYPE=$(file -b "$LIVE_IMG")
-          echo "Image type: $IMG_TYPE"
+              dnf install -y \
+                --installroot=/rootfs \
+                --use-host-config \
+                --releasever=${{ env.FEDORA_VERSION }} \
+                --setopt=install_weak_deps=False \
+                --setopt=max_parallel_downloads=2 \
+                --exclude=kernel* \
+                --exclude=virtualbox-guest-additions* \
+                filesystem \
+                setup \
+                @kde-desktop-environment \
+                NetworkManager \
+                pipewire \
+                wireplumber \
+                sddm \
+                gamemode \
+                mangohud \
+                grub2-efi-x64 \
+                grub2-efi-x64-modules \
+                efibootmgr \
+                shim-x64 \
+                plymouth \
+                dracut \
+                systemd \
+                dnf \
+                passwd \
+                sudo \
+                bash \
+                glibc-langpack-en \
+                util-linux
 
-          # Mount a filesystem image and copy contents to squashfs-root/
-          copy_from_mount() {
-            local mount_point="$1"
-            echo "Copying rootfs from $mount_point to squashfs-root/ ..."
-            sudo cp -a "$mount_point"/. squashfs-root/
-            sudo umount "$mount_point"
-          }
+              dnf clean all --installroot=/rootfs
 
-          # Handle the Fedora two-layer structure: an outer image wraps
-          # LiveOS/rootfs.img (ext4). Mount the inner image and copy from it.
-          # $1 = mount point or directory of the outer layer.
-          # Returns 0 if rootfs.img was found and extracted, 1 otherwise.
-          try_extract_inner_rootfs() {
-            local outer="$1"
-            local rootfs_img
-            rootfs_img=$(find "$outer" -maxdepth 2 -name "rootfs.img" 2>/dev/null | head -1)
-            if [ -z "$rootfs_img" ]; then
-              return 1
-            fi
-            echo "Found inner rootfs.img: $rootfs_img ($(du -h "$rootfs_img" | cut -f1))"
-            sudo mkdir -p /mnt/rootfs-inner
-            sudo mount -o loop,ro "$rootfs_img" /mnt/rootfs-inner
-            copy_from_mount /mnt/rootfs-inner
-            return 0
-          }
-
-          if echo "$IMG_TYPE" | grep -qi "squashfs"; then
-            echo "Detected SquashFS image"
-            sudo unsquashfs -d squashfs-extract "$LIVE_IMG"
-            if try_extract_inner_rootfs squashfs-extract; then
-              sudo rm -rf squashfs-extract
-            else
-              echo "SquashFS contains rootfs directly"
-              sudo rm -rf squashfs-root
-              sudo mv squashfs-extract squashfs-root
-            fi
-
-          elif echo "$IMG_TYPE" | grep -qi "erofs"; then
-            echo "Detected EROFS image"
-
-            # The kernel EROFS driver allocates non-swappable slab memory for
-            # BIG_PCLUSTER decompression buffers. Even mounting + reading a
-            # single tiny file exceeds the runner's cgroup memory limit and
-            # triggers the OOM killer. The kernel mount approach is unusable.
-            #
-            # Use userspace-only tools instead:
-            #  1. erofsfuse — FUSE mount; decompresses in userspace where
-            #     memory is swappable and managed by normal VM pressure.
-            #  2. fsck.erofs --extract — direct file extraction, no mount.
-
-            EROFS_EXTRACTED=false
-
-            # --- Method 1: erofsfuse (userspace FUSE mount) ---
-            echo "Setting up FUSE..."
-            sudo modprobe fuse 2>/dev/null || true
-            if [ ! -c /dev/fuse ]; then
-              echo "Creating /dev/fuse device node..."
-              sudo mknod /dev/fuse c 10 229 2>/dev/null || true
-              sudo chmod 666 /dev/fuse 2>/dev/null || true
-            fi
-
-            sudo mkdir -p /mnt/erofs-fuse
-            echo "Mounting EROFS via erofsfuse (userspace)..."
-            if sudo erofsfuse "$LIVE_IMG" /mnt/erofs-fuse 2>&1; then
-              echo "erofsfuse mount succeeded"
-
-              # Check for Fedora two-layer structure
-              if sudo test -f /mnt/erofs-fuse/LiveOS/rootfs.img; then
-                echo "Found inner rootfs.img (Fedora two-layer structure)"
-                ROOTFS_SIZE=$(sudo du -h /mnt/erofs-fuse/LiveOS/rootfs.img | cut -f1)
-                echo "rootfs.img size: $ROOTFS_SIZE"
-                sudo cp /mnt/erofs-fuse/LiveOS/rootfs.img /mnt/rootfs.img
-                sudo fusermount -u /mnt/erofs-fuse
-
-                echo "Mounting rootfs.img (ext4, native kernel mount)..."
-                sudo mkdir -p /mnt/rootfs-inner
-                sudo mount -o loop,ro /mnt/rootfs.img /mnt/rootfs-inner
-                copy_from_mount /mnt/rootfs-inner
-                sudo rm -f /mnt/rootfs.img
-              else
-                echo "EROFS contains rootfs directly — copying per-directory..."
-                FUSE_MNT=/mnt/erofs-fuse
-
-                # Helper: copy one entry from the FUSE mount with cache flush.
-                fuse_copy_entry() {
-                  local src="$1" dst="$2" label="$3"
-                  echo "  Copying $label ..."
-                  sudo cp -a "$src" "$dst"
-                  sync
-                  echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null 2>&1 || true
-                }
-
-                # Helper: copy a large directory by splitting into its children.
-                # Avoids multi-GB single copies that stall through FUSE.
-                fuse_copy_split() {
-                  local src_dir="$1" dst_dir="$2" label="$3"
-                  echo "  Copying $label (split into subdirectories)..."
-                  sudo mkdir -p "$dst_dir"
-                  for child in $(sudo ls -A "$src_dir"); do
-                    fuse_copy_entry "$src_dir/$child" "$dst_dir/" "$label/$child"
-                  done
-                  sudo chmod --reference="$src_dir" "$dst_dir" 2>/dev/null || true
-                  sudo chown --reference="$src_dir" "$dst_dir" 2>/dev/null || true
-                }
-
-                for name in $(sudo ls -A "$FUSE_MNT"); do
-                  if [ "$name" = "usr" ]; then
-                    # /usr is ~3-4 GB — split into subdirectories, and further
-                    # split /usr/lib and /usr/share which are each ~1-2 GB.
-                    echo "  Copying /usr (split into subdirectories)..."
-                    sudo mkdir -p squashfs-root/usr
-                    for subname in $(sudo ls -A "$FUSE_MNT/usr"); do
-                      if [ "$subname" = "lib" ] || [ "$subname" = "lib64" ] || [ "$subname" = "share" ]; then
-                        fuse_copy_split "$FUSE_MNT/usr/$subname" "squashfs-root/usr/$subname" "/usr/$subname"
-                      else
-                        fuse_copy_entry "$FUSE_MNT/usr/$subname" squashfs-root/usr/ "/usr/$subname"
-                      fi
-                    done
-                    sudo chmod --reference="$FUSE_MNT/usr" squashfs-root/usr 2>/dev/null || true
-                    sudo chown --reference="$FUSE_MNT/usr" squashfs-root/usr 2>/dev/null || true
-                  else
-                    fuse_copy_entry "$FUSE_MNT/$name" squashfs-root/ "/$name"
-                  fi
-                done
-                sudo fusermount -u /mnt/erofs-fuse
-                echo "EROFS direct copy complete"
-              fi
-              EROFS_EXTRACTED=true
-            else
-              echo "erofsfuse failed — FUSE may not be available in this environment"
-              sudo fusermount -u /mnt/erofs-fuse 2>/dev/null || true
-            fi
-
-            # --- Method 2: fsck.erofs --extract (no mount needed) ---
-            if [ "$EROFS_EXTRACTED" = "false" ]; then
-              echo "Falling back to fsck.erofs --extract (this may be slow)..."
-              if sudo fsck.erofs --extract=squashfs-root "$LIVE_IMG" 2>&1; then
-                echo "fsck.erofs --extract succeeded"
-                EROFS_EXTRACTED=true
-              else
-                echo "ERROR: All EROFS extraction methods failed"
-                echo "--- diagnostics ---"
-                echo "/dev/fuse:" && ls -la /dev/fuse 2>&1 || echo "(missing)"
-                echo "Kernel modules:" && lsmod | grep -iE "erofs|fuse" || echo "(none)"
-                echo "erofs-utils version:" && fsck.erofs --version 2>&1 || echo "(unknown)"
-                echo "erofsfuse path:" && which erofsfuse 2>&1 || echo "(not found)"
-                echo "Cgroup memory limit:" && cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "(unknown)"
+              # Verify install actually wrote files
+              if [ ! -x /rootfs/usr/bin/bash ]; then
+                echo "FATAL: /usr/bin/bash missing after dnf install — rootfs is empty"
+                ls -la /rootfs/ || true
                 exit 1
               fi
-            fi
+              echo "Rootfs verified inside container: /usr/bin/bash exists"
+            '
 
-          elif echo "$IMG_TYPE" | grep -qiE "ext[234] filesystem"; then
-            echo "Detected ext filesystem image"
-            sudo mkdir -p /mnt/rootfs-lower
-            sudo mount -o loop,ro "$LIVE_IMG" /mnt/rootfs-lower
-            if ! try_extract_inner_rootfs /mnt/rootfs-lower; then
-              copy_from_mount /mnt/rootfs-lower
-            else
-              sudo umount /mnt/rootfs-lower 2>/dev/null || true
-            fi
+          echo "Phase 1 complete. Rootfs size: $(sudo du -sh squashfs-root/ | cut -f1)"
+          echo "Memory after phase 1:"
+          free -h
+          echo "Disk after phase 1:"
+          df -h /
 
+      - name: Install kernel into rootfs (phase 2)
+        run: |
+          set -euo pipefail
+          echo "Phase 2: Installing kernel (separate pass to avoid OOM)..."
+
+          echo "=== Memory before phase 2 ==="
+          free -h
+          echo "==="
+
+          # Separate container run so phase 1 memory is fully released.
+          # Only the kernel package tree is resolved here — much smaller
+          # dependency graph than the full system.
+          #
+          # Use kernel-core + kernel-modules-core instead of the 'kernel'
+          # meta-package. The meta-package triggers kernel-install hooks
+          # that write to /boot and run grub2-mkconfig — all pointless
+          # inside --installroot since boot infrastructure comes from the
+          # base Fedora ISO. We only need modules for runtime hardware support.
+          #
+          # Pin to the ISO's kernel version so modules match the vmlinuz
+          # that GRUB actually boots. A version mismatch means modprobe
+          # can't find modules at runtime (no GPU, no network, no sound).
+          ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
+          KERNEL_PKGS="kernel-core kernel-modules-core"
+          if [ -n "$ISO_KVER" ]; then
+            # file reports: 6.x.y-z.fc43.x86_64 — strip arch suffix for dnf
+            KVER_DNF="${ISO_KVER%.x86_64}"
+            KVER_DNF="${KVER_DNF%.aarch64}"
+            echo "Pinning kernel to ISO version: $KVER_DNF"
+            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
           else
-            echo "WARNING: Unknown image type '$IMG_TYPE', attempting mount..."
-            sudo mkdir -p /mnt/rootfs-lower
-            sudo mount -o loop,ro "$LIVE_IMG" /mnt/rootfs-lower
-            if ! try_extract_inner_rootfs /mnt/rootfs-lower; then
-              copy_from_mount /mnt/rootfs-lower
-            else
-              sudo umount /mnt/rootfs-lower 2>/dev/null || true
-            fi
+            echo "WARNING: ISO kernel version unknown — installing latest"
           fi
 
-          echo "Rootfs ready at squashfs-root/"
-          echo "Disk usage after extraction:"
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c "
+              set -euo pipefail
+
+              dnf install -y \
+                --installroot=/rootfs \
+                --use-host-config \
+                --releasever=${{ env.FEDORA_VERSION }} \
+                --setopt=install_weak_deps=False \
+                --setopt=max_parallel_downloads=2 \
+                $KERNEL_PKGS
+
+              dnf clean all --installroot=/rootfs
+
+              # Verify kernel modules were installed
+              ls /rootfs/lib/modules/ || {
+                echo 'FATAL: No kernel modules found after dnf install'
+                exit 1
+              }
+            "
+
+          echo "Phase 2 complete. Rootfs size: $(sudo du -sh squashfs-root/ | cut -f1)"
+          echo "Kernel modules installed:"
+          ls squashfs-root/lib/modules/ 2>/dev/null || echo "WARNING: No kernel modules found"
+          echo "Memory after phase 2:"
+          free -h
+          echo "Disk after phase 2:"
           df -h /
           echo "Root entries:"
           ls squashfs-root/ | head -20
 
-      # Archive rootfs as tar to preserve permissions, ownership, xattrs
-      # (including SELinux labels) for caching. Previous approach used
-      # chmod -R a+rX which corrupted file permissions and caused
-      # dbus-broker and other services to fail on boot.
-      - name: Create rootfs cache archive
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
+      # Install Calamares in its own container run (phase 3).
+      # Previously Calamares was installed inside the phase 1 container,
+      # but after resolving 800+ base packages, dnf OOMs or hits conflicts
+      # on the second resolution. Running in a separate container frees all
+      # phase 1 memory before starting. This mirrors the kernel approach.
+      - name: Install Calamares into rootfs (phase 3)
         run: |
-          echo "Creating rootfs tar archive (preserves permissions, xattrs, ownership)..."
-          sudo tar --xattrs --xattrs-include='*' -cpf rootfs-cache.tar -C squashfs-root .
-          sudo chmod 644 rootfs-cache.tar
-          echo "Archive size: $(du -sh rootfs-cache.tar | cut -f1)"
+          set -euo pipefail
+          echo "Phase 3: Installing Calamares installer..."
 
-      # Save cache immediately after extraction so it persists even if later steps fail
-      - name: Save rootfs cache
-        if: steps.rootfs-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: rootfs-cache.tar
-          key: rootfs-v2-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
+          echo "=== Memory before phase 3 ==="
+          free -h
+          echo "==="
+
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
+
+              echo "Installing Calamares..."
+              dnf install -y \
+                --installroot=/rootfs \
+                --use-host-config \
+                --releasever=${{ env.FEDORA_VERSION }} \
+                --setopt=install_weak_deps=False \
+                --setopt=max_parallel_downloads=2 \
+                --exclude=kernel* \
+                --exclude=virtualbox-guest-additions* \
+                calamares
+
+              dnf clean all --installroot=/rootfs
+
+              # Hard verification: calamares binary must exist
+              if [ ! -f /rootfs/usr/bin/calamares ]; then
+                echo "FATAL: /usr/bin/calamares not found after install"
+                echo "Contents of /usr/bin/calam*:"
+                ls -la /rootfs/usr/bin/calam* 2>/dev/null || echo "  (none)"
+                echo "RPM query:"
+                rpm --root=/rootfs -q calamares 2>/dev/null || echo "  calamares not in rpm db"
+                exit 1
+              fi
+              echo "Calamares verified: $(ls -la /rootfs/usr/bin/calamares)"
+            '
+
+          echo "Phase 3 complete. Calamares installed."
+          echo "Memory after phase 3:"
+          free -h
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
@@ -395,12 +373,16 @@ jobs:
 
           sudo mkdir -p squashfs-root/usr/bin
           sudo cp scripts/luna-session squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-installer-session squashfs-root/usr/bin/
           sudo cp scripts/lyrah-switch-mode squashfs-root/usr/bin/
           sudo cp scripts/lyrah-configure-autologin squashfs-root/usr/bin/
           sudo cp scripts/lyrah-update squashfs-root/usr/bin/
           sudo cp scripts/lyrah-upload-log squashfs-root/usr/bin/
           sudo cp scripts/lyrah-crash-monitor squashfs-root/usr/bin/
           sudo chmod +x squashfs-root/usr/bin/luna-session squashfs-root/usr/bin/lyrah-*
+
+          # Installer session .desktop (SDDM can select this as a session)
+          sudo cp installer/lyrah-installer.desktop squashfs-root/usr/share/wayland-sessions/
 
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
@@ -419,11 +401,8 @@ jobs:
           sudo mkdir -p squashfs-root/etc/logrotate.d
           sudo cp logging/logrotate-lyrah.conf squashfs-root/etc/logrotate.d/lyrah
 
-          # Live session: Calamares autostart for liveuser
-          sudo mkdir -p squashfs-root/etc/skel/.config/autostart
-          sudo cp installer/calamares-autostart.desktop squashfs-root/etc/skel/.config/autostart/
-
-          # Live session: Desktop shortcut to re-launch installer
+          # Live session: Desktop shortcut to launch installer if user
+          # switches to the Plasma session from SDDM
           sudo mkdir -p squashfs-root/etc/skel/Desktop
           sudo cp installer/install-lyrah.desktop squashfs-root/etc/skel/Desktop/
           sudo chmod +x squashfs-root/etc/skel/Desktop/install-lyrah.desktop
@@ -433,27 +412,17 @@ jobs:
         run: |
           echo "Customizing Lyrah OS..."
           cat > customize.sh << 'CUSTOMIZE_EOF'
-          #!/bin/bash
+          #!/usr/bin/bash
           set -e
           echo "=== Lyrah OS Customization Script ==="
 
-          # Install Calamares and dependencies
-          # Limit parallel downloads and skip weak deps to reduce memory pressure.
-          # dnf5 metadata parsing can spike RAM; install_weak_deps=False shrinks the
-          # dependency tree significantly for Calamares.
-          dnf install -y \
-            --setopt=max_parallel_downloads=2 \
-            --setopt=install_weak_deps=False \
-            calamares calamares-libs || {
-            echo "WARN: Calamares not in default repos, trying direct..."
-            dnf install -y \
-              --setopt=max_parallel_downloads=2 \
-              --setopt=install_weak_deps=False \
-              calamares || echo "Calamares install skipped - may need custom repo"
-          }
+          # Calamares is already installed via dnf --installroot (build step).
+          # No need to run dnf inside the chroot — avoids memory pressure.
 
-          # Free disk and memory: clean dnf caches inside chroot
-          dnf clean all 2>/dev/null || true
+          # Base system configuration for --installroot rootfs
+          echo "LANG=en_US.UTF-8" > /etc/locale.conf
+          ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+          echo "lyrahos" > /etc/hostname
 
           # Update system name
           echo "Lyrah OS" > /etc/fedora-release
@@ -484,12 +453,18 @@ jobs:
             passwd -d liveuser
           fi
 
+          # Passwordless sudo for the live session.
+          # Without this, the Calamares autostart (sudo -E calamares) fails
+          # silently because there is no terminal to enter a password.
+          echo "liveuser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/liveuser
+          chmod 440 /etc/sudoers.d/liveuser
+
           # Configure SDDM autologin for live session
           mkdir -p /etc/sddm.conf.d
           cat > /etc/sddm.conf.d/live-autologin.conf << SDDM_EOF
           [Autologin]
           User=liveuser
-          Session=plasma
+          Session=lyrah-installer
           Relogin=false
           SDDM_EOF
 
@@ -523,21 +498,25 @@ jobs:
           fi
 
           # Exclude dracut livenet module — not needed for local ISO boot.
-          # Without this, 29-parse-livenet.sh errors with
-          # "get_url_handler: command not found" because the url-lib dracut
-          # module isn't included in the initramfs.
+          # This config is inert during live boot (the ISO's own initramfs is
+          # used), but benefits the installed system when Calamares writes to
+          # disk and regenerates initramfs.
           mkdir -p /etc/dracut.conf.d
           echo 'omit_dracutmodules+=" livenet "' > /etc/dracut.conf.d/lyrah-live.conf
 
-          # Rebuild initramfs with the new dracut config
-          KVER=$(ls /lib/modules/ | sort -V | tail -1)
-          if [ -n "$KVER" ]; then
-            dracut -f --kver "$KVER" 2>/dev/null || echo "WARN: dracut rebuild skipped"
-          fi
+          # Do NOT rebuild initramfs here. The live ISO boots using the
+          # initramfs from the base Fedora ISO's boot area (outside the
+          # squashfs). Rebuilding dracut inside the squashfs would create a
+          # mismatched initramfs that the bootloader never loads, and
+          # kernel-install hooks from dnf may have already written conflicting
+          # artifacts into /boot.
 
-          # Enable SDDM
-          systemctl enable sddm
-          systemctl set-default graphical.target
+          # Enable SDDM — systemctl detects chroot and only creates symlinks.
+          # Tolerate failure: installroot may not have full systemd paths yet.
+          systemctl enable sddm 2>/dev/null || \
+            ln -sf /usr/lib/systemd/system/sddm.service /etc/systemd/system/display-manager.service 2>/dev/null || true
+          systemctl set-default graphical.target 2>/dev/null || \
+            ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target 2>/dev/null || true
 
           # Create log directories
           mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}
@@ -552,14 +531,45 @@ jobs:
           chmod +x customize.sh
           sudo cp customize.sh squashfs-root/
 
-          # Mount virtual filesystems for chroot (needed for dnf/systemctl)
+          # Ensure Fedora usr-merge symlinks exist. The 'filesystem' package
+          # should create these, but --installroot inside a container may not
+          # run all scriptlets. Without /bin -> usr/bin, chroot can't resolve
+          # interpreters and fails with "No such file or directory" (exit 127).
+          for link in bin sbin lib lib64; do
+            if [ ! -e "squashfs-root/$link" ]; then
+              sudo ln -sf "usr/$link" "squashfs-root/$link"
+              echo "Created missing symlink: /$link -> usr/$link"
+            fi
+          done
+
+          # Quick sanity check: verify bash exists inside rootfs
+          if [ ! -x squashfs-root/usr/bin/bash ]; then
+            echo "ERROR: /usr/bin/bash not found in rootfs — dnf install may have failed"
+            ls -la squashfs-root/usr/bin/ | head -20
+            exit 1
+          fi
+          echo "Rootfs verified: /usr/bin/bash exists"
+
+          # Mount virtual filesystems for chroot (needed for systemctl/etc).
+          # dnf --installroot does not create runtime mountpoints — create them.
+          sudo mkdir -p \
+            squashfs-root/proc \
+            squashfs-root/sys \
+            squashfs-root/dev \
+            squashfs-root/dev/pts \
+            squashfs-root/run
           sudo mount --bind /proc squashfs-root/proc
           sudo mount --bind /sys squashfs-root/sys
           sudo mount --bind /dev squashfs-root/dev
           sudo mount --bind /dev/pts squashfs-root/dev/pts
           sudo mount --bind /run squashfs-root/run || true
 
-          # Provide DNS resolution inside chroot
+          # Provide DNS resolution inside chroot.
+          # systemd installs /etc/resolv.conf as a symlink to
+          # ../run/systemd/resolve/stub-resolv.conf. After bind-mounting
+          # /run above, that symlink resolves to the host's resolv.conf,
+          # so cp fails with "same file". Remove the symlink first.
+          sudo rm -f squashfs-root/etc/resolv.conf
           sudo cp /etc/resolv.conf squashfs-root/etc/resolv.conf
 
           echo "Memory before chroot customization:"
@@ -630,7 +640,10 @@ jobs:
             # Disable SELinux from the kernel command line. The config-file
             # change above only takes effect after init; selinux=0 disables
             # it immediately so no AVC denials are generated at all.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 selinux=0/' "$cfg" || true
+            # Also add rd.live.dir=/LiveOS so dracut explicitly knows where
+            # the squashfs lives — prevents mismatches when the rootfs is
+            # built from scratch rather than extracted from the original ISO.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
