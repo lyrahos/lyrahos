@@ -449,7 +449,14 @@ jobs:
           chmod +x customize.sh
           sudo cp customize.sh squashfs-root/
 
-          # Mount virtual filesystems for chroot (needed for dnf/systemctl)
+          # Mount virtual filesystems for chroot (needed for systemctl/etc).
+          # dnf --installroot does not create runtime mountpoints — create them.
+          sudo mkdir -p \
+            squashfs-root/proc \
+            squashfs-root/sys \
+            squashfs-root/dev \
+            squashfs-root/dev/pts \
+            squashfs-root/run
           sudo mount --bind /proc squashfs-root/proc
           sudo mount --bind /sys squashfs-root/sys
           sudo mount --bind /dev squashfs-root/dev
