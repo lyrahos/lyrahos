@@ -119,15 +119,18 @@ jobs:
         id: rootfs-cache
         uses: actions/cache@v4
         with:
-          path: squashfs-root
-          key: rootfs-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
+          path: rootfs-cache.tar
+          key: rootfs-v2-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
 
-      - name: Verify rootfs cache
+      - name: Extract rootfs from cache
         if: steps.rootfs-cache.outputs.cache-hit == 'true'
         run: |
-          echo "Rootfs cache hit — skipping slow FUSE extraction"
-          echo "Cache contents:"
-          ls -la squashfs-root/ | head -20
+          echo "Rootfs cache hit — extracting from tar archive..."
+          sudo mkdir -p squashfs-root
+          sudo tar --xattrs --xattrs-include='*' -xpf rootfs-cache.tar -C squashfs-root
+          echo "Rootfs restored with preserved permissions, ownership, and xattrs"
+          echo "Root entries:"
+          ls squashfs-root/ | head -20
           echo "Rootfs size: $(du -sh squashfs-root/ | cut -f1)"
 
       # FIX #30: Robust rootfs extraction supporting SquashFS, ext4, and erofs
@@ -335,24 +338,25 @@ jobs:
           echo "Root entries:"
           ls squashfs-root/ | head -20
 
-      # Make all files readable so the cache action can archive them.
-      # Some rootfs files have restrictive permissions (setuid binaries,
-      # root-only dirs). The actual permissions are preserved in the
-      # SquashFS repack via cp -a's metadata preservation.
-      - name: Fix permissions for caching
+      # Archive rootfs as tar to preserve permissions, ownership, xattrs
+      # (including SELinux labels) for caching. Previous approach used
+      # chmod -R a+rX which corrupted file permissions and caused
+      # dbus-broker and other services to fail on boot.
+      - name: Create rootfs cache archive
         if: steps.rootfs-cache.outputs.cache-hit != 'true'
         run: |
-          echo "Making squashfs-root readable for caching..."
-          sudo chmod -R a+rX squashfs-root/
-          echo "Done"
+          echo "Creating rootfs tar archive (preserves permissions, xattrs, ownership)..."
+          sudo tar --xattrs --xattrs-include='*' -cpf rootfs-cache.tar -C squashfs-root .
+          sudo chmod 644 rootfs-cache.tar
+          echo "Archive size: $(du -sh rootfs-cache.tar | cut -f1)"
 
       # Save cache immediately after extraction so it persists even if later steps fail
       - name: Save rootfs cache
         if: steps.rootfs-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: squashfs-root
-          key: rootfs-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
+          path: rootfs-cache.tar
+          key: rootfs-v2-${{ hashFiles('.github/workflows/build-iso.yml') }}-${{ env.BASE_ISO_URL }}
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
@@ -507,6 +511,28 @@ jobs:
 
           chown -R liveuser:liveuser /home/liveuser
 
+          # Set SELinux to permissive for live session.
+          # The ISO remastering process (extract + repack) can lose SELinux
+          # xattrs. With enforcing mode, services like dbus-broker are denied
+          # access to their own config files and fail to start, cascading into
+          # failures of every D-Bus dependent service (logind, upower, etc.).
+          if [ -f /etc/selinux/config ]; then
+            sed -i 's/SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
+          fi
+
+          # Exclude dracut livenet module — not needed for local ISO boot.
+          # Without this, 29-parse-livenet.sh errors with
+          # "get_url_handler: command not found" because the url-lib dracut
+          # module isn't included in the initramfs.
+          mkdir -p /etc/dracut.conf.d
+          echo 'omit_dracutmodules+=" livenet "' > /etc/dracut.conf.d/lyrah-live.conf
+
+          # Rebuild initramfs with the new dracut config
+          KVER=$(ls /lib/modules/ | sort -V | tail -1)
+          if [ -n "$KVER" ]; then
+            dracut -f --kver "$KVER" 2>/dev/null || echo "WARN: dracut rebuild skipped"
+          fi
+
           # Enable SDDM
           systemctl enable sddm
           systemctl set-default graphical.target
@@ -573,7 +599,7 @@ jobs:
 
           # Create SquashFS directly from squashfs-root/ directory.
           # mksquashfs reads and compresses in streaming fashion - no intermediate copy needed.
-          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp xz -b 1M
+          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp xz -b 1M -xattrs
 
           # Clean up extracted rootfs and replace old image
           sudo rm -rf squashfs-root
