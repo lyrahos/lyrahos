@@ -19,6 +19,14 @@ echo "Removed installer shortcut from desktop"
 # writes the correct autologin for the chosen session.
 rm -f /etc/sddm.conf.d/live-autologin.conf 2>/dev/null || true
 
+# Remove the liveuser account.  It was created for the live/installer
+# session and must not appear in SDDM on the installed system.
+if id liveuser &>/dev/null; then
+    userdel -rf liveuser 2>/dev/null || true
+    rm -f /etc/sudoers.d/liveuser 2>/dev/null || true
+    echo "Removed liveuser account"
+fi
+
 # Disable KDE Plasma Welcome Center — it shows generic Fedora/KDE
 # branding that does not apply to Lyrah OS.
 mkdir -p /etc/xdg/autostart
