@@ -490,6 +490,17 @@ jobs:
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
 
+          # Remove Fedora EFI files from rootfs.
+          # The grub2-efi-x64 and shim-x64 RPMs install a GRUB binary and
+          # redirect grub.cfg into /boot/efi/EFI/fedora/. If these ship in
+          # the squashfs, Calamares copies them to the real ESP and the
+          # firmware shows a duplicate "Fedora" boot entry with stale UUIDs
+          # that either hangs at a GRUB shell or fails to find the kernel.
+          # Calamares's bootloader module re-installs GRUB properly via
+          # grub2-install, so these pre-packaged files are never needed.
+          sudo rm -rf squashfs-root/boot/efi/EFI/fedora
+          echo "Removed stale Fedora EFI directory from rootfs"
+
           # Post-install scripts for Calamares shellprocess
           sudo mkdir -p squashfs-root/usr/share/lyrah/installer
           sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/

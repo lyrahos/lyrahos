@@ -14,6 +14,18 @@ set -e
 
 echo "=== Lyrah OS Kernel Setup ==="
 
+# --- Clean up stale Fedora EFI files ---
+# The grub2-efi-x64 and shim-x64 RPMs install their binaries and a
+# redirect grub.cfg into /boot/efi/EFI/fedora/ inside the rootfs.
+# When Calamares unpacks the rootfs, those files land on the real ESP
+# and the firmware auto-discovers them as a second "Fedora" boot entry
+# with stale UUIDs. Remove them BEFORE the bootloader module runs
+# grub2-install, which creates the correct Lyrah entry from scratch.
+if [ -d /boot/efi/EFI/fedora ]; then
+    rm -rf /boot/efi/EFI/fedora
+    echo "Removed stale Fedora EFI directory from ESP"
+fi
+
 # Find the installed kernel version
 KVER=$(ls /lib/modules/ 2>/dev/null | sort -V | tail -1)
 if [ -z "$KVER" ]; then
