@@ -60,6 +60,16 @@ fi
 BLS_DIR="/boot/loader/entries"
 mkdir -p "$BLS_DIR"
 
+# Clean up any Fedora BLS entries to prevent duplicate boot menu entries.
+# This is necessary because the ISO may be built from a Fedora base, and
+# we only want Lyrah OS entries in the boot menu.
+FEDORA_ENTRIES=$(ls "$BLS_DIR"/*fedora* "$BLS_DIR"/*Fedora* 2>/dev/null || true)
+if [ -n "$FEDORA_ENTRIES" ]; then
+    echo "Removing Fedora BLS entries to prevent duplicate boot entries..."
+    rm -f "$BLS_DIR"/*fedora* "$BLS_DIR"/*Fedora* 2>/dev/null || true
+    echo "Cleaned up Fedora entries"
+fi
+
 # Check if a BLS entry already exists for this kernel
 EXISTING_BLS=$(ls "$BLS_DIR"/*"$KVER"* 2>/dev/null | head -1)
 if [ -n "$EXISTING_BLS" ]; then
