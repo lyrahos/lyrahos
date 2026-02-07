@@ -449,6 +449,48 @@ jobs:
           echo "Memory after phase 3:"
           free -h
 
+      # Build luna-ui (the gaming frontend) from source.
+      # luna-ui is not published to Copr yet, so we compile it during the
+      # ISO build. Build dependencies stay in the container; only the
+      # binary and resources are installed into the rootfs.
+      - name: Build luna-ui from source (phase 4)
+        run: |
+          set -euo pipefail
+          echo "Phase 4: Building luna-ui from source..."
+
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            -v "$(pwd)/luna-ui:/src/luna-ui:ro" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
+
+              echo "Installing luna-ui build dependencies..."
+              dnf install -y \
+                cmake gcc-c++ \
+                qt6-qtbase-devel qt6-qtdeclarative-devel \
+                SDL2-devel sqlite-devel
+
+              echo "Building luna-ui..."
+              mkdir /build && cd /build
+              cmake /src/luna-ui -DCMAKE_INSTALL_PREFIX=/usr
+              cmake --build . -j$(nproc)
+
+              echo "Installing luna-ui into rootfs..."
+              DESTDIR=/rootfs cmake --install .
+
+              # Verify binary was installed
+              if [ ! -f /rootfs/usr/bin/luna-ui ]; then
+                echo "FATAL: luna-ui binary not found after install"
+                exit 1
+              fi
+              echo "luna-ui installed: $(ls -la /rootfs/usr/bin/luna-ui)"
+              echo "Resources:"
+              ls -la /rootfs/usr/share/luna-ui/ 2>/dev/null || echo "  (no resources dir)"
+            '
+
+          echo "Phase 4 complete. luna-ui built and installed."
+
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
         run: |
