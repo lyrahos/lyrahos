@@ -114,6 +114,92 @@ jobs:
           fi
           echo "iso_kver=${ISO_KVER}" >> $GITHUB_OUTPUT
 
+      # Replace Fedora Plymouth theme in the boot area initramfs with Lyrah theme.
+      # The live ISO uses the base Fedora initramfs from iso-build/isolinux/ and
+      # iso-build/images/pxeboot/, which has the Fedora theme embedded. This step
+      # extracts the initramfs, replaces the Fedora theme with Lyrah, and repacks it.
+      - name: Customize boot area Plymouth theme
+        run: |
+          set -euo pipefail
+          echo "=== Customizing Plymouth theme in boot initramfs ==="
+
+          # Function to extract, modify, and repack an initramfs
+          customize_initramfs() {
+            local initramfs_path="$1"
+
+            if [ ! -f "$initramfs_path" ]; then
+              echo "WARN: $initramfs_path not found, skipping"
+              return 0
+            fi
+
+            echo "Processing: $initramfs_path"
+
+            # Create temporary directory for extraction
+            local work_dir=$(mktemp -d)
+            cd "$work_dir"
+
+            # Detect compression and extract
+            if file "$initramfs_path" | grep -q "gzip"; then
+              echo "  Detected gzip compression"
+              gunzip -c "$initramfs_path" | cpio -idm --quiet 2>/dev/null || true
+            elif file "$initramfs_path" | grep -q "XZ"; then
+              echo "  Detected XZ compression"
+              xz -dc "$initramfs_path" | cpio -idm --quiet 2>/dev/null || true
+            else
+              echo "  Extracting as plain cpio"
+              cpio -idm --quiet < "$initramfs_path" 2>/dev/null || true
+            fi
+
+            # Check if Plymouth theme directory exists
+            if [ -d usr/share/plymouth/themes ]; then
+              echo "  Found Plymouth themes directory"
+
+              # Remove Fedora themes
+              sudo rm -rf usr/share/plymouth/themes/fedora* usr/share/plymouth/themes/spinner 2>/dev/null || true
+              echo "  Removed Fedora themes"
+
+              # Add Lyrah theme
+              mkdir -p usr/share/plymouth/themes/lyrah
+              cp -r "${GITHUB_WORKSPACE}/themes/plymouth/lyrah/"* usr/share/plymouth/themes/lyrah/
+              echo "  Added Lyrah theme"
+
+              # Update plymouthd.conf if it exists
+              if [ -f etc/plymouth/plymouthd.conf ]; then
+                sed -i 's/^Theme=.*/Theme=lyrah/' etc/plymouth/plymouthd.conf
+                echo "  Updated plymouthd.conf to use Lyrah theme"
+              else
+                # Create config if it doesn't exist
+                mkdir -p etc/plymouth
+                echo "[Daemon]" > etc/plymouth/plymouthd.conf
+                echo "Theme=lyrah" >> etc/plymouth/plymouthd.conf
+                echo "  Created plymouthd.conf with Lyrah theme"
+              fi
+            else
+              echo "  WARN: No Plymouth themes directory found in initramfs"
+            fi
+
+            # Repack the initramfs (using gzip compression like Fedora does)
+            echo "  Repacking initramfs..."
+            find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | gzip -9 > "${work_dir}/initramfs.new"
+
+            # Replace original
+            sudo cp "${work_dir}/initramfs.new" "$initramfs_path"
+            echo "  Replaced $initramfs_path"
+
+            # Cleanup
+            cd /
+            rm -rf "$work_dir"
+            echo "  Done processing $initramfs_path"
+          }
+
+          # Process BIOS/isolinux initramfs
+          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/isolinux/initrd.img"
+
+          # Process PXE boot initramfs if it exists
+          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/images/pxeboot/initrd.img"
+
+          echo "=== Plymouth theme customization complete ==="
+
       # Swap must be expanded BEFORE rootfs build — the default runner swap
       # (3GB) is not enough for dnf dependency resolution of large package sets.
       - name: Ensure adequate swap space
@@ -364,6 +450,12 @@ jobs:
           # Plymouth theme
           sudo mkdir -p squashfs-root/usr/share/plymouth/themes/lyrah
           sudo cp -r themes/plymouth/lyrah/* squashfs-root/usr/share/plymouth/themes/lyrah/
+          # Set Lyrah as the default Plymouth theme. This updates
+          # /etc/plymouth/plymouthd.conf inside the squashfs. We don't
+          # rebuild initramfs here (the live ISO uses Fedora's initramfs
+          # from the boot area), but this ensures the theme is active for
+          # the installed system and any live boot Plymouth displays.
+          sudo chroot squashfs-root /bin/bash -c "plymouth-set-default-theme lyrah" 2>/dev/null || echo "WARN: Could not set Plymouth theme (non-fatal)"
 
           # Scripts
           sudo mkdir -p squashfs-root/usr/share/lyrah/setup
@@ -644,7 +736,8 @@ jobs:
             # Also add rd.live.dir=/LiveOS so dracut explicitly knows where
             # the squashfs lives — prevents mismatches when the rootfs is
             # built from scratch rather than extracted from the original ISO.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0/' "$cfg" || true
+            # Add Plymouth splash parameters for smooth boot experience.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 splash plymouth.enable=1/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
@@ -674,6 +767,11 @@ jobs:
               sudo sed -i -E 's/set timeout_style=.*/set timeout_style=hidden/' "$cfg" || true
             else
               sudo sed -i -E '/^set timeout=0/a set timeout_style=hidden' "$cfg" || true
+            fi
+            # Force console terminal mode instead of gfxterm to minimize
+            # blue screen flash during GRUB → kernel transition.
+            if ! grep -q 'terminal_output console' "$cfg" 2>/dev/null; then
+              sudo sed -i -E '/^set timeout=0/i terminal_output console' "$cfg" || true
             fi
           done
 
