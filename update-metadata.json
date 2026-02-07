@@ -1,7 +1,7 @@
 {
-  "version": "1.0.6",
-  "branch": "testing",
-  "date": "2026-02-07T01:49:10Z",
-  "commit": "8552d0ba7d80cbe4284cf4793b0936c31b4de5cd",
-  "image": "ghcr.io/lyrahos/lyrahos/lyrah-os:testing"
+  "version": "1.0.7",
+  "branch": "dev",
+  "date": "2026-02-07T02:02:32Z",
+  "commit": "4374c9ccaca929b52c4866bac02bdfb064b685cd",
+  "image": "ghcr.io/lyrahos/lyrahos/lyrah-os:dev"
 }
