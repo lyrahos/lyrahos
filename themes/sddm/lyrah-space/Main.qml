@@ -1,5 +1,4 @@
 import QtQuick 2.15
-import QtQuick.Controls 2.15
 import SddmComponents 2.0
 
 Rectangle {
@@ -145,37 +144,56 @@ Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
-            TextField {
+            // SddmComponents TextBox for username
+            TextBox {
                 id: userField
                 width: parent.width
-                placeholderText: "Username"
+                height: 40
                 text: userModel.lastUser
-                color: "white"
-                background: Rectangle { color: "#1a1f2e"; radius: 8 }
+                font.pixelSize: 14
+                color: "#1a1f2e"
+                borderColor: "#2a2f3e"
+                focusColor: "#8b5cf6"
+                textColor: "white"
             }
 
-            TextField {
+            // SddmComponents PasswordBox for password
+            PasswordBox {
                 id: passwordField
                 width: parent.width
-                placeholderText: "Password"
-                echoMode: TextInput.Password
-                color: "white"
-                background: Rectangle { color: "#1a1f2e"; radius: 8 }
-                Keys.onReturnPressed: sddm.login(userField.text, passwordField.text, sessionSelect.currentIndex)
+                height: 40
+                font.pixelSize: 14
+                color: "#1a1f2e"
+                borderColor: "#2a2f3e"
+                focusColor: "#8b5cf6"
+                textColor: "white"
+                Keys.onReturnPressed: sddm.login(userField.text, passwordField.text, sessionSelect.index)
             }
 
+            // SddmComponents ComboBox uses 'index' not 'currentIndex'
             ComboBox {
                 id: sessionSelect
                 width: parent.width
+                height: 40
                 model: sessionModel
-                textRole: "name"
-                currentIndex: sessionModel.lastIndex
+                index: sessionModel.lastIndex
+                font.pixelSize: 14
+                color: "#1a1f2e"
+                borderColor: "#2a2f3e"
+                focusColor: "#8b5cf6"
+                textColor: "white"
             }
 
+            // SddmComponents Button
             Button {
-                text: "Login"
+                id: loginButton
                 width: parent.width
-                onClicked: sddm.login(userField.text, passwordField.text, sessionSelect.currentIndex)
+                height: 40
+                text: "Login"
+                color: "#8b5cf6"
+                textColor: "white"
+                font.pixelSize: 16
+                onClicked: sddm.login(userField.text, passwordField.text, sessionSelect.index)
             }
         }
     }
