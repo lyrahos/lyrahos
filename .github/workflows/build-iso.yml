@@ -316,6 +316,7 @@ jobs:
                 flatpak \
                 plasma-discover-flatpak \
                 plasma-discover-packagekit \
+                appstream-data \
                 logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
