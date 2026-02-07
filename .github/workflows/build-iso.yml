@@ -69,7 +69,9 @@ jobs:
             xorriso \
             squashfs-tools \
             wget \
-            rsync
+            rsync \
+            zstd \
+            lz4
 
       - name: Download base Fedora KDE ISO
         run: |
@@ -138,16 +140,25 @@ jobs:
             local work_dir=$(mktemp -d)
             cd "$work_dir"
 
-            # Detect compression and extract
-            if file "$initramfs_path" | grep -q "gzip"; then
+            # Detect compression and extract.
+            # Fedora 43+ commonly uses zstd-compressed initramfs; if we don't
+            # handle that format, Fedora branding stays in place.
+            initramfs_file_info=$(file "$initramfs_path")
+            if echo "$initramfs_file_info" | grep -qi "zstd"; then
+              echo "  Detected zstd compression"
+              zstd -dc "$initramfs_path" | cpio -idm --quiet
+            elif echo "$initramfs_file_info" | grep -qi "gzip"; then
               echo "  Detected gzip compression"
-              gunzip -c "$initramfs_path" | cpio -idm --quiet 2>/dev/null || true
-            elif file "$initramfs_path" | grep -q "XZ"; then
+              gunzip -c "$initramfs_path" | cpio -idm --quiet
+            elif echo "$initramfs_file_info" | grep -qi "XZ"; then
               echo "  Detected XZ compression"
-              xz -dc "$initramfs_path" | cpio -idm --quiet 2>/dev/null || true
+              xz -dc "$initramfs_path" | cpio -idm --quiet
+            elif echo "$initramfs_file_info" | grep -qi "LZ4"; then
+              echo "  Detected LZ4 compression"
+              lz4 -dc "$initramfs_path" | cpio -idm --quiet
             else
               echo "  Extracting as plain cpio"
-              cpio -idm --quiet < "$initramfs_path" 2>/dev/null || true
+              cpio -idm --quiet < "$initramfs_path"
             fi
 
             # Check if Plymouth theme directory exists
@@ -758,16 +769,23 @@ jobs:
               echo "prompt 0" | sudo tee -a "$cfg" > /dev/null
             fi
           done
-          # GRUB (UEFI boot): set timeout to 0 and hide the menu so it
-          # boots the default entry immediately.
+          # GRUB (UEFI boot): force immediate boot into the first entry and
+          # suppress interactive prompts/menu flashes as much as possible.
           find iso-build -name "grub.cfg" | while read cfg; do
             sudo sed -i -E 's/^(\s*)set timeout=.*/\1set timeout=0/' "$cfg" || true
+            sudo sed -i -E 's/^(\s*)set default=.*/\1set default=0/' "$cfg" || true
             # Hide the menu entirely (prevents brief flash before timeout)
             if grep -q 'set timeout_style=' "$cfg" 2>/dev/null; then
               sudo sed -i -E 's/set timeout_style=.*/set timeout_style=hidden/' "$cfg" || true
             else
               sudo sed -i -E '/^set timeout=0/a set timeout_style=hidden' "$cfg" || true
             fi
+            # Some Fedora EFI configs include an interruptible sleep with
+            # "Press any key ... system reset" messaging before GRUB menu.
+            # Force that path to be non-blocking.
+            sudo sed -i -E '/system reset/I d' "$cfg" || true
+            sudo sed -i -E 's/sleep --interruptible [0-9]+/sleep 0/g' "$cfg" || true
+            sudo sed -i -E 's/sleep -i [0-9]+/sleep 0/g' "$cfg" || true
             # Force console terminal mode instead of gfxterm to minimize
             # blue screen flash during GRUB → kernel transition.
             if ! grep -q 'terminal_output console' "$cfg" 2>/dev/null; then
