@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
+#include <QCoreApplication>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -144,6 +145,52 @@ bool GameManager::isSteamAvailable() {
 
 void GameManager::launchSteam() {
     QProcess::startDetached("steam", QStringList());
+}
+
+void GameManager::launchSteamLogin() {
+    // Launch Steam and poll for library data.
+    // luna-ui's window will be hidden by QML so Steam is visible in gamescope.
+    QProcess::startDetached("steam", QStringList());
+
+    m_steamCheckCount = 0;
+    if (m_steamCheckTimer) {
+        m_steamCheckTimer->stop();
+        m_steamCheckTimer->deleteLater();
+    }
+    m_steamCheckTimer = new QTimer(this);
+    connect(m_steamCheckTimer, &QTimer::timeout, this, [this]() {
+        m_steamCheckCount++;
+        if (isSteamAvailable()) {
+            m_steamCheckTimer->stop();
+            m_steamCheckTimer->deleteLater();
+            m_steamCheckTimer = nullptr;
+            scanAllStores();
+            emit steamLoginComplete(true);
+        } else if (m_steamCheckCount > 90) {
+            // 3s * 90 = ~4.5 min timeout — give up
+            m_steamCheckTimer->stop();
+            m_steamCheckTimer->deleteLater();
+            m_steamCheckTimer = nullptr;
+            emit steamLoginComplete(false);
+        }
+    });
+    m_steamCheckTimer->start(3000);
+}
+
+void GameManager::switchToDesktop() {
+    // Terminate the entire SDDM session so the login screen returns.
+    // Qt.quit() alone isn't enough when running under kwin_wayland fallback
+    // — kwin_wayland stays alive as an empty compositor (black screen + cursor).
+    // loginctl terminate-session with XDG_SESSION_ID kills the whole chain.
+    QByteArray sessionId = qgetenv("XDG_SESSION_ID");
+    if (!sessionId.isEmpty()) {
+        QProcess::startDetached("loginctl", {"terminate-session", QString::fromUtf8(sessionId)});
+    } else {
+        // Fallback: try killing by current session
+        QProcess::startDetached("loginctl", {"terminate-session", ""});
+    }
+    // Also quit ourselves in case loginctl doesn't work
+    QCoreApplication::quit();
 }
 
 int GameManager::getGameCount() {

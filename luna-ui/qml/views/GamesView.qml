@@ -288,9 +288,10 @@ Rectangle {
                                                 refreshGames()
                                                 activeTab = 0
                                             } else {
-                                                // Launch Steam for login
-                                                GameManager.launchSteam()
-                                                steamLoginDialog.open()
+                                                // Hide luna-ui so Steam is visible
+                                                // inside gamescope, then poll for login
+                                                gamesRoot.window.visibility = Window.Hidden
+                                                GameManager.launchSteamLogin()
                                             }
                                         }
                                     }
@@ -336,96 +337,16 @@ Rectangle {
         }
     }
 
-    // ── Steam login dialog ──
-    Popup {
-        id: steamLoginDialog
-        anchors.centerIn: parent
-        width: 420
-        height: 220
-        modal: true
-
-        background: Rectangle {
-            radius: 16
-            color: ThemeManager.getColor("surface")
-            border.color: ThemeManager.getColor("primary")
-            border.width: 1
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 24
-            spacing: 16
-
-            Text {
-                text: "Steam Login"
-                font.pixelSize: ThemeManager.getFontSize("large")
-                font.family: ThemeManager.getFont("heading")
-                font.bold: true
-                color: ThemeManager.getColor("textPrimary")
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            Text {
-                text: "Steam has been launched. Please log in to your\naccount in the Steam window, then come back\nand click the button below."
-                font.pixelSize: ThemeManager.getFontSize("small")
-                font.family: ThemeManager.getFont("body")
-                color: ThemeManager.getColor("textSecondary")
-                horizontalAlignment: Text.AlignHCenter
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            Item { Layout.fillHeight: true }
-
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 12
-
-                Rectangle {
-                    Layout.preferredWidth: 120
-                    Layout.preferredHeight: 40
-                    radius: 8
-                    color: Qt.rgba(1, 1, 1, 0.1)
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Cancel"
-                        font.pixelSize: ThemeManager.getFontSize("small")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: steamLoginDialog.close()
-                    }
-                }
-
-                Rectangle {
-                    Layout.preferredWidth: 160
-                    Layout.preferredHeight: 40
-                    radius: 8
-                    color: ThemeManager.getColor("primary")
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "I've Logged In"
-                        font.pixelSize: ThemeManager.getFontSize("small")
-                        font.family: ThemeManager.getFont("body")
-                        font.bold: true
-                        color: "white"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            steamLoginDialog.close()
-                            // Scan games now that user says they logged in
-                            GameManager.scanAllStores()
-                            refreshGames()
-                            activeTab = 0
-                        }
-                    }
-                }
+    // ── Steam login complete handler ──
+    // When luna-ui hides for Steam login, GameManager polls for library data.
+    // Once detected (or timeout), this fires and restores the window.
+    Connections {
+        target: GameManager
+        function onSteamLoginComplete(success) {
+            gamesRoot.window.visibility = Window.FullScreen
+            if (success) {
+                refreshGames()
+                activeTab = 0
             }
         }
     }
