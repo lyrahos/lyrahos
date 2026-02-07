@@ -280,7 +280,13 @@ jobs:
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
-                --exclude=kernel* \
+                --exclude=kernel \
+                --exclude=kernel-core \
+                --exclude=kernel-modules \
+                --exclude=kernel-modules-core \
+                --exclude=kernel-modules-extra \
+                --exclude=kernel-devel \
+                --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
                 filesystem \
                 setup \
@@ -427,7 +433,13 @@ jobs:
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
-                --exclude=kernel* \
+                --exclude=kernel \
+                --exclude=kernel-core \
+                --exclude=kernel-modules \
+                --exclude=kernel-modules-core \
+                --exclude=kernel-modules-extra \
+                --exclude=kernel-devel \
+                --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
                 calamares
 
