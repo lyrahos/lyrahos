@@ -364,6 +364,12 @@ jobs:
           # Plymouth theme
           sudo mkdir -p squashfs-root/usr/share/plymouth/themes/lyrah
           sudo cp -r themes/plymouth/lyrah/* squashfs-root/usr/share/plymouth/themes/lyrah/
+          # Set Lyrah as the default Plymouth theme. This updates
+          # /etc/plymouth/plymouthd.conf inside the squashfs. We don't
+          # rebuild initramfs here (the live ISO uses Fedora's initramfs
+          # from the boot area), but this ensures the theme is active for
+          # the installed system and any live boot Plymouth displays.
+          sudo chroot squashfs-root /bin/bash -c "plymouth-set-default-theme lyrah" 2>/dev/null || echo "WARN: Could not set Plymouth theme (non-fatal)"
 
           # Scripts
           sudo mkdir -p squashfs-root/usr/share/lyrah/setup
@@ -644,7 +650,8 @@ jobs:
             # Also add rd.live.dir=/LiveOS so dracut explicitly knows where
             # the squashfs lives — prevents mismatches when the rootfs is
             # built from scratch rather than extracted from the original ISO.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0/' "$cfg" || true
+            # Add Plymouth splash parameters for smooth boot experience.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 splash plymouth.enable=1/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
@@ -674,6 +681,11 @@ jobs:
               sudo sed -i -E 's/set timeout_style=.*/set timeout_style=hidden/' "$cfg" || true
             else
               sudo sed -i -E '/^set timeout=0/a set timeout_style=hidden' "$cfg" || true
+            fi
+            # Force console terminal mode instead of gfxterm to minimize
+            # blue screen flash during GRUB → kernel transition.
+            if ! grep -q 'terminal_output console' "$cfg" 2>/dev/null; then
+              sudo sed -i -E '/^set timeout=0/i terminal_output console' "$cfg" || true
             fi
           done
 
