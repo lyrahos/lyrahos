@@ -391,6 +391,7 @@ jobs:
           sudo mkdir -p squashfs-root/usr/share/lyrah/installer
           sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/
           sudo cp installer/scripts/configure-session.sh squashfs-root/usr/share/lyrah/installer/
+          sudo cp installer/scripts/setup-kernel.sh squashfs-root/usr/share/lyrah/installer/
           sudo chmod +x squashfs-root/usr/share/lyrah/installer/*.sh
 
           # Wine env config
