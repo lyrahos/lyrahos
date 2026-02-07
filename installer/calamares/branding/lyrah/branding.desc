@@ -25,6 +25,6 @@ windowSize: 800x600
 windowPlacement: center
 
 style:
-    sidebarBackground: "#0f1419"
-    sidebarText: "#ffffff"
-    sidebarTextSelect: "#3b82f6"
+    sidebarBackground: "#0b111d"
+    sidebarText: "#cddcf8"
+    sidebarTextSelect: "#7ba8f5"
