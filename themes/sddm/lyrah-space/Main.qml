@@ -169,7 +169,7 @@ Rectangle {
                 width: parent.width
                 model: sessionModel
                 textRole: "name"
-                currentIndex: sessionModel.lastIndex
+                Component.onCompleted: currentIndex = sessionModel.lastIndex
             }
 
             Button {
