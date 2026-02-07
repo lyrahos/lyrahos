@@ -41,13 +41,20 @@ else
 fi
 
 # --- initramfs ---
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    echo "Setting Plymouth default theme to lyrah..."
+    plymouth-set-default-theme lyrah
+else
+    echo "WARNING: plymouth-set-default-theme not available; proceeding without setting Plymouth theme in installer"
+fi
+
 if [ -f "$INITRAMFS_DST" ]; then
-    echo "initramfs already present at $INITRAMFS_DST"
+    echo "initramfs already present at $INITRAMFS_DST; regenerating to include latest settings"
 else
     echo "Generating initramfs with dracut..."
-    dracut --force --kver "$KVER" "$INITRAMFS_DST"
-    echo "Generated initramfs at $INITRAMFS_DST"
 fi
+dracut --force --kver "$KVER" "$INITRAMFS_DST"
+echo "Generated initramfs at $INITRAMFS_DST"
 
 # --- BLS entry (Boot Loader Specification) ---
 # Fedora's grub2-mkconfig uses BLS entries from /boot/loader/entries/.
