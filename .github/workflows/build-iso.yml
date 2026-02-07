@@ -269,6 +269,11 @@ jobs:
             bash -c '
               set -euo pipefail
 
+              # Enable RPM Fusion repos (needed for steam, dxvk, etc.)
+              dnf install -y \
+                https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${{ env.FEDORA_VERSION }}.noarch.rpm \
+                https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${{ env.FEDORA_VERSION }}.noarch.rpm
+
               dnf install -y \
                 --installroot=/rootfs \
                 --use-host-config \
@@ -286,6 +291,14 @@ jobs:
                 sddm \
                 gamemode \
                 mangohud \
+                gamescope \
+                steam \
+                lutris \
+                wine \
+                winetricks \
+                protontricks \
+                corectrl \
+                logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
                 efibootmgr \
