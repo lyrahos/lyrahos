@@ -3,7 +3,6 @@
 # Starts gamescope with Luna UI (no KDE)
 #
 # NOTE (FIX #31): Targets gamescope 3.14+ (Fedora 43).
-# Verify flags against installed version: gamescope --help
 
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=gamescope
@@ -12,20 +11,42 @@ export XDG_CURRENT_DESKTOP=gamescope
 # apps.  Setting wayland here causes luna-ui to bypass Xwayland and
 # fail silently inside gamescope's compositor.
 
-# Wine/DXVK environment variables (system-wide for all Windows games)
-# FIX #37: Don't force FPS HUD on all apps. Let users enable per-game.
+# Wine/DXVK environment variables
 export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
-# Log to journalctl for diagnostics
-echo "luna-session: starting gamescope + luna-ui" | systemd-cat -t luna-session
+# Log everything for diagnostics
+exec &> >(systemd-cat -t luna-session)
 
-# Start gamescope as session compositor.
-# --adaptive-sync: enable VRR if display supports it
-# --force-grab-cursor: keep cursor inside gamescope window
-# Do NOT use --hdr-enabled (fails on displays without HDR support)
-# Do NOT use --fullscreen (only meaningful in nested mode)
-exec gamescope \
-  --adaptive-sync \
-  --force-grab-cursor \
-  -- /usr/bin/luna-ui
+echo "luna-session: starting at $(date)"
+
+# SDDM's greeter compositor (kwin_wayland) may not have fully released
+# the DRM device when this session starts.  Retry gamescope with
+# increasing delays to wait for the DRM handoff to complete.
+GAMESCOPE_ARGS=(--adaptive-sync --force-grab-cursor)
+
+for attempt in 1 2 3 4 5; do
+    echo "luna-session: gamescope attempt $attempt (DRM mode)"
+    gamescope "${GAMESCOPE_ARGS[@]}" -- /usr/bin/luna-ui
+    rc=$?
+
+    # Exit code 0 means gamescope ran and the user exited normally
+    if [ $rc -eq 0 ]; then
+        echo "luna-session: gamescope exited cleanly"
+        exit 0
+    fi
+
+    echo "luna-session: gamescope exited with code $rc, retrying in ${attempt}s..."
+    sleep "$attempt"
+done
+
+# DRM mode failed after all retries — fall back to nested mode inside
+# kwin_wayland.  This adds compositor overhead but works on GPUs where
+# gamescope cannot get DRM master (e.g. NVIDIA with nouveau/NVK).
+echo "luna-session: DRM mode failed, falling back to kwin_wayland nested mode"
+export QT_QPA_PLATFORM=wayland
+
+# Start kwin_wayland as the session compositor, running gamescope
+# in nested/fullscreen mode inside it.
+exec kwin_wayland --no-lockscreen --no-global-shortcuts -- \
+    gamescope --fullscreen "${GAMESCOPE_ARGS[@]}" -- /usr/bin/luna-ui

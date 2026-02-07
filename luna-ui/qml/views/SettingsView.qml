@@ -112,10 +112,8 @@ Rectangle {
     }
 
     function switchToDesktop() {
-        // lyrah-switch-mode sets SDDM to autologin to Plasma
-        // and terminates the current session
-        Qt.callLater(function() {
-            GameManager.executeCommand("lyrah-switch-mode", ["desktop"])
-        })
+        // Quit luna-ui → gamescope exits → session ends → SDDM returns.
+        // User can then select Desktop Mode from the SDDM login screen.
+        Qt.quit()
     }
 }

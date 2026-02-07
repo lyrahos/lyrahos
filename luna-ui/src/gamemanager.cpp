@@ -6,6 +6,9 @@
 #include <QProcess>
 #include <QDebug>
 #include <QVariantMap>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -127,4 +130,22 @@ QVariantList GameManager::search(const QString& query) {
 
 void GameManager::executeCommand(const QString& program, const QStringList& args) {
     QProcess::startDetached(program, args);
+}
+
+bool GameManager::isSteamInstalled() {
+    // Check if steam binary exists
+    return !QStandardPaths::findExecutable("steam").isEmpty();
+}
+
+bool GameManager::isSteamAvailable() {
+    // Steam is "available" if the user has logged in (library data exists)
+    return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
+}
+
+void GameManager::launchSteam() {
+    QProcess::startDetached("steam", QStringList());
+}
+
+int GameManager::getGameCount() {
+    return m_db->getAllGames().size();
 }
