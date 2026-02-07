@@ -274,6 +274,11 @@ jobs:
                 https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${{ env.FEDORA_VERSION }}.noarch.rpm \
                 https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${{ env.FEDORA_VERSION }}.noarch.rpm
 
+              # Add Brave browser repo
+              dnf install -y dnf-plugins-core
+              dnf config-manager addrepo --from-repofile=https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo
+              rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+
               dnf install -y \
                 --installroot=/rootfs \
                 --use-host-config \
@@ -307,6 +312,7 @@ jobs:
                 winetricks \
                 protontricks \
                 corectrl \
+                brave-browser \
                 logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
