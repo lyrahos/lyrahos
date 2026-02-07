@@ -313,6 +313,9 @@ jobs:
                 protontricks \
                 corectrl \
                 brave-browser \
+                flatpak \
+                plasma-discover-flatpak \
+                plasma-discover-packagekit \
                 logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
@@ -724,6 +727,11 @@ jobs:
             ln -sf /usr/lib/systemd/system/sddm.service /etc/systemd/system/display-manager.service 2>/dev/null || true
           systemctl set-default graphical.target 2>/dev/null || \
             ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target 2>/dev/null || true
+
+          # Add Flathub remote so Discover has apps to install.
+          # --if-not-exists avoids failure if Fedora's flatpak package
+          # already ships the remote.
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 
           # Create log directories
           mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}
