@@ -112,8 +112,10 @@ Rectangle {
     }
 
     function switchToDesktop() {
-        // Quit luna-ui → gamescope exits → session ends → SDDM returns.
-        // User can then select Desktop Mode from the SDDM login screen.
-        Qt.quit()
+        // Terminate the entire SDDM session so the login screen returns.
+        // Qt.quit() alone isn't enough — in the kwin_wayland fallback mode,
+        // kwin_wayland stays alive as an empty compositor (black screen + cursor).
+        // loginctl terminate-session kills the whole chain cleanly.
+        GameManager.switchToDesktop()
     }
 }
