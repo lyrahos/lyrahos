@@ -153,6 +153,34 @@ if [ -n "$ROOTFLAGS_OPT" ]; then
     fi
 fi
 
+# --- GRUB btrfs subvolume boot script ---
+# grub2-mkconfig may fail to detect the btrfs subvolume inside the
+# Calamares chroot, generating a grub.cfg that looks for /boot at the
+# top-level btrfs volume instead of inside the subvolume.  Add a GRUB
+# config snippet (runs early, before 10_linux) that explicitly sets
+# the boot path with the subvolume prefix.
+if [ -n "$BTRFS_SUBVOL" ]; then
+    BOOT_FSTYPE=$(findmnt -no FSTYPE /boot 2>/dev/null || true)
+    # Only needed when /boot lives on the btrfs root (no separate ext4 /boot)
+    if [ "$BOOT_FSTYPE" != "ext4" ] && [ "$BOOT_FSTYPE" != "xfs" ]; then
+        mkdir -p /etc/grub.d
+        cat > /etc/grub.d/01_lyrah_btrfs << GRUBEOF
+#!/bin/bash
+# Lyrah OS: override GRUB boot path for btrfs subvolume.
+# Without this, GRUB looks at the top-level btrfs volume and cannot
+# find kernel files that live inside the subvolume.
+cat << 'INNEREOF'
+insmod btrfs
+if [ -z "\$boot" ]; then
+  set boot=(\$root)${BTRFS_SUBVOL}/boot
+fi
+INNEREOF
+GRUBEOF
+        chmod +x /etc/grub.d/01_lyrah_btrfs
+        echo "Created /etc/grub.d/01_lyrah_btrfs for subvolume: $BTRFS_SUBVOL"
+    fi
+fi
+
 echo "Kernel setup complete. Contents of /boot/:"
 ls -lh /boot/vmlinuz-* /boot/initramfs-*.img 2>/dev/null || echo "(no kernel files found)"
 ls "$BLS_DIR"/ 2>/dev/null || echo "(no BLS entries)"
