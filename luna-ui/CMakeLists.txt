@@ -25,6 +25,7 @@ qt_add_executable(luna-ui
 
 qt_add_qml_module(luna-ui
     URI LunaUI
+    RESOURCE_PREFIX /
     QML_FILES
         qml/Main.qml
         qml/views/GamesView.qml
@@ -48,5 +49,9 @@ target_link_libraries(luna-ui PRIVATE
 
 install(TARGETS luna-ui DESTINATION /usr/bin)
 install(DIRECTORY resources/themes DESTINATION /usr/share/luna-ui)
-install(DIRECTORY resources/fonts DESTINATION /usr/share/luna-ui)
-install(DIRECTORY resources/icons DESTINATION /usr/share/luna-ui)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
+    install(DIRECTORY resources/fonts DESTINATION /usr/share/luna-ui)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons")
+    install(DIRECTORY resources/icons DESTINATION /usr/share/luna-ui)
+endif()

@@ -69,7 +69,9 @@ jobs:
             xorriso \
             squashfs-tools \
             wget \
-            rsync
+            rsync \
+            zstd \
+            lz4
 
       - name: Download base Fedora KDE ISO
         run: |
@@ -113,6 +115,101 @@ jobs:
             echo "WARNING: Could not detect ISO kernel version — phase 2 will install latest"
           fi
           echo "iso_kver=${ISO_KVER}" >> $GITHUB_OUTPUT
+
+      # Replace Fedora Plymouth theme in the boot area initramfs with Lyrah theme.
+      # The live ISO uses the base Fedora initramfs from iso-build/isolinux/ and
+      # iso-build/images/pxeboot/, which has the Fedora theme embedded. This step
+      # extracts the initramfs, replaces the Fedora theme with Lyrah, and repacks it.
+      - name: Customize boot area Plymouth theme
+        run: |
+          set -euo pipefail
+          echo "=== Customizing Plymouth theme in boot initramfs ==="
+
+          # Function to extract, modify, and repack an initramfs
+          customize_initramfs() {
+            local initramfs_path="$1"
+
+            if [ ! -f "$initramfs_path" ]; then
+              echo "WARN: $initramfs_path not found, skipping"
+              return 0
+            fi
+
+            echo "Processing: $initramfs_path"
+
+            # Create temporary directory for extraction
+            local work_dir=$(mktemp -d)
+            cd "$work_dir"
+
+            # Detect compression and extract.
+            # Fedora 43+ commonly uses zstd-compressed initramfs; if we don't
+            # handle that format, Fedora branding stays in place.
+            initramfs_file_info=$(file "$initramfs_path")
+            if echo "$initramfs_file_info" | grep -qi "zstd"; then
+              echo "  Detected zstd compression"
+              zstd -dc "$initramfs_path" | cpio -idm --quiet
+            elif echo "$initramfs_file_info" | grep -qi "gzip"; then
+              echo "  Detected gzip compression"
+              gunzip -c "$initramfs_path" | cpio -idm --quiet
+            elif echo "$initramfs_file_info" | grep -qi "XZ"; then
+              echo "  Detected XZ compression"
+              xz -dc "$initramfs_path" | cpio -idm --quiet
+            elif echo "$initramfs_file_info" | grep -qi "LZ4"; then
+              echo "  Detected LZ4 compression"
+              lz4 -dc "$initramfs_path" | cpio -idm --quiet
+            else
+              echo "  Extracting as plain cpio"
+              cpio -idm --quiet < "$initramfs_path"
+            fi
+
+            # Check if Plymouth theme directory exists
+            if [ -d usr/share/plymouth/themes ]; then
+              echo "  Found Plymouth themes directory"
+
+              # Remove Fedora themes
+              sudo rm -rf usr/share/plymouth/themes/fedora* usr/share/plymouth/themes/spinner 2>/dev/null || true
+              echo "  Removed Fedora themes"
+
+              # Add Lyrah theme
+              mkdir -p usr/share/plymouth/themes/lyrah
+              cp -r "${GITHUB_WORKSPACE}/themes/plymouth/lyrah/"* usr/share/plymouth/themes/lyrah/
+              echo "  Added Lyrah theme"
+
+              # Update plymouthd.conf if it exists
+              if [ -f etc/plymouth/plymouthd.conf ]; then
+                sed -i 's/^Theme=.*/Theme=lyrah/' etc/plymouth/plymouthd.conf
+                echo "  Updated plymouthd.conf to use Lyrah theme"
+              else
+                # Create config if it doesn't exist
+                mkdir -p etc/plymouth
+                echo "[Daemon]" > etc/plymouth/plymouthd.conf
+                echo "Theme=lyrah" >> etc/plymouth/plymouthd.conf
+                echo "  Created plymouthd.conf with Lyrah theme"
+              fi
+            else
+              echo "  WARN: No Plymouth themes directory found in initramfs"
+            fi
+
+            # Repack the initramfs (using gzip compression like Fedora does)
+            echo "  Repacking initramfs..."
+            find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | gzip -9 > "${work_dir}/initramfs.new"
+
+            # Replace original
+            sudo cp "${work_dir}/initramfs.new" "$initramfs_path"
+            echo "  Replaced $initramfs_path"
+
+            # Cleanup
+            cd /
+            rm -rf "$work_dir"
+            echo "  Done processing $initramfs_path"
+          }
+
+          # Process BIOS/isolinux initramfs
+          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/isolinux/initrd.img"
+
+          # Process PXE boot initramfs if it exists
+          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/images/pxeboot/initrd.img"
+
+          echo "=== Plymouth theme customization complete ==="
 
       # Swap must be expanded BEFORE rootfs build — the default runner swap
       # (3GB) is not enough for dnf dependency resolution of large package sets.
@@ -172,23 +269,45 @@ jobs:
             bash -c '
               set -euo pipefail
 
+              # Enable RPM Fusion repos (needed for steam, dxvk, etc.)
+              dnf install -y \
+                https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${{ env.FEDORA_VERSION }}.noarch.rpm \
+                https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${{ env.FEDORA_VERSION }}.noarch.rpm
+
               dnf install -y \
                 --installroot=/rootfs \
                 --use-host-config \
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
-                --exclude=kernel* \
+                --exclude=kernel \
+                --exclude=kernel-core \
+                --exclude=kernel-modules \
+                --exclude=kernel-modules-core \
+                --exclude=kernel-modules-extra \
+                --exclude=kernel-devel \
+                --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
                 filesystem \
                 setup \
                 @kde-desktop-environment \
                 NetworkManager \
+                NetworkManager-wifi \
+                wpa_supplicant \
+                linux-firmware \
                 pipewire \
                 wireplumber \
                 sddm \
                 gamemode \
                 mangohud \
+                gamescope \
+                steam \
+                lutris \
+                wine \
+                winetricks \
+                protontricks \
+                corectrl \
+                logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
                 efibootmgr \
@@ -243,13 +362,13 @@ jobs:
           # that GRUB actually boots. A version mismatch means modprobe
           # can't find modules at runtime (no GPU, no network, no sound).
           ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
-          KERNEL_PKGS="kernel-core kernel-modules-core"
+          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core"
           if [ -n "$ISO_KVER" ]; then
             # file reports: 6.x.y-z.fc43.x86_64 — strip arch suffix for dnf
             KVER_DNF="${ISO_KVER%.x86_64}"
             KVER_DNF="${KVER_DNF%.aarch64}"
             echo "Pinning kernel to ISO version: $KVER_DNF"
-            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
+            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
           else
             echo "WARNING: ISO kernel version unknown — installing latest"
           fi
@@ -314,7 +433,13 @@ jobs:
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
-                --exclude=kernel* \
+                --exclude=kernel \
+                --exclude=kernel-core \
+                --exclude=kernel-modules \
+                --exclude=kernel-modules-core \
+                --exclude=kernel-modules-extra \
+                --exclude=kernel-devel \
+                --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
                 calamares
 
@@ -335,6 +460,48 @@ jobs:
           echo "Phase 3 complete. Calamares installed."
           echo "Memory after phase 3:"
           free -h
+
+      # Build luna-ui (the gaming frontend) from source.
+      # luna-ui is not published to Copr yet, so we compile it during the
+      # ISO build. Build dependencies stay in the container; only the
+      # binary and resources are installed into the rootfs.
+      - name: Build luna-ui from source (phase 4)
+        run: |
+          set -euo pipefail
+          echo "Phase 4: Building luna-ui from source..."
+
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            -v "$(pwd)/luna-ui:/src/luna-ui:ro" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
+
+              echo "Installing luna-ui build dependencies..."
+              dnf install -y \
+                cmake gcc-c++ \
+                qt6-qtbase-devel qt6-qtdeclarative-devel \
+                SDL2-devel sqlite-devel
+
+              echo "Building luna-ui..."
+              mkdir /build && cd /build
+              cmake /src/luna-ui -DCMAKE_INSTALL_PREFIX=/usr
+              cmake --build . -j$(nproc)
+
+              echo "Installing luna-ui into rootfs..."
+              DESTDIR=/rootfs cmake --install .
+
+              # Verify binary was installed
+              if [ ! -f /rootfs/usr/bin/luna-ui ]; then
+                echo "FATAL: luna-ui binary not found after install"
+                exit 1
+              fi
+              echo "luna-ui installed: $(ls -la /rootfs/usr/bin/luna-ui)"
+              echo "Resources:"
+              ls -la /rootfs/usr/share/luna-ui/ 2>/dev/null || echo "  (no resources dir)"
+            '
+
+          echo "Phase 4 complete. luna-ui built and installed."
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
@@ -364,6 +531,12 @@ jobs:
           # Plymouth theme
           sudo mkdir -p squashfs-root/usr/share/plymouth/themes/lyrah
           sudo cp -r themes/plymouth/lyrah/* squashfs-root/usr/share/plymouth/themes/lyrah/
+          # Set Lyrah as the default Plymouth theme. This updates
+          # /etc/plymouth/plymouthd.conf inside the squashfs. We don't
+          # rebuild initramfs here (the live ISO uses Fedora's initramfs
+          # from the boot area), but this ensures the theme is active for
+          # the installed system and any live boot Plymouth displays.
+          sudo chroot squashfs-root /bin/bash -c "plymouth-set-default-theme lyrah" 2>/dev/null || echo "WARN: Could not set Plymouth theme (non-fatal)"
 
           # Scripts
           sudo mkdir -p squashfs-root/usr/share/lyrah/setup
@@ -387,10 +560,22 @@ jobs:
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
 
+          # Remove Fedora EFI files from rootfs.
+          # The grub2-efi-x64 and shim-x64 RPMs install a GRUB binary and
+          # redirect grub.cfg into /boot/efi/EFI/fedora/. If these ship in
+          # the squashfs, Calamares copies them to the real ESP and the
+          # firmware shows a duplicate "Fedora" boot entry with stale UUIDs
+          # that either hangs at a GRUB shell or fails to find the kernel.
+          # Calamares's bootloader module re-installs GRUB properly via
+          # grub2-install, so these pre-packaged files are never needed.
+          sudo rm -rf squashfs-root/boot/efi/EFI/fedora
+          echo "Removed stale Fedora EFI directory from rootfs"
+
           # Post-install scripts for Calamares shellprocess
           sudo mkdir -p squashfs-root/usr/share/lyrah/installer
           sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/
           sudo cp installer/scripts/configure-session.sh squashfs-root/usr/share/lyrah/installer/
+          sudo cp installer/scripts/setup-kernel.sh squashfs-root/usr/share/lyrah/installer/
           sudo chmod +x squashfs-root/usr/share/lyrah/installer/*.sh
 
           # Wine env config
@@ -428,6 +613,22 @@ jobs:
           echo "Lyrah OS" > /etc/fedora-release
           echo "Lyrah OS" > /etc/redhat-release
           echo "Lyrah OS" > /etc/system-release
+
+          # Brand /etc/os-release so KDE Plasma, neofetch, and other tools
+          # show "Lyrah OS" instead of "Fedora Linux".  Keep ID_LIKE=fedora
+          # so dnf repos and Fedora-specific packages continue to work.
+          if [ -f /etc/os-release ]; then
+            sed -i 's/^NAME=.*/NAME="Lyrah OS"/' /etc/os-release
+            sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Lyrah OS"/' /etc/os-release
+            sed -i '/^ID_LIKE=/!s/^ID=.*/ID=lyrahos/' /etc/os-release
+            if grep -q '^ID_LIKE=' /etc/os-release; then
+              sed -i 's/^ID_LIKE=.*/ID_LIKE=fedora/' /etc/os-release
+            else
+              echo 'ID_LIKE=fedora' >> /etc/os-release
+            fi
+            sed -i 's|^HOME_URL=.*|HOME_URL="https://github.com/lyrahos/lyrahos"|' /etc/os-release
+            sed -i 's|^BUG_REPORT_URL=.*|BUG_REPORT_URL="https://github.com/lyrahos/lyrahos/issues"|' /etc/os-release
+          fi
 
           # Create version file
           mkdir -p /etc
@@ -643,9 +844,50 @@ jobs:
             # Also add rd.live.dir=/LiveOS so dracut explicitly knows where
             # the squashfs lives — prevents mismatches when the rootfs is
             # built from scratch rather than extracted from the original ISO.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0/' "$cfg" || true
+            # Add Plymouth splash parameters for smooth boot experience.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 splash plymouth.enable=1/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
+          done
+
+          # Skip the boot menu entirely — boot straight into the live
+          # session / installer instead of showing the Fedora "press any
+          # key" splash with KDE desktop / media testing options.
+          # ISOLINUX (BIOS boot): set timeout to 1 decisecond (instant),
+          # disable the "press any key" prompt, default to first entry.
+          # Note: isolinux keywords are case-insensitive; Fedora uses
+          # uppercase (TIMEOUT, PROMPT). The sed I flag handles both.
+          find iso-build -name "isolinux.cfg" | while read cfg; do
+            sudo sed -i 's/^[Tt][Ii][Mm][Ee][Oo][Uu][Tt] .*/timeout 1/' "$cfg" || true
+            sudo sed -i 's/^[Tt][Oo][Tt][Aa][Ll][Tt][Ii][Mm][Ee][Oo][Uu][Tt] .*/totaltimeout 1/' "$cfg" || true
+            if grep -qi '^prompt ' "$cfg" 2>/dev/null; then
+              sudo sed -i 's/^[Pp][Rr][Oo][Mm][Pp][Tt] .*/prompt 0/' "$cfg" || true
+            else
+              echo "prompt 0" | sudo tee -a "$cfg" > /dev/null
+            fi
+          done
+          # GRUB (UEFI boot): force immediate boot into the first entry and
+          # suppress interactive prompts/menu flashes as much as possible.
+          find iso-build -name "grub.cfg" | while read cfg; do
+            sudo sed -i -E 's/^(\s*)set timeout=.*/\1set timeout=0/' "$cfg" || true
+            sudo sed -i -E 's/^(\s*)set default=.*/\1set default=0/' "$cfg" || true
+            # Hide the menu entirely (prevents brief flash before timeout)
+            if grep -q 'set timeout_style=' "$cfg" 2>/dev/null; then
+              sudo sed -i -E 's/set timeout_style=.*/set timeout_style=hidden/' "$cfg" || true
+            else
+              sudo sed -i -E '/^set timeout=0/a set timeout_style=hidden' "$cfg" || true
+            fi
+            # Some Fedora EFI configs include an interruptible sleep with
+            # "Press any key ... system reset" messaging before GRUB menu.
+            # Force that path to be non-blocking.
+            sudo sed -i -E '/system reset/I d' "$cfg" || true
+            sudo sed -i -E 's/sleep --interruptible [0-9]+/sleep 0/g' "$cfg" || true
+            sudo sed -i -E 's/sleep -i [0-9]+/sleep 0/g' "$cfg" || true
+            # Force console terminal mode instead of gfxterm to minimize
+            # blue screen flash during GRUB → kernel transition.
+            if ! grep -q 'terminal_output console' "$cfg" 2>/dev/null; then
+              sudo sed -i -E '/^set timeout=0/i terminal_output console' "$cfg" || true
+            fi
           done
 
       - name: Create new ISO

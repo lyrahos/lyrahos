@@ -5,5 +5,14 @@
 
 export XDG_SESSION_TYPE=wayland
 export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
-exec dbus-run-session kwin_wayland --no-lockscreen -- sudo -E calamares
+# Calamares requires UID 0 to enumerate disks (/dev/sd*, /dev/nvme*)
+# and write partition tables.  Re-exec the entire script as root so
+# both kwin_wayland and calamares inherit UID 0.  The liveuser has
+# NOPASSWD sudo via /etc/sudoers.d/liveuser.
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -n -E "$0" "$@"
+fi
+
+exec dbus-run-session kwin_wayland --no-lockscreen -- calamares

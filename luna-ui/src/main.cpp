@@ -28,7 +28,8 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
     engine.rootContext()->setContextProperty("ControllerManager", &controllerManager);
 
-    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+    // RESOURCE_PREFIX / in CMakeLists.txt places QML files at :/LunaUI/...
+    engine.load(QUrl(QStringLiteral("qrc:/LunaUI/qml/Main.qml")));
 
     if (engine.rootObjects().isEmpty())
         return -1;

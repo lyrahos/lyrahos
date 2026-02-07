@@ -7,7 +7,7 @@ base = "lyrah-base.toml"
 [packages]
 include = [
     "gamescope",
-    "luna-ui",
+    # luna-ui: built from source in build-iso.yml phase 4 (not a dnf package yet)
     "steam",
     "wine-staging",
     "dxvk",

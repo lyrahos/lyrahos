@@ -15,6 +15,7 @@ export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
 # Start gamescope in fullscreen
+# gamescope 3.14+ (Fedora 43) falls back to SDR if display lacks HDR
 exec gamescope \
   --adaptive-sync \
   --hdr-enabled \

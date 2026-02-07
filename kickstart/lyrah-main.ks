@@ -1,8 +1,8 @@
 # Lyrah OS Kickstart - Stable Channel
 #
-# NOTE (FIX #35): The `luna-ui` package must be built and published to the
-# lyrah/lyrah-os Copr repository BEFORE this kickstart can be used.
-# Build luna-ui first, push to Copr, then enable here.
+# NOTE: luna-ui is built from source during the ISO build (phase 4 in
+# build-iso.yml). It is NOT installed via dnf — the binary is compiled
+# and placed directly into the rootfs.
 
 %packages
 @kde-desktop-environment
@@ -12,7 +12,7 @@ steam
 heroic-games-launcher-bin    # FIX #32: Consistent package name with outline
 lutris
 bottles
-# luna-ui                    # Uncomment after publishing to Copr
+# luna-ui                    # Built from source in build-iso.yml phase 4
 wine-staging
 dxvk
 vkd3d
