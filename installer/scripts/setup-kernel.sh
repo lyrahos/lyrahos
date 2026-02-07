@@ -49,6 +49,23 @@ else
     echo "Generated initramfs at $INITRAMFS_DST"
 fi
 
+# --- Detect btrfs subvolume on root filesystem ---
+# When Calamares formats root as btrfs, it may create subvolumes (e.g., @).
+# The kernel needs rootflags=subvol=<name> to mount the correct subvolume,
+# and GRUB needs the subvolume path to find kernel files if /boot is on btrfs.
+ROOT_FSTYPE=$(findmnt -no FSTYPE / 2>/dev/null || true)
+BTRFS_SUBVOL=""
+ROOTFLAGS_OPT=""
+if [ "$ROOT_FSTYPE" = "btrfs" ]; then
+    BTRFS_SUBVOL=$(findmnt -no OPTIONS / 2>/dev/null | tr ',' '\n' | grep '^subvol=' | head -1 | cut -d= -f2)
+    if [ -n "$BTRFS_SUBVOL" ] && [ "$BTRFS_SUBVOL" != "/" ]; then
+        echo "Detected btrfs root subvolume: $BTRFS_SUBVOL"
+        ROOTFLAGS_OPT="rootflags=subvol=$BTRFS_SUBVOL"
+    else
+        echo "Root is btrfs (no named subvolume or default subvolume)"
+    fi
+fi
+
 # --- BLS entry (Boot Loader Specification) ---
 # Fedora's grub2-mkconfig uses BLS entries from /boot/loader/entries/.
 # Without one, the GRUB menu will have no entry for this kernel.
@@ -85,7 +102,7 @@ title $PRETTY_NAME ($KVER)
 version $KVER
 linux /vmlinuz-$KVER
 initrd /initramfs-$KVER.img
-options root=UUID=@@ROOT_UUID@@ ro quiet rhgb
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet rhgb
 grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
@@ -103,6 +120,24 @@ EOF
         echo "Root UUID: $ROOT_UUID"
     else
         echo "WARNING: Could not determine root UUID — bootloader module will set it"
+    fi
+fi
+
+# --- GRUB defaults for btrfs ---
+# When root is btrfs, ensure /etc/default/grub includes rootflags so
+# grub2-mkconfig embeds the correct kernel command line.
+if [ -n "$ROOTFLAGS_OPT" ]; then
+    mkdir -p /etc/default
+    if [ ! -f /etc/default/grub ]; then
+        touch /etc/default/grub
+    fi
+    if ! grep -q "rootflags=subvol" /etc/default/grub; then
+        if grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub; then
+            sed -i "s|^GRUB_CMDLINE_LINUX=\"|GRUB_CMDLINE_LINUX=\"$ROOTFLAGS_OPT |" /etc/default/grub
+        else
+            echo "GRUB_CMDLINE_LINUX=\"$ROOTFLAGS_OPT\"" >> /etc/default/grub
+        fi
+        echo "Added $ROOTFLAGS_OPT to GRUB_CMDLINE_LINUX"
     fi
 fi
 
