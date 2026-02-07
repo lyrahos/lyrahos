@@ -20,6 +20,7 @@ public:
     Q_INVOKABLE QVariantList getRecentGames();
     Q_INVOKABLE QVariantList getFavorites();
     Q_INVOKABLE QVariantList search(const QString& query);
+    Q_INVOKABLE void executeCommand(const QString& program, const QStringList& args = {});
 
 signals:
     void gamesUpdated();

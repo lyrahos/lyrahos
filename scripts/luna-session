@@ -2,23 +2,30 @@
 # Luna Mode Session Launcher
 # Starts gamescope with Luna UI (no KDE)
 #
-# NOTE (FIX #31): Targets gamescope 3.14+ (Fedora 42).
+# NOTE (FIX #31): Targets gamescope 3.14+ (Fedora 43).
 # Verify flags against installed version: gamescope --help
 
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=gamescope
-export QT_QPA_PLATFORM=wayland
+
+# Do NOT set QT_QPA_PLATFORM — gamescope provides Xwayland for child
+# apps.  Setting wayland here causes luna-ui to bypass Xwayland and
+# fail silently inside gamescope's compositor.
 
 # Wine/DXVK environment variables (system-wide for all Windows games)
 # FIX #37: Don't force FPS HUD on all apps. Let users enable per-game.
 export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
-# Start gamescope in fullscreen
-# gamescope 3.14+ (Fedora 43) falls back to SDR if display lacks HDR
+# Log to journalctl for diagnostics
+echo "luna-session: starting gamescope + luna-ui" | systemd-cat -t luna-session
+
+# Start gamescope as session compositor.
+# --adaptive-sync: enable VRR if display supports it
+# --force-grab-cursor: keep cursor inside gamescope window
+# Do NOT use --hdr-enabled (fails on displays without HDR support)
+# Do NOT use --fullscreen (only meaningful in nested mode)
 exec gamescope \
   --adaptive-sync \
-  --hdr-enabled \
   --force-grab-cursor \
-  --fullscreen \
   -- /usr/bin/luna-ui
