@@ -269,6 +269,11 @@ jobs:
             bash -c '
               set -euo pipefail
 
+              # Enable RPM Fusion repos (needed for steam, dxvk, etc.)
+              dnf install -y \
+                https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${{ env.FEDORA_VERSION }}.noarch.rpm \
+                https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${{ env.FEDORA_VERSION }}.noarch.rpm
+
               dnf install -y \
                 --installroot=/rootfs \
                 --use-host-config \
@@ -281,11 +286,22 @@ jobs:
                 setup \
                 @kde-desktop-environment \
                 NetworkManager \
+                NetworkManager-wifi \
+                wpa_supplicant \
+                linux-firmware \
                 pipewire \
                 wireplumber \
                 sddm \
                 gamemode \
                 mangohud \
+                gamescope \
+                steam \
+                lutris \
+                wine \
+                winetricks \
+                protontricks \
+                corectrl \
+                logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
                 efibootmgr \
@@ -340,13 +356,13 @@ jobs:
           # that GRUB actually boots. A version mismatch means modprobe
           # can't find modules at runtime (no GPU, no network, no sound).
           ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
-          KERNEL_PKGS="kernel-core kernel-modules-core"
+          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core"
           if [ -n "$ISO_KVER" ]; then
             # file reports: 6.x.y-z.fc43.x86_64 — strip arch suffix for dnf
             KVER_DNF="${ISO_KVER%.x86_64}"
             KVER_DNF="${KVER_DNF%.aarch64}"
             echo "Pinning kernel to ISO version: $KVER_DNF"
-            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
+            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
           else
             echo "WARNING: ISO kernel version unknown — installing latest"
           fi
@@ -432,6 +448,48 @@ jobs:
           echo "Phase 3 complete. Calamares installed."
           echo "Memory after phase 3:"
           free -h
+
+      # Build luna-ui (the gaming frontend) from source.
+      # luna-ui is not published to Copr yet, so we compile it during the
+      # ISO build. Build dependencies stay in the container; only the
+      # binary and resources are installed into the rootfs.
+      - name: Build luna-ui from source (phase 4)
+        run: |
+          set -euo pipefail
+          echo "Phase 4: Building luna-ui from source..."
+
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            -v "$(pwd)/luna-ui:/src/luna-ui:ro" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
+
+              echo "Installing luna-ui build dependencies..."
+              dnf install -y \
+                cmake gcc-c++ \
+                qt6-qtbase-devel qt6-qtdeclarative-devel \
+                SDL2-devel sqlite-devel
+
+              echo "Building luna-ui..."
+              mkdir /build && cd /build
+              cmake /src/luna-ui -DCMAKE_INSTALL_PREFIX=/usr
+              cmake --build . -j$(nproc)
+
+              echo "Installing luna-ui into rootfs..."
+              DESTDIR=/rootfs cmake --install .
+
+              # Verify binary was installed
+              if [ ! -f /rootfs/usr/bin/luna-ui ]; then
+                echo "FATAL: luna-ui binary not found after install"
+                exit 1
+              fi
+              echo "luna-ui installed: $(ls -la /rootfs/usr/bin/luna-ui)"
+              echo "Resources:"
+              ls -la /rootfs/usr/share/luna-ui/ 2>/dev/null || echo "  (no resources dir)"
+            '
+
+          echo "Phase 4 complete. luna-ui built and installed."
 
       # Copy Lyrah OS configs into rootfs before chroot
       - name: Stage Lyrah OS files
@@ -543,6 +601,22 @@ jobs:
           echo "Lyrah OS" > /etc/fedora-release
           echo "Lyrah OS" > /etc/redhat-release
           echo "Lyrah OS" > /etc/system-release
+
+          # Brand /etc/os-release so KDE Plasma, neofetch, and other tools
+          # show "Lyrah OS" instead of "Fedora Linux".  Keep ID_LIKE=fedora
+          # so dnf repos and Fedora-specific packages continue to work.
+          if [ -f /etc/os-release ]; then
+            sed -i 's/^NAME=.*/NAME="Lyrah OS"/' /etc/os-release
+            sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Lyrah OS"/' /etc/os-release
+            sed -i '/^ID_LIKE=/!s/^ID=.*/ID=lyrahos/' /etc/os-release
+            if grep -q '^ID_LIKE=' /etc/os-release; then
+              sed -i 's/^ID_LIKE=.*/ID_LIKE=fedora/' /etc/os-release
+            else
+              echo 'ID_LIKE=fedora' >> /etc/os-release
+            fi
+            sed -i 's|^HOME_URL=.*|HOME_URL="https://github.com/lyrahos/lyrahos"|' /etc/os-release
+            sed -i 's|^BUG_REPORT_URL=.*|BUG_REPORT_URL="https://github.com/lyrahos/lyrahos/issues"|' /etc/os-release
+          fi
 
           # Create version file
           mkdir -p /etc

@@ -4,6 +4,30 @@ set -e
 
 echo "=== Lyrah OS Post-Installation ==="
 
+# --- Remove live-session artifacts ---
+# The installer shortcut is placed in /etc/skel/Desktop/ for the live
+# session so users can launch Calamares.  After installation it must
+# not appear on the installed user's desktop.
+rm -f /etc/skel/Desktop/install-lyrah.desktop
+for desktop_dir in /home/*/Desktop; do
+    rm -f "$desktop_dir/install-lyrah.desktop" 2>/dev/null || true
+done
+echo "Removed installer shortcut from desktop"
+
+# Remove the live-session SDDM autologin (liveuser → installer).
+# Calamares's users module creates the real user; configure-session.sh
+# writes the correct autologin for the chosen session.
+rm -f /etc/sddm.conf.d/live-autologin.conf 2>/dev/null || true
+
+# Disable KDE Plasma Welcome Center — it shows generic Fedora/KDE
+# branding that does not apply to Lyrah OS.
+mkdir -p /etc/xdg/autostart
+cat > /etc/xdg/autostart/org.kde.plasma-welcome.desktop << WELCOMEEOF
+[Desktop Entry]
+Hidden=true
+WELCOMEEOF
+echo "Disabled Plasma Welcome Center"
+
 # Enable required services
 systemctl enable sddm
 systemctl enable NetworkManager
