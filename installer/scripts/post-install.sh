@@ -41,6 +41,23 @@ else
     echo "os-prober already disabled in GRUB configuration"
 fi
 
+
+# Ensure installed boot artifacts only expose Lyrah OS entries.
+# The build base can leave Fedora-branded BLS/EFI artifacts that cause
+# duplicate "Fedora" boot options on first boot.
+BLS_DIR="/boot/loader/entries"
+if [ -d "$BLS_DIR" ]; then
+  rm -f "$BLS_DIR"/*fedora* "$BLS_DIR"/*Fedora* 2>/dev/null || true
+fi
+
+ESP_EFI_DIR="/boot/efi/EFI"
+if [ -d "$ESP_EFI_DIR" ]; then
+  if [ -d "$ESP_EFI_DIR/fedora" ] && [ ! -L "$ESP_EFI_DIR/fedora" ]; then
+    rm -rf "$ESP_EFI_DIR/fedora"
+    echo "Removed stale Fedora EFI directory"
+  fi
+fi
+
 # Set up first-boot flag
 mkdir -p /var/lib/lyrah
 systemctl enable lyrah-first-boot

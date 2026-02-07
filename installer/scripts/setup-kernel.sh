@@ -67,27 +67,26 @@ fi
 BLS_DIR="/boot/loader/entries"
 mkdir -p "$BLS_DIR"
 
-# Clean up any Fedora BLS entries to prevent duplicate boot menu entries.
-# This is necessary because the ISO may be built from a Fedora base, and
-# we only want Lyrah OS entries in the boot menu.
-FEDORA_ENTRIES=$(ls "$BLS_DIR"/*fedora* "$BLS_DIR"/*Fedora* 2>/dev/null || true)
-if [ -n "$FEDORA_ENTRIES" ]; then
-    echo "Removing Fedora BLS entries to prevent duplicate boot entries..."
-    rm -f "$BLS_DIR"/*fedora* "$BLS_DIR"/*Fedora* 2>/dev/null || true
-    echo "Cleaned up Fedora entries"
+# Remove stale BLS entries before creating the Lyrah entry.
+#
+# Why this is required:
+# - The installer image can carry BLS snippets from the Fedora base image.
+# - Old snippets can reference kernels that are not present on the target,
+#   causing GRUB errors like:
+#   "file '/boot/vmlinuz-<old-version>' not found"
+# - Keeping exactly one deterministic Lyrah entry avoids duplicate Fedora/
+#   Lyrah menu items and removes dead kernel paths.
+if compgen -G "$BLS_DIR/*.conf" >/dev/null 2>&1; then
+    echo "Removing stale BLS entries from $BLS_DIR"
+    rm -f "$BLS_DIR"/*.conf
 fi
 
-# Check if a BLS entry already exists for this kernel
-EXISTING_BLS=$(ls "$BLS_DIR"/*"$KVER"* 2>/dev/null | head -1)
-if [ -n "$EXISTING_BLS" ]; then
-    echo "BLS entry already exists: $EXISTING_BLS"
-else
-    BLS_ID="${MACHINE_ID:-lyrahos}-$KVER"
-    BLS_FILE="$BLS_DIR/$BLS_ID.conf"
+BLS_ID="${MACHINE_ID:-lyrahos}-$KVER"
+BLS_FILE="$BLS_DIR/$BLS_ID.conf"
 
-    PRETTY_NAME="Lyrah OS"
+PRETTY_NAME="Lyrah OS"
 
-    cat > "$BLS_FILE" << EOF
+cat > "$BLS_FILE" << EOF
 title $PRETTY_NAME ($KVER)
 version $KVER
 linux /vmlinuz-$KVER
@@ -97,20 +96,19 @@ grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
 EOF
-    echo "Created BLS entry: $BLS_FILE"
+echo "Created BLS entry: $BLS_FILE"
 
-    # Fill in the root UUID. Try findmnt first, fall back to fstab
-    # (which Calamares's fstab module generates before this step).
-    ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
-    if [ -z "$ROOT_UUID" ] && [ -f /etc/fstab ]; then
-        ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/UUID=/, "", $1); print $1}' /etc/fstab)
-    fi
-    if [ -n "$ROOT_UUID" ]; then
-        sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_FILE"
-        echo "Root UUID: $ROOT_UUID"
-    else
-        echo "WARNING: Could not determine root UUID — bootloader module will set it"
-    fi
+# Fill in the root UUID. Try findmnt first, fall back to fstab
+# (which Calamares's fstab module generates before this step).
+ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
+if [ -z "$ROOT_UUID" ] && [ -f /etc/fstab ]; then
+    ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/UUID=/, "", $1); print $1}' /etc/fstab)
+fi
+if [ -n "$ROOT_UUID" ]; then
+    sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_FILE"
+    echo "Root UUID: $ROOT_UUID"
+else
+    echo "WARNING: Could not determine root UUID — bootloader module will set it"
 fi
 
 echo "Kernel setup complete. Contents of /boot/:"
