@@ -124,3 +124,7 @@ QVariantList GameManager::getFavorites() {
 QVariantList GameManager::search(const QString& query) {
     return gamesToVariantList(m_db->searchGames(query));
 }
+
+void GameManager::executeCommand(const QString& program, const QStringList& args) {
+    QProcess::startDetached(program, args);
+}
