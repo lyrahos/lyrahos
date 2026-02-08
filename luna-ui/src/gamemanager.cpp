@@ -178,18 +178,14 @@ void GameManager::launchSteamLogin() {
 }
 
 void GameManager::switchToDesktop() {
-    // Terminate the entire SDDM session so the login screen returns.
-    // Qt.quit() alone isn't enough when running under kwin_wayland fallback
-    // — kwin_wayland stays alive as an empty compositor (black screen + cursor).
-    // loginctl terminate-session with XDG_SESSION_ID kills the whole chain.
-    QByteArray sessionId = qgetenv("XDG_SESSION_ID");
-    if (!sessionId.isEmpty()) {
-        QProcess::startDetached("loginctl", {"terminate-session", QString::fromUtf8(sessionId)});
-    } else {
-        // Fallback: try killing by current session
-        QProcess::startDetached("loginctl", {"terminate-session", ""});
-    }
-    // Also quit ourselves in case loginctl doesn't work
+    // Write a signal file that luna-session checks after gamescope exits.
+    // This tells the session script to exit immediately instead of retrying
+    // gamescope (which would restart Luna Mode instead of returning to SDDM).
+    // luna-session also handles killing kwin_wayland in the fallback case.
+    QFile signal("/tmp/luna-switch-to-desktop");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
+
     QCoreApplication::quit();
 }
 
