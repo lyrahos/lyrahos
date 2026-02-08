@@ -652,6 +652,29 @@ jobs:
           sudo rm -rf squashfs-root/boot/efi/EFI/fedora
           echo "Removed stale Fedora EFI directory from rootfs"
 
+          # Verify EFI binaries were actually saved — if not, the installed
+          # system won't be bootable. Also check alternate RPM install locations.
+          if [ ! -f "squashfs-root/usr/share/lyrah/efi-binaries/grubx64.efi" ]; then
+            echo "WARN: grubx64.efi not found at /boot/efi/EFI/fedora/"
+            echo "Searching for grubx64.efi in alternate locations..."
+            # Fedora may install the signed binary elsewhere
+            for alt_path in \
+              "squashfs-root/usr/lib/grub/x86_64-efi/grubx64.efi" \
+              "squashfs-root/boot/efi/EFI/BOOT/grubx64.efi"; do
+              if [ -f "$alt_path" ]; then
+                sudo cp "$alt_path" squashfs-root/usr/share/lyrah/efi-binaries/grubx64.efi
+                echo "Found and saved grubx64.efi from $alt_path"
+                break
+              fi
+            done
+            # Last resort: build one from GRUB modules if available
+            if [ ! -f "squashfs-root/usr/share/lyrah/efi-binaries/grubx64.efi" ]; then
+              echo "WARN: No prebuilt grubx64.efi found — install-bootloader.sh will try grub2-mkimage at install time"
+            fi
+          fi
+          echo "=== EFI binaries in squashfs ==="
+          ls -la squashfs-root/usr/share/lyrah/efi-binaries/ 2>/dev/null || echo "  (none saved!)"
+
           # Post-install scripts for Calamares shellprocess
           sudo mkdir -p squashfs-root/usr/share/lyrah/installer
           sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/

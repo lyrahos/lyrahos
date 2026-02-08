@@ -12,38 +12,120 @@
 #   3. Generating grub.cfg via grub2-mkconfig
 #   4. Attempting efibootmgr NVRAM entry (non-fatal if it fails)
 #   5. Verifying the ESP has bootable files
-set -euo pipefail
+#
+# NOTE: We intentionally do NOT use "set -e" here. Every failure is
+# handled manually so the script never exits silently. Instead we
+# track errors and always attempt the fallback BOOTX64.EFI path.
+
+set -uo pipefail
+
+# ---------------------------------------------------------------
+# Logging — write everything to a file AND stdout (for Calamares)
+# ---------------------------------------------------------------
+LOGFILE="/var/log/lyrah-bootloader-install.log"
+exec > >(tee "$LOGFILE") 2>&1
 
 echo "=== Lyrah OS Bootloader Installation ==="
+echo "Date: $(date)"
+echo "Running as: $(whoami)"
+echo "Script: $0"
+echo ""
 
 ESP="/boot/efi"
 GRUB_CFG="/boot/grub2/grub.cfg"
 BOOTLOADER_ID="lyrah"
+ERRORS=0
+
+# ---------------------------------------------------------------
+# Pre-flight diagnostics
+# ---------------------------------------------------------------
+echo "=== Pre-flight Diagnostics ==="
+
+echo "--- Mount info ---"
+mount | grep -E '(efi|boot|vfat|fat32)' || echo "  (no EFI/vfat mounts found)"
+echo ""
+
+echo "--- /boot/efi status ---"
+if mountpoint -q "$ESP" 2>/dev/null; then
+    echo "  $ESP is a mountpoint (GOOD)"
+    findmnt "$ESP" 2>/dev/null || true
+else
+    echo "  $ESP is NOT a mountpoint (may be a problem)"
+    if [ -d "$ESP" ]; then
+        echo "  $ESP exists as a directory"
+    else
+        echo "  $ESP does not exist!"
+    fi
+fi
+echo ""
+
+echo "--- Block devices ---"
+lsblk -o NAME,SIZE,FSTYPE,PARTTYPE,MOUNTPOINT 2>/dev/null || \
+    lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT 2>/dev/null || \
+    echo "  (lsblk not available)"
+echo ""
+
+echo "--- Saved EFI binaries ---"
+if [ -d /usr/share/lyrah/efi-binaries ]; then
+    ls -la /usr/share/lyrah/efi-binaries/
+else
+    echo "  /usr/share/lyrah/efi-binaries/ does NOT exist!"
+fi
+echo ""
+
+echo "--- GRUB tools ---"
+echo "  grub2-install: $(command -v grub2-install 2>/dev/null || echo 'NOT FOUND')"
+echo "  grub2-mkconfig: $(command -v grub2-mkconfig 2>/dev/null || echo 'NOT FOUND')"
+echo "  efibootmgr: $(command -v efibootmgr 2>/dev/null || echo 'NOT FOUND')"
+echo ""
+
+echo "--- GRUB modules ---"
+if [ -d /usr/lib/grub/x86_64-efi ]; then
+    echo "  /usr/lib/grub/x86_64-efi/ exists ($(ls /usr/lib/grub/x86_64-efi/*.mod 2>/dev/null | wc -l) modules)"
+else
+    echo "  /usr/lib/grub/x86_64-efi/ does NOT exist!"
+fi
+echo ""
+
+echo "--- Root filesystem ---"
+echo "  Root UUID: $(findmnt -no UUID / 2>/dev/null || echo 'unknown')"
+echo "  Root device: $(findmnt -no SOURCE / 2>/dev/null || echo 'unknown')"
+echo "  fstab root: $(grep -E '^\S+\s+/\s' /etc/fstab 2>/dev/null || echo 'not found')"
+echo ""
 
 # ---------------------------------------------------------------
 # Step 0: Verify ESP is mounted and writable
 # ---------------------------------------------------------------
+echo "=== Step 0: Verify ESP ==="
 if ! mountpoint -q "$ESP" 2>/dev/null; then
-    # ESP might not be a separate mountpoint if Calamares merged it
     if [ ! -d "$ESP" ]; then
         echo "FATAL: ESP directory $ESP does not exist"
+        echo "Cannot install bootloader without an ESP"
         exit 1
     fi
     echo "WARN: $ESP is not a separate mount — proceeding anyway"
 fi
 
-mkdir -p "$ESP/EFI/$BOOTLOADER_ID"
-mkdir -p "$ESP/EFI/BOOT"
+mkdir -p "$ESP/EFI/$BOOTLOADER_ID" || { echo "FATAL: Cannot create $ESP/EFI/$BOOTLOADER_ID"; exit 1; }
+mkdir -p "$ESP/EFI/BOOT" || { echo "FATAL: Cannot create $ESP/EFI/BOOT"; exit 1; }
 
-echo "ESP mounted at $ESP"
+# Test write access
+if touch "$ESP/.write-test" 2>/dev/null; then
+    rm -f "$ESP/.write-test"
+    echo "ESP is writable (GOOD)"
+else
+    echo "FATAL: ESP is not writable!"
+    exit 1
+fi
+
 echo "ESP contents before installation:"
 ls -laR "$ESP/EFI/" 2>/dev/null || echo "  (empty)"
+echo ""
 
 # ---------------------------------------------------------------
 # Step 1: Run grub2-install (best effort)
 # ---------------------------------------------------------------
-# grub2-install creates the GRUB EFI binary and a redirect grub.cfg
-# in /EFI/<bootloader-id>/. It also tries efibootmgr internally.
+echo "=== Step 1: grub2-install ==="
 GRUB_INSTALL_OK=false
 if command -v grub2-install &>/dev/null; then
     echo "Running grub2-install..."
@@ -56,52 +138,92 @@ if command -v grub2-install &>/dev/null; then
         GRUB_INSTALL_OK=true
     else
         echo "WARN: grub2-install failed (exit $?) — will use RPM-installed GRUB"
+        ERRORS=$((ERRORS + 1))
     fi
 else
     echo "WARN: grub2-install not found — will use RPM-installed GRUB"
+    ERRORS=$((ERRORS + 1))
 fi
+echo ""
 
 # ---------------------------------------------------------------
 # Step 2: If grub2-install failed, copy RPM-installed GRUB files
 # ---------------------------------------------------------------
-# The grub2-efi-x64 and shim-x64 packages install signed EFI binaries.
-# These are better than grub2-install's unsigned output for Secure Boot.
+echo "=== Step 2: Copy EFI binaries ==="
 if [ "$GRUB_INSTALL_OK" = "false" ] || [ ! -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" ]; then
     echo "Copying RPM-installed EFI binaries to ESP..."
 
     # Find signed GRUB and shim binaries — check our saved copies first,
     # then RPM default locations, then the ESP itself
+    FOUND_BINARIES=false
     for src_dir in /usr/share/lyrah/efi-binaries \
                    /boot/efi/EFI/fedora \
                    /boot/efi/EFI/lyrah; do
+        echo "  Checking $src_dir for grubx64.efi..."
         if [ -f "$src_dir/grubx64.efi" ]; then
             cp -f "$src_dir/grubx64.efi" "$ESP/EFI/$BOOTLOADER_ID/"
-            echo "  Copied grubx64.efi from $src_dir"
-            [ -f "$src_dir/shimx64.efi" ] && cp -f "$src_dir/shimx64.efi" "$ESP/EFI/$BOOTLOADER_ID/"
-            [ -f "$src_dir/shimx64-fedora.efi" ] && cp -f "$src_dir/shimx64-fedora.efi" "$ESP/EFI/$BOOTLOADER_ID/"
+            echo "  FOUND and copied grubx64.efi from $src_dir"
+            [ -f "$src_dir/shimx64.efi" ] && cp -f "$src_dir/shimx64.efi" "$ESP/EFI/$BOOTLOADER_ID/" && echo "  Copied shimx64.efi"
+            [ -f "$src_dir/shimx64-fedora.efi" ] && cp -f "$src_dir/shimx64-fedora.efi" "$ESP/EFI/$BOOTLOADER_ID/" && echo "  Copied shimx64-fedora.efi"
+            FOUND_BINARIES=true
             break
+        else
+            echo "  Not found at $src_dir"
         fi
     done
 
     # If still no grubx64.efi, search more broadly
     if [ ! -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" ]; then
-        GRUB_BIN=$(find /usr/share/lyrah/efi-binaries /usr/lib/grub /boot -name "grubx64.efi" 2>/dev/null | head -1)
+        echo "  Searching filesystem for grubx64.efi..."
+        GRUB_BIN=$(find /usr/share/lyrah/efi-binaries /usr/lib/grub /boot -name "grubx64.efi" 2>/dev/null | head -1 || true)
         if [ -n "$GRUB_BIN" ]; then
             cp -f "$GRUB_BIN" "$ESP/EFI/$BOOTLOADER_ID/"
-            echo "  Copied grubx64.efi from $GRUB_BIN"
+            echo "  Found and copied grubx64.efi from $GRUB_BIN"
         else
-            echo "FATAL: Cannot find grubx64.efi anywhere"
-            exit 1
+            echo "  WARN: Cannot find grubx64.efi anywhere on filesystem"
+            ERRORS=$((ERRORS + 1))
         fi
     fi
+
+    # Last resort: try to build grubx64.efi from modules using grub2-mkimage
+    if [ ! -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" ]; then
+        echo "  Attempting to build grubx64.efi with grub2-mkimage..."
+        if command -v grub2-mkimage &>/dev/null && [ -d /usr/lib/grub/x86_64-efi ]; then
+            grub2-mkimage \
+                -o "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" \
+                -p /EFI/$BOOTLOADER_ID \
+                -O x86_64-efi \
+                fat part_gpt part_msdos normal boot linux configfile \
+                loopback chain efifwsetup efi_gop efi_uga ls search \
+                search_label search_fs_uuid search_fs_file gfxterm \
+                gfxterm_background gfxterm_menu test all_video loadenv \
+                exfat ext2 btrfs 2>&1 && echo "  Built grubx64.efi successfully" || {
+                echo "  WARN: grub2-mkimage failed"
+                ERRORS=$((ERRORS + 1))
+            }
+        else
+            echo "  grub2-mkimage not available or no GRUB modules"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+else
+    echo "grub2-install succeeded and grubx64.efi exists — skipping binary copy"
 fi
+
+# Final check
+if [ ! -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" ]; then
+    echo "CRITICAL: Still no grubx64.efi after all attempts!"
+    ERRORS=$((ERRORS + 1))
+else
+    echo "grubx64.efi is present at $ESP/EFI/$BOOTLOADER_ID/grubx64.efi"
+    ls -la "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi"
+fi
+echo ""
 
 # ---------------------------------------------------------------
 # Step 3: Create redirect grub.cfg on the ESP
 # ---------------------------------------------------------------
-# The GRUB binary on the ESP needs a grub.cfg that tells it where
-# to find the REAL grub.cfg on the root partition. This is Fedora's
-# standard redirect mechanism.
+echo "=== Step 3: Create ESP grub.cfg ==="
 ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
 if [ -z "$ROOT_UUID" ] && [ -f /etc/fstab ]; then
     ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/UUID=/, "", $1); print $1}' /etc/fstab)
@@ -115,55 +237,68 @@ export prefix
 configfile \$prefix/grub.cfg
 ESPGRUB
     echo "Created redirect grub.cfg (root UUID: $ROOT_UUID)"
+    echo "Contents:"
+    cat "$ESP/EFI/$BOOTLOADER_ID/grub.cfg"
 else
     echo "WARN: Could not determine root UUID for ESP grub.cfg"
+    ERRORS=$((ERRORS + 1))
 fi
+echo ""
 
 # ---------------------------------------------------------------
 # Step 4: Install fallback bootloader at /EFI/BOOT/BOOTX64.EFI
 # ---------------------------------------------------------------
+echo "=== Step 4: Fallback BOOTX64.EFI ==="
 # This is THE critical step. UEFI firmware ALWAYS checks this path
 # when scanning for bootable devices. Without it, the drive may not
 # appear in the firmware boot menu at all.
-echo "Installing fallback bootloader..."
 
 # Prefer shim (Secure Boot compatible), then GRUB directly
 FALLBACK_SRC=""
 for src in "$ESP/EFI/$BOOTLOADER_ID/shimx64.efi" \
-           "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi"; do
+           "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" \
+           /usr/share/lyrah/efi-binaries/shimx64.efi \
+           /usr/share/lyrah/efi-binaries/grubx64.efi; do
     if [ -f "$src" ]; then
         FALLBACK_SRC="$src"
+        echo "Using $src as fallback BOOTX64.EFI source"
         break
     fi
 done
 
 if [ -n "$FALLBACK_SRC" ]; then
     cp -f "$FALLBACK_SRC" "$ESP/EFI/BOOT/BOOTX64.EFI"
-    echo "  Installed $FALLBACK_SRC → /EFI/BOOT/BOOTX64.EFI"
+    echo "Installed $FALLBACK_SRC -> /EFI/BOOT/BOOTX64.EFI"
+    ls -la "$ESP/EFI/BOOT/BOOTX64.EFI"
 else
-    echo "FATAL: No EFI binary found to install as fallback"
-    exit 1
+    echo "CRITICAL: No EFI binary found to install as BOOTX64.EFI!"
+    ERRORS=$((ERRORS + 1))
 fi
 
 # Copy the redirect grub.cfg to the fallback location too
 if [ -f "$ESP/EFI/$BOOTLOADER_ID/grub.cfg" ]; then
     cp -f "$ESP/EFI/$BOOTLOADER_ID/grub.cfg" "$ESP/EFI/BOOT/grub.cfg"
-    echo "  Copied redirect grub.cfg to /EFI/BOOT/"
+    echo "Copied redirect grub.cfg to /EFI/BOOT/"
 fi
 
 # If shim was installed as BOOTX64.EFI, also need grubx64.efi alongside it
 # (shim loads grubx64.efi from the same directory)
-if echo "$FALLBACK_SRC" | grep -q "shimx64"; then
-    if [ -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" ]; then
-        cp -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" "$ESP/EFI/BOOT/grubx64.efi"
-        echo "  Copied grubx64.efi alongside shim in /EFI/BOOT/"
+if [ -n "$FALLBACK_SRC" ] && echo "$FALLBACK_SRC" | grep -q "shimx64"; then
+    GRUB_FOR_SHIM=""
+    for g in "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" /usr/share/lyrah/efi-binaries/grubx64.efi; do
+        [ -f "$g" ] && GRUB_FOR_SHIM="$g" && break
+    done
+    if [ -n "$GRUB_FOR_SHIM" ]; then
+        cp -f "$GRUB_FOR_SHIM" "$ESP/EFI/BOOT/grubx64.efi"
+        echo "Copied grubx64.efi alongside shim in /EFI/BOOT/"
     fi
 fi
+echo ""
 
 # ---------------------------------------------------------------
 # Step 5: Generate grub.cfg on the root partition
 # ---------------------------------------------------------------
-echo "Generating GRUB configuration..."
+echo "=== Step 5: Generate grub.cfg ==="
 
 # Ensure /etc/default/grub exists with sane defaults
 mkdir -p /etc/default
@@ -184,27 +319,40 @@ fi
 # Run grub2-mkconfig to generate the actual boot menu
 if command -v grub2-mkconfig &>/dev/null; then
     mkdir -p "$(dirname "$GRUB_CFG")"
-    grub2-mkconfig -o "$GRUB_CFG" 2>&1 || echo "WARN: grub2-mkconfig failed"
-    echo "Generated $GRUB_CFG"
+    if grub2-mkconfig -o "$GRUB_CFG" 2>&1; then
+        echo "Generated $GRUB_CFG"
+    else
+        echo "WARN: grub2-mkconfig failed"
+        ERRORS=$((ERRORS + 1))
+    fi
 else
     echo "WARN: grub2-mkconfig not found"
+    ERRORS=$((ERRORS + 1))
 fi
+echo ""
 
 # ---------------------------------------------------------------
 # Step 6: Try to create UEFI NVRAM boot entry (best effort)
 # ---------------------------------------------------------------
-# efibootmgr writes to /sys/firmware/efi/efivars. This often fails
-# inside a chroot (efivars may be read-only or not mounted). That's
-# OK — the fallback BOOTX64.EFI ensures bootability regardless.
+echo "=== Step 6: NVRAM entry ==="
 if command -v efibootmgr &>/dev/null && [ -d /sys/firmware/efi/efivars ]; then
     echo "Attempting to create UEFI NVRAM boot entry..."
 
     # Find the ESP disk and partition number
     ESP_DEV=$(findmnt -no SOURCE "$ESP" 2>/dev/null || true)
     if [ -n "$ESP_DEV" ]; then
-        # Extract disk and partition: /dev/sda1 → disk=/dev/sda part=1
-        DISK=$(echo "$ESP_DEV" | sed 's/[0-9]*$//')
-        PART=$(echo "$ESP_DEV" | grep -o '[0-9]*$')
+        # Handle both SATA (/dev/sda1) and NVMe (/dev/nvme0n1p1)
+        if echo "$ESP_DEV" | grep -q "nvme\|mmcblk"; then
+            # NVMe/eMMC: /dev/nvme0n1p1 → disk=/dev/nvme0n1 part=1
+            DISK=$(echo "$ESP_DEV" | sed 's/p[0-9]*$//')
+            PART=$(echo "$ESP_DEV" | grep -o '[0-9]*$')
+        else
+            # SATA/USB: /dev/sda1 → disk=/dev/sda part=1
+            DISK=$(echo "$ESP_DEV" | sed 's/[0-9]*$//')
+            PART=$(echo "$ESP_DEV" | grep -o '[0-9]*$')
+        fi
+
+        echo "  ESP device: $ESP_DEV → disk=$DISK part=$PART"
 
         if [ -n "$DISK" ] && [ -n "$PART" ]; then
             # Determine which EFI binary to register
@@ -218,7 +366,7 @@ if command -v efibootmgr &>/dev/null && [ -d /sys/firmware/efi/efivars ]; then
                 --disk "$DISK" \
                 --part "$PART" \
                 --label "Lyrah OS" \
-                --loader "$LOADER" 2>&1 || echo "  WARN: efibootmgr failed (non-fatal — fallback BOOTX64.EFI is in place)"
+                --loader "$LOADER" 2>&1 || echo "  WARN: efibootmgr failed (non-fatal)"
 
             echo "  NVRAM entry creation attempted"
         fi
@@ -228,34 +376,50 @@ if command -v efibootmgr &>/dev/null && [ -d /sys/firmware/efi/efivars ]; then
 else
     echo "  Skipping NVRAM entry (efibootmgr not available or no efivars)"
 fi
+echo ""
 
 # ---------------------------------------------------------------
 # Step 7: Verify ESP contents
 # ---------------------------------------------------------------
-echo ""
-echo "=== ESP Verification ==="
+echo "=== Step 7: Final Verification ==="
 echo "Contents of $ESP/EFI/:"
 ls -laR "$ESP/EFI/" 2>/dev/null || echo "  (empty!)"
+echo ""
 
-# Critical checks
+# Detailed checks
+echo "--- Critical file checks ---"
 PASS=true
-if [ ! -f "$ESP/EFI/BOOT/BOOTX64.EFI" ]; then
-    echo "FAIL: /EFI/BOOT/BOOTX64.EFI missing"
-    PASS=false
-fi
-if [ ! -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" ]; then
-    echo "FAIL: /EFI/$BOOTLOADER_ID/grubx64.efi missing"
-    PASS=false
-fi
-if [ ! -f "$GRUB_CFG" ]; then
-    echo "FAIL: $GRUB_CFG missing"
-    PASS=false
-fi
+for check_file in \
+    "$ESP/EFI/BOOT/BOOTX64.EFI" \
+    "$ESP/EFI/BOOT/grub.cfg" \
+    "$ESP/EFI/$BOOTLOADER_ID/grubx64.efi" \
+    "$ESP/EFI/$BOOTLOADER_ID/grub.cfg"; do
+    if [ -f "$check_file" ]; then
+        SIZE=$(stat -c%s "$check_file" 2>/dev/null || echo "?")
+        echo "  OK: $check_file ($SIZE bytes)"
+    else
+        echo "  MISSING: $check_file"
+        PASS=false
+    fi
+done
 
-if [ "$PASS" = "true" ]; then
-    echo "PASS: All bootloader files present"
+if [ -f "$GRUB_CFG" ]; then
+    echo "  OK: $GRUB_CFG ($(stat -c%s "$GRUB_CFG" 2>/dev/null || echo '?') bytes)"
 else
-    echo "WARN: Some bootloader files are missing — boot may fail"
+    echo "  MISSING: $GRUB_CFG"
+    PASS=false
 fi
 
+echo ""
+if [ "$PASS" = "true" ] && [ "$ERRORS" -eq 0 ]; then
+    echo "RESULT: PASS — All bootloader files present, no errors"
+elif [ "$PASS" = "true" ]; then
+    echo "RESULT: PASS with $ERRORS warning(s) — All critical files present"
+else
+    echo "RESULT: FAIL — Some bootloader files are missing (see above)"
+fi
+
+echo ""
+echo "Total errors/warnings: $ERRORS"
+echo "Log saved to: $LOGFILE"
 echo "=== Bootloader Installation Complete ==="
