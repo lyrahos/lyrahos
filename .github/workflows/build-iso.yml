@@ -633,14 +633,22 @@ jobs:
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
 
-          # Remove Fedora EFI files from rootfs.
-          # The grub2-efi-x64 and shim-x64 RPMs install a GRUB binary and
-          # redirect grub.cfg into /boot/efi/EFI/fedora/. If these ship in
-          # the squashfs, Calamares copies them to the real ESP and the
-          # firmware shows a duplicate "Fedora" boot entry with stale UUIDs
-          # that either hangs at a GRUB shell or fails to find the kernel.
-          # Calamares's bootloader module re-installs GRUB properly via
-          # grub2-install, so these pre-packaged files are never needed.
+          # Save signed EFI binaries from the grub2-efi-x64 and shim-x64
+          # RPMs. These are the Fedora-signed grubx64.efi and shimx64.efi
+          # that work with Secure Boot. We save them to a non-EFI location
+          # so our install-bootloader.sh can use them during installation
+          # (grub2-install may fail inside the Calamares chroot, and its
+          # output is unsigned anyway).
+          sudo mkdir -p squashfs-root/usr/share/lyrah/efi-binaries
+          for efi_bin in grubx64.efi shimx64.efi shimx64-fedora.efi mmx64.efi; do
+            if [ -f "squashfs-root/boot/efi/EFI/fedora/$efi_bin" ]; then
+              sudo cp "squashfs-root/boot/efi/EFI/fedora/$efi_bin" squashfs-root/usr/share/lyrah/efi-binaries/
+              echo "Saved $efi_bin for bootloader installation"
+            fi
+          done
+          # Now remove the Fedora EFI directory. If these ship in the
+          # squashfs, Calamares copies them to the real ESP and the firmware
+          # shows a duplicate "Fedora" boot entry with stale UUIDs.
           sudo rm -rf squashfs-root/boot/efi/EFI/fedora
           echo "Removed stale Fedora EFI directory from rootfs"
 
@@ -649,6 +657,7 @@ jobs:
           sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/
           sudo cp installer/scripts/configure-session.sh squashfs-root/usr/share/lyrah/installer/
           sudo cp installer/scripts/setup-kernel.sh squashfs-root/usr/share/lyrah/installer/
+          sudo cp installer/scripts/install-bootloader.sh squashfs-root/usr/share/lyrah/installer/
           sudo chmod +x squashfs-root/usr/share/lyrah/installer/*.sh
 
           # Wine env config + GPU detection for hybrid laptops
