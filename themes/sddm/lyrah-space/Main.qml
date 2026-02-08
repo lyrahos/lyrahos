@@ -16,64 +16,18 @@ Rectangle {
         GradientStop { position: 1.0; color: "#0e0b1e" }
     }
 
-    // Starfield
+    // Static starfield — no animations, just random dots to avoid
+    // continuous per-frame updates that cause input lag on SDDM.
     Repeater {
-        model: 80
+        model: 40
         delegate: Rectangle {
-            property real starX: Math.random()
-            property real starY: Math.random()
-            property real starSize: 1 + Math.random() * 2
-            property real starOpacity: 0.3 + Math.random() * 0.7
-
-            x: starX * root.width
-            y: starY * root.height
-            width: starSize
-            height: starSize
-            radius: starSize / 2
+            x: Math.random() * root.width
+            y: Math.random() * root.height
+            width: 1 + Math.random() * 2
+            height: width
+            radius: width / 2
             color: "#ffffff"
-            opacity: starOpacity
-
-            SequentialAnimation on opacity {
-                loops: Animation.Infinite
-                NumberAnimation {
-                    to: starOpacity * 0.3
-                    duration: 2000 + Math.random() * 4000
-                    easing.type: Easing.InOutSine
-                }
-                NumberAnimation {
-                    to: starOpacity
-                    duration: 2000 + Math.random() * 4000
-                    easing.type: Easing.InOutSine
-                }
-            }
-        }
-    }
-
-    // Nebula glow - top right
-    Rectangle {
-        x: root.width * 0.6
-        y: -root.height * 0.1
-        width: root.width * 0.5
-        height: root.height * 0.5
-        radius: width / 2
-        opacity: 0.08
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#8b5cf6" }
-            GradientStop { position: 1.0; color: "transparent" }
-        }
-    }
-
-    // Nebula glow - bottom left
-    Rectangle {
-        x: -root.width * 0.15
-        y: root.height * 0.55
-        width: root.width * 0.45
-        height: root.height * 0.45
-        radius: width / 2
-        opacity: 0.06
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#06b6d4" }
-            GradientStop { position: 1.0; color: "transparent" }
+            opacity: 0.2 + Math.random() * 0.6
         }
     }
 
@@ -145,16 +99,8 @@ Rectangle {
                            : Qt.rgba(0.04, 0.05, 0.15, 0.6)
                     border.color: selectedUser === index
                                   ? "#8b5cf6"
-                                  : cardMouse.containsMouse
-                                    ? Qt.rgba(0.55, 0.36, 0.96, 0.4)
-                                    : Qt.rgba(1, 1, 1, 0.08)
+                                  : Qt.rgba(1, 1, 1, 0.08)
                     border.width: selectedUser === index ? 2 : 1
-
-                    Behavior on border.color { ColorAnimation { duration: 150 } }
-                    Behavior on color { ColorAnimation { duration: 150 } }
-
-                    scale: cardMouse.containsMouse ? 1.05 : 1.0
-                    Behavior on scale { NumberAnimation { duration: 150 } }
 
                     Column {
                         anchors.centerIn: parent
@@ -171,9 +117,6 @@ Rectangle {
                                           ? "#a78bfa" : "#374151"
                             border.width: 2
 
-                            Behavior on color { ColorAnimation { duration: 150 } }
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
-
                             // User icon image if available
                             Image {
                                 anchors.fill: parent
@@ -181,10 +124,6 @@ Rectangle {
                                 source: icon || ""
                                 fillMode: Image.PreserveAspectCrop
                                 visible: status === Image.Ready
-
-                                // Clip to circle
-                                layer.enabled: true
-                                layer.effect: Item {}
                             }
 
                             // Fallback: first letter of name
@@ -209,15 +148,12 @@ Rectangle {
                             elide: Text.ElideRight
                             width: 100
                             horizontalAlignment: Text.AlignHCenter
-
-                            Behavior on color { ColorAnimation { duration: 150 } }
                         }
                     }
 
                     MouseArea {
                         id: cardMouse
                         anchors.fill: parent
-                        hoverEnabled: true
                         onClicked: {
                             selectedUser = index
                             passwordField.text = ""

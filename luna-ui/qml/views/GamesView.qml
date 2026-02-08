@@ -288,9 +288,12 @@ Rectangle {
                                                 refreshGames()
                                                 activeTab = 0
                                             } else {
-                                                // Hide luna-ui so Steam is visible
-                                                // inside gamescope, then poll for login
-                                                gamesRoot.window.visibility = Window.Hidden
+                                                // Minimize luna-ui so gamescope focuses
+                                                // the Steam window once it appears.
+                                                // (Window.Hidden unmaps the X window
+                                                //  entirely, leaving gamescope with
+                                                //  nothing to show.)
+                                                gamesRoot.window.showMinimized()
                                                 GameManager.launchSteamLogin()
                                             }
                                         }
@@ -340,7 +343,7 @@ Rectangle {
     Connections {
         target: GameManager
         function onSteamLoginComplete(success) {
-            gamesRoot.window.visibility = Window.FullScreen
+            gamesRoot.window.showFullScreen()
             if (success) {
                 refreshGames()
                 activeTab = 0
