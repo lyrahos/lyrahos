@@ -7,9 +7,14 @@
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=gamescope
 
-# Do NOT set QT_QPA_PLATFORM — gamescope provides Xwayland for child
-# apps.  Setting wayland here causes luna-ui to bypass Xwayland and
-# fail silently inside gamescope's compositor.
+# On hybrid GPU laptops (AMD/Intel iGPU + NVIDIA dGPU), compositors
+# can't auto-detect the right DRM device and fall back to llvmpipe
+# (CPU software rendering at 90%+ CPU). Detect the integrated GPU
+# and tell kwin_wayland to use it. gamescope also benefits from this.
+PRIMARY_GPU=$(/usr/share/lyrah/setup/detect-primary-gpu.sh 2>/dev/null)
+if [ -n "$PRIMARY_GPU" ]; then
+    export KWIN_DRM_DEVICES="$PRIMARY_GPU"
+fi
 
 # Wine/DXVK environment variables
 export DXVK_LOG_LEVEL=none
@@ -17,9 +22,7 @@ export VKD3D_CONFIG=dxr
 
 # Signal files written by luna-ui before it exits:
 #   luna-switch-to-desktop  → user wants KDE, exit to SDDM
-#   luna-launch-steam       → user wants Steam login, launch Steam
-#                              directly as gamescope's child, then
-#                              restart luna-ui when Steam exits
+#   luna-launch-steam       → user wants Steam login
 SWITCH_SIGNAL="/tmp/luna-switch-to-desktop"
 STEAM_SIGNAL="/tmp/luna-launch-steam"
 rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL"
@@ -29,94 +32,95 @@ exec &> >(systemd-cat -t luna-session)
 
 echo "luna-session: starting at $(date)"
 
-# Wait for SDDM's greeter compositor (kwin_wayland) to fully release
-# the DRM device.  SDDM stops its greeter when the user session starts,
-# but kwin_wayland may take a moment to exit and release DRM master.
-# If we start gamescope too early it can't acquire DRM and fails.
-echo "luna-session: waiting for SDDM greeter to release DRM..."
-for i in $(seq 1 20); do
-    if ! pgrep -x kwin_wayland > /dev/null 2>&1; then
-        echo "luna-session: greeter exited after ${i}00ms"
-        break
+# ── Helper: check signal files after compositor exits ──
+handle_signals() {
+    if [ -f "$SWITCH_SIGNAL" ]; then
+        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL"
+        echo "luna-session: switching to Desktop Mode..."
+        export XDG_CURRENT_DESKTOP=KDE
+        export QT_QPA_PLATFORM=wayland
+        exec startplasma-wayland
     fi
-    sleep 0.1
-done
 
-# If kwin_wayland is STILL running after 2s, it's stuck — kill it so
-# gamescope can take DRM master.
-if pgrep -x kwin_wayland > /dev/null 2>&1; then
-    echo "luna-session: greeter still alive, killing stale kwin_wayland"
-    killall kwin_wayland 2>/dev/null || true
-    sleep 0.5
+    if [ -f "$STEAM_SIGNAL" ]; then
+        rm -f "$STEAM_SIGNAL"
+        return 1  # caller should launch Steam
+    fi
+
+    return 0  # no action needed
+}
+
+# ── Compositor wrapper: run a command with the active compositor ──
+# $COMPOSITOR is set after detection below.
+run_compositor() {
+    if [ "$COMPOSITOR" = "gamescope" ]; then
+        gamescope -- "$@"
+    else
+        QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
+    fi
+}
+
+# ── Detect which compositor works ──
+# Try gamescope DRM mode first (ideal: lightweight, game-focused).
+# If it fails quickly, fall back to kwin_wayland (works on all GPUs).
+COMPOSITOR="gamescope"
+
+echo "luna-session: testing gamescope DRM mode..."
+gamescope -- /usr/bin/luna-ui
+rc=$?
+
+# Check signals from the first run
+handle_signals
+if [ $? -eq 1 ]; then
+    # Steam requested on first run — launch it, then restart luna-ui
+    echo "luna-session: launching Steam for login..."
+    run_compositor steam
+    # Fall through to main loop to restart luna-ui
+elif [ $rc -eq 0 ]; then
+    echo "luna-session: gamescope exited cleanly"
+    exit 0
+elif [ $rc -ne 0 ]; then
+    # gamescope failed — try one more time after a brief wait
+    sleep 2
+    echo "luna-session: gamescope retry..."
+    gamescope -- /usr/bin/luna-ui
+    rc=$?
+    handle_signals
+    if [ $? -eq 1 ]; then
+        echo "luna-session: launching Steam for login..."
+        run_compositor steam
+    elif [ $rc -eq 0 ]; then
+        exit 0
+    else
+        # gamescope can't get DRM — switch to kwin_wayland for the
+        # rest of this session. kwin_wayland runs luna-ui directly
+        # (NOT nested inside gamescope) to avoid double compositing.
+        echo "luna-session: gamescope DRM failed, using kwin_wayland"
+        COMPOSITOR="kwin_wayland"
+    fi
 fi
 
-# Do NOT use --force-grab-cursor — it forces software cursor rendering,
-# meaning every mouse movement triggers a full frame re-composite.
-# The hardware cursor plane (default) updates independently of the
-# compositor at essentially zero cost.
-#
-# Do NOT use --adaptive-sync globally — VRR causes frame pacing
-# issues on displays that don't support it. Games can enable VRR
-# individually via mangohud or gamescope env vars.
-GAMESCOPE_ARGS=()
-
 # ── Main loop ──
-# luna-ui may exit and request a re-launch (e.g. after Steam login).
-# Loop until we get a clean exit or switch-to-desktop signal.
+# Restart luna-ui after Steam exits or on compositor retry.
 while true; do
-    # Try gamescope in DRM mode with retries for DRM handoff
-    STARTED=false
-    for attempt in 1 2 3 4 5; do
-        echo "luna-session: gamescope attempt $attempt (DRM mode)"
-        gamescope "${GAMESCOPE_ARGS[@]}" -- /usr/bin/luna-ui
-        rc=$?
+    echo "luna-session: starting luna-ui ($COMPOSITOR mode)"
+    run_compositor /usr/bin/luna-ui
+    rc=$?
 
-        # If user requested desktop switch, launch KDE Plasma directly.
-        # Don't exit to SDDM (greeter often fails to restart, causing
-        # a black screen). Instead, replace this session with KDE —
-        # same approach SteamOS uses to switch Game Mode → Desktop.
-        if [ -f "$SWITCH_SIGNAL" ]; then
-            rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL"
-            echo "luna-session: switching to Desktop Mode (startplasma-wayland)..."
-            export XDG_CURRENT_DESKTOP=KDE
-            export QT_QPA_PLATFORM=wayland
-            exec startplasma-wayland
-        fi
-
-        # If luna-ui requested Steam login, break out of retry loop
-        # and launch Steam below.
-        if [ -f "$STEAM_SIGNAL" ]; then
-            rm -f "$STEAM_SIGNAL"
-            STARTED=true
-            break
-        fi
-
-        # Exit code 0 means gamescope ran and the user exited normally
-        if [ $rc -eq 0 ]; then
-            echo "luna-session: gamescope exited cleanly"
-            exit 0
-        fi
-
-        echo "luna-session: gamescope exited with code $rc, retrying in ${attempt}s..."
-        sleep "$attempt"
-    done
-
-    # If we never started successfully and no signal was set, give up
-    if [ "$STARTED" != "true" ]; then
-        echo "luna-session: gamescope failed after 5 attempts, exiting to SDDM"
-        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL"
-        exit 1
+    handle_signals
+    if [ $? -eq 1 ]; then
+        echo "luna-session: launching Steam for login..."
+        run_compositor steam
+        echo "luna-session: Steam exited, restarting luna-ui..."
+        rm -f "$STEAM_SIGNAL"
+        continue
     fi
 
-    # ── Steam login requested ──
-    # Launch Steam directly as gamescope's child so gamescope manages
-    # its windows natively (same architecture as SteamOS).
-    echo "luna-session: launching Steam for login..."
-    gamescope "${GAMESCOPE_ARGS[@]}" -- steam
-    echo "luna-session: Steam exited, restarting luna-ui..."
+    if [ $rc -eq 0 ]; then
+        echo "luna-session: session ended cleanly"
+        exit 0
+    fi
 
-    # Clean up any signal files Steam might have left
-    rm -f "$STEAM_SIGNAL"
-
-    # Loop back to restart luna-ui
+    echo "luna-session: compositor exited with code $rc, restarting..."
+    sleep 1
 done
