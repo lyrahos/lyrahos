@@ -316,6 +316,9 @@ jobs:
                 flatpak \
                 plasma-discover-flatpak \
                 plasma-discover-packagekit \
+                PackageKit \
+                polkit \
+                polkit-kde-agent-1 \
                 appstream-data \
                 logrotate \
                 grub2-efi-x64 \
