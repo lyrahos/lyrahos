@@ -916,6 +916,20 @@ jobs:
         run: |
           # Fix permissions on iso-build (EFI directory may be restrictive)
           sudo chmod -R a+rX iso-build/
+
+          # Replace shim with GRUB as the default EFI bootloader.
+          # Fedora ships BOOTX64.EFI as shim (Secure Boot first-stage loader).
+          # On live USB boot, shim detects the device isn't in NVRAM and shows
+          # a blue "Boot Option Restoration" screen every time. This is
+          # disruptive for a live USB experience.
+          # Bypass shim entirely: copy grubx64.efi over BOOTX64.EFI so UEFI
+          # firmware loads GRUB directly. Secure Boot won't work, but live
+          # USBs don't need it — the installed system still uses shim via
+          # Calamares's grub2-install.
+          if [ -f iso-build/EFI/BOOT/grubx64.efi ]; then
+            echo "Replacing shim with GRUB as default EFI bootloader (removes Boot Option Restoration screen)"
+            sudo cp -f iso-build/EFI/BOOT/grubx64.efi iso-build/EFI/BOOT/BOOTX64.EFI
+          fi
           if [ -f iso-build/.discinfo ]; then
             sudo sed -i "s/Fedora/Lyrah OS/g" iso-build/.discinfo
           fi
