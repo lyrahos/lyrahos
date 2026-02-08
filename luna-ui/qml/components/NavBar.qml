@@ -10,14 +10,32 @@ Rectangle {
 
     property int currentIndex: 0
 
-    // FIX #16: Use text labels instead of emoji. In production, replace
-    // with SVG icons from resources/icons/ for consistent rendering in gamescope.
+    // Accept keyboard focus
+    focus: true
+    activeFocusOnTab: true
+
     readonly property var sections: [
-        { name: "Games",    icon: "[G]", section: "Games" },
-        { name: "Store",    icon: "[S]", section: "Store" },
-        { name: "Media",    icon: "[M]", section: "Media" },
-        { name: "Settings", icon: "[*]", section: "Settings" }
+        { name: "Games",    section: "Games" },
+        { name: "Store",    section: "Store" },
+        { name: "Media",    section: "Media" },
+        { name: "Settings", section: "Settings" }
     ]
+
+    // Keyboard navigation: Up/Down to move, Enter/Right to select
+    Keys.onUpPressed: {
+        if (currentIndex > 0) {
+            currentIndex--
+            sectionChanged(sections[currentIndex].section)
+        }
+    }
+    Keys.onDownPressed: {
+        if (currentIndex < sections.length - 1) {
+            currentIndex++
+            sectionChanged(sections[currentIndex].section)
+        }
+    }
+    Keys.onReturnPressed: sectionChanged(sections[currentIndex].section)
+    Keys.onEnterPressed: sectionChanged(sections[currentIndex].section)
 
     Column {
         anchors.fill: parent
@@ -51,26 +69,15 @@ Rectangle {
                 border.color: currentIndex === index ? ThemeManager.getColor("focus") : "transparent"
                 border.width: currentIndex === index ? 2 : 0
 
-                Row {
+                Text {
                     anchors.centerIn: parent
-                    spacing: 12
-
-                    Text {
-                        text: modelData.icon
-                        font.pixelSize: 16
-                        font.bold: true
-                        color: currentIndex === index
-                               ? ThemeManager.getColor("primary")
-                               : ThemeManager.getColor("textSecondary")
-                    }
-                    Text {
-                        text: modelData.name
-                        font.pixelSize: ThemeManager.getFontSize("medium")
-                        font.family: ThemeManager.getFont("body")
-                        color: currentIndex === index
-                               ? ThemeManager.getColor("textPrimary")
-                               : ThemeManager.getColor("textSecondary")
-                    }
+                    text: modelData.name
+                    font.pixelSize: ThemeManager.getFontSize("medium")
+                    font.family: ThemeManager.getFont("body")
+                    font.bold: currentIndex === index
+                    color: currentIndex === index
+                           ? ThemeManager.getColor("textPrimary")
+                           : ThemeManager.getColor("textSecondary")
                 }
 
                 MouseArea {

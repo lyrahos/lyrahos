@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import Qt5Compat.GraphicalEffects   // FIX #42: Import for OpacityMask
 
 Rectangle {
     id: card
@@ -19,43 +18,36 @@ Rectangle {
     signal playClicked(int id)
     signal favoriteClicked(int id)
 
-    // FIX #8: Image doesn't have a radius property. Use layer + OpacityMask.
-    Image {
-        id: coverImage
-        anchors.fill: parent
-        anchors.margins: 4
-        source: coverArt || ""
-        fillMode: Image.PreserveAspectCrop
-        visible: false  // Hidden; rendered via OpacityMask
-    }
-
+    // Rounded cover art using clip instead of Qt5Compat.GraphicalEffects
     Rectangle {
-        id: coverMask
-        anchors.fill: coverImage
-        radius: 8
-        visible: false
-    }
-
-    OpacityMask {
-        anchors.fill: coverImage
-        source: coverImage
-        maskSource: coverMask
-        visible: coverImage.status === Image.Ready
-    }
-
-    // Placeholder if no art loaded
-    Rectangle {
-        visible: coverImage.status !== Image.Ready
+        id: coverContainer
         anchors.fill: parent
         anchors.margins: 4
         radius: 8
-        color: ThemeManager.getColor("surface")
-        Text {
-            anchors.centerIn: parent
-            text: gameTitle.length > 0 ? gameTitle.charAt(0).toUpperCase() : "?"
-            font.pixelSize: 48
-            font.bold: true
-            color: ThemeManager.getColor("primary")
+        clip: true
+        color: "transparent"
+
+        Image {
+            id: coverImage
+            anchors.fill: parent
+            source: coverArt || ""
+            fillMode: Image.PreserveAspectCrop
+            visible: status === Image.Ready
+        }
+
+        // Placeholder if no art loaded
+        Rectangle {
+            visible: coverImage.status !== Image.Ready
+            anchors.fill: parent
+            color: ThemeManager.getColor("surface")
+
+            Text {
+                anchors.centerIn: parent
+                text: gameTitle.length > 0 ? gameTitle.charAt(0).toUpperCase() : "?"
+                font.pixelSize: 48
+                font.bold: true
+                color: ThemeManager.getColor("primary")
+            }
         }
     }
 

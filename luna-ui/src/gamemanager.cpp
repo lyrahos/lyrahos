@@ -6,6 +6,10 @@
 #include <QProcess>
 #include <QDebug>
 #include <QVariantMap>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
+#include <QCoreApplication>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -123,4 +127,68 @@ QVariantList GameManager::getFavorites() {
 
 QVariantList GameManager::search(const QString& query) {
     return gamesToVariantList(m_db->searchGames(query));
+}
+
+void GameManager::executeCommand(const QString& program, const QStringList& args) {
+    QProcess::startDetached(program, args);
+}
+
+bool GameManager::isSteamInstalled() {
+    // Check if steam binary exists
+    return !QStandardPaths::findExecutable("steam").isEmpty();
+}
+
+bool GameManager::isSteamAvailable() {
+    // Steam is "available" if the user has logged in (library data exists)
+    return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
+}
+
+void GameManager::launchSteam() {
+    QProcess::startDetached("steam", QStringList());
+}
+
+void GameManager::launchSteamLogin() {
+    // Launch Steam and poll for library data.
+    // luna-ui's window will be hidden by QML so Steam is visible in gamescope.
+    QProcess::startDetached("steam", QStringList());
+
+    m_steamCheckCount = 0;
+    if (m_steamCheckTimer) {
+        m_steamCheckTimer->stop();
+        m_steamCheckTimer->deleteLater();
+    }
+    m_steamCheckTimer = new QTimer(this);
+    connect(m_steamCheckTimer, &QTimer::timeout, this, [this]() {
+        m_steamCheckCount++;
+        if (isSteamAvailable()) {
+            m_steamCheckTimer->stop();
+            m_steamCheckTimer->deleteLater();
+            m_steamCheckTimer = nullptr;
+            scanAllStores();
+            emit steamLoginComplete(true);
+        } else if (m_steamCheckCount > 90) {
+            // 3s * 90 = ~4.5 min timeout — give up
+            m_steamCheckTimer->stop();
+            m_steamCheckTimer->deleteLater();
+            m_steamCheckTimer = nullptr;
+            emit steamLoginComplete(false);
+        }
+    });
+    m_steamCheckTimer->start(3000);
+}
+
+void GameManager::switchToDesktop() {
+    // Write a signal file that luna-session checks after gamescope exits.
+    // This tells the session script to exit immediately instead of retrying
+    // gamescope (which would restart Luna Mode instead of returning to SDDM).
+    // luna-session also handles killing kwin_wayland in the fallback case.
+    QFile signal("/tmp/luna-switch-to-desktop");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
+
+    QCoreApplication::quit();
+}
+
+int GameManager::getGameCount() {
+    return m_db->getAllGames().size();
 }

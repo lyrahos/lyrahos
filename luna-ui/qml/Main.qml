@@ -25,6 +25,7 @@ ApplicationWindow {
                 id: navBar
                 Layout.preferredWidth: ThemeManager.getLayoutValue("sidebarWidth") || 220
                 Layout.fillHeight: true
+                focus: true
                 onSectionChanged: function(section) {
                     contentLoader.source = "views/" + section + "View.qml"
                 }

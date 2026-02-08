@@ -20,12 +20,20 @@ public:
     Q_INVOKABLE QVariantList getRecentGames();
     Q_INVOKABLE QVariantList getFavorites();
     Q_INVOKABLE QVariantList search(const QString& query);
+    Q_INVOKABLE void executeCommand(const QString& program, const QStringList& args = {});
+    Q_INVOKABLE bool isSteamAvailable();
+    Q_INVOKABLE bool isSteamInstalled();
+    Q_INVOKABLE void launchSteam();
+    Q_INVOKABLE void launchSteamLogin();
+    Q_INVOKABLE void switchToDesktop();
+    Q_INVOKABLE int getGameCount();
 
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
+    void steamLoginComplete(bool success);
 
 private:
     Database *m_db;
@@ -33,6 +41,8 @@ private:
     int m_activeSessionId = -1;
     int m_activeGameId = -1;
     QTimer *m_processMonitor;
+    QTimer *m_steamCheckTimer = nullptr;
+    int m_steamCheckCount = 0;
 
     void registerBackends();
     void monitorGameProcess();

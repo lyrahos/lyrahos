@@ -18,13 +18,20 @@ images:
     productLogo: "logo.svg"
     productIcon: "logo.svg"
 
+# Sidebar logo only, no duplicate in main area
+sidebar: widget
+navigation: widget
+
 slideshow: "show.qml"
+slideshowAPI: 2
 
 windowExpanding: fullscreen
 windowSize: 800x600
 windowPlacement: center
 
 style:
-    sidebarBackground: "#0f1419"
-    sidebarText: "#ffffff"
-    sidebarTextSelect: "#3b82f6"
+    sidebarBackground: "#111827"
+    sidebarText: "#e5e7eb"
+    sidebarTextSelect: "#a78bfa"
+    sidebarTextHighlight: "#ffffff"
+    sidebarTextCurrent: "#ffffff"
