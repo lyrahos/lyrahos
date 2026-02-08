@@ -313,6 +313,14 @@ jobs:
                 protontricks \
                 corectrl \
                 brave-browser \
+                mesa-dri-drivers \
+                mesa-vulkan-drivers \
+                mesa-va-drivers-freeworld \
+                libva \
+                libva-utils \
+                vulkan-loader \
+                xdg-desktop-portal \
+                xdg-desktop-portal-kde \
                 flatpak \
                 plasma-discover-flatpak \
                 plasma-discover-packagekit \
@@ -594,6 +602,13 @@ jobs:
           # Wine env config
           sudo mkdir -p squashfs-root/etc/profile.d
           sudo cp configs/common/lyrah-wine.sh squashfs-root/etc/profile.d/
+
+          # Brave browser: enable GPU acceleration and Wayland native rendering.
+          # Without these flags Brave falls back to software rendering (CPU)
+          # causing page load lag/freezes. Brave reads ~/.config/brave-flags.conf
+          # on startup; placing it in /etc/skel gives every new user the defaults.
+          sudo mkdir -p squashfs-root/etc/skel/.config
+          sudo cp configs/common/brave-flags.conf squashfs-root/etc/skel/.config/brave-flags.conf
 
           # Logrotate
           sudo mkdir -p squashfs-root/etc/logrotate.d
