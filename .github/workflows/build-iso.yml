@@ -1015,12 +1015,22 @@ jobs:
             -J -joliet-long -r
           )
 
-          # BIOS boot via isolinux
+          # -isohybrid-mbr is the MASTER SWITCH for all hybrid ISO features.
+          # Without it, xorriso ignores -isohybrid-gpt-basdat, -append_partition,
+          # and all partition table creation — producing a plain CD-ROM ISO that
+          # cannot boot from USB. This must be set UNCONDITIONALLY, regardless
+          # of whether BIOS boot via isolinux is available.
+          # isohdpfx.bin provides MBR bootstrap code + partition table skeleton.
+          # -partition_offset 16 reserves 32KB at the start for GPT headers.
+          XORRISO_ARGS+=(
+            -isohybrid-mbr "$ISOHDPFX"
+            -partition_offset 16
+          )
+
+          # BIOS boot via isolinux (optional — Fedora 43+ may be UEFI-only)
           if [ -f iso-build/isolinux/isolinux.bin ]; then
             echo "Found isolinux — enabling BIOS boot"
             XORRISO_ARGS+=(
-              -isohybrid-mbr "$ISOHDPFX"
-              -partition_offset 16
               -b isolinux/isolinux.bin
               -c isolinux/boot.cat
               -no-emul-boot
@@ -1029,7 +1039,7 @@ jobs:
             )
             HAS_BIOS=true
           else
-            echo "No isolinux found — BIOS boot disabled"
+            echo "No isolinux found — BIOS boot disabled (UEFI-only)"
             HAS_BIOS=false
           fi
 
@@ -1228,15 +1238,31 @@ jobs:
           fi
           echo "Using OVMF: $OVMF"
 
+          # Create a writable copy of OVMF vars (QEMU requires rw access)
+          OVMF_VARS=""
+          for vpath in /usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd; do
+            if [ -f "$vpath" ]; then
+              cp "$vpath" /tmp/ovmf_vars.fd
+              OVMF_VARS=/tmp/ovmf_vars.fd
+              break
+            fi
+          done
+
           touch uefi.log
-          timeout 90s qemu-system-x86_64 \
-            -m 2048 \
-            -smp 2 \
-            -bios "$OVMF" \
-            -drive file="$ISO_FILE",format=raw,if=virtio,readonly=on \
-            -display none \
-            -serial file:uefi.log \
-            2>&1 &
+          QEMU_UEFI_ARGS=(
+            -m 2048 -smp 2
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF"
+          )
+          if [ -n "$OVMF_VARS" ]; then
+            QEMU_UEFI_ARGS+=(-drive if=pflash,format=raw,file="$OVMF_VARS")
+          fi
+          QEMU_UEFI_ARGS+=(
+            -drive file="$ISO_FILE",format=raw,if=virtio,readonly=on
+            -display none
+            -serial file:uefi.log
+          )
+
+          timeout 90s qemu-system-x86_64 "${QEMU_UEFI_ARGS[@]}" 2>&1 &
           QEMU_PID=$!
           sleep 60
           if ps -p $QEMU_PID > /dev/null 2>&1; then
