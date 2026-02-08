@@ -1,0 +1,10 @@
+[SddmGreeterTheme]
+Name=Lyrah Space
+Description=Lyrah OS login theme
+Author=Lyrah OS
+Type=sddm-theme
+Version=1.0
+Website=https://github.com/lyrahos/lyrahos
+MainScript=Main.qml
+ConfigFile=theme.conf
+TranslationsDirectory=
