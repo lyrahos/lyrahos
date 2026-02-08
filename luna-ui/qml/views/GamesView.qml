@@ -301,12 +301,9 @@ Rectangle {
                             MouseArea {
                                 id: steamArea
                                 anchors.fill: parent
+                                z: -1
                                 hoverEnabled: true
-                                // Pass clicks through to children
-                                propagateComposedEvents: true
-                                onClicked: function(mouse) { mouse.accepted = false }
-                                onPressed: function(mouse) { mouse.accepted = false }
-                                onReleased: function(mouse) { mouse.accepted = false }
+                                acceptedButtons: Qt.NoButton
                             }
 
                             Behavior on border.color { ColorAnimation { duration: 150 } }
