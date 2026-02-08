@@ -293,9 +293,11 @@ jobs:
                 --exclude=kernel-devel \
                 --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
+                --exclude=dolphin \
                 filesystem \
                 setup \
                 @kde-desktop-environment \
+                thunar \
                 NetworkManager \
                 NetworkManager-wifi \
                 wpa_supplicant \
@@ -583,6 +585,19 @@ jobs:
 
           # Installer session .desktop (SDDM can select this as a session)
           sudo cp installer/lyrah-installer.desktop squashfs-root/usr/share/wayland-sessions/
+
+          # Set Thunar as default file manager (replacing Dolphin)
+          sudo mkdir -p squashfs-root/etc/skel/.config
+          sudo tee squashfs-root/etc/skel/.config/mimeapps.list > /dev/null << 'MIME_EOF'
+          [Default Applications]
+          inode/directory=thunar.desktop
+          MIME_EOF
+          # Also set system-wide default
+          sudo mkdir -p squashfs-root/usr/share/applications
+          sudo tee squashfs-root/usr/share/applications/mimeapps.list > /dev/null << 'MIME_EOF'
+          [Default Applications]
+          inode/directory=thunar.desktop
+          MIME_EOF
 
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
