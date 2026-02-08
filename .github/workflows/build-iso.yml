@@ -293,9 +293,11 @@ jobs:
                 --exclude=kernel-devel \
                 --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
+                --exclude=dolphin \
                 filesystem \
                 setup \
                 @kde-desktop-environment \
+                thunar \
                 NetworkManager \
                 NetworkManager-wifi \
                 wpa_supplicant \
@@ -313,9 +315,27 @@ jobs:
                 protontricks \
                 corectrl \
                 brave-browser \
+                mesa-dri-drivers \
+                mesa-dri-drivers.i686 \
+                mesa-vulkan-drivers \
+                mesa-vulkan-drivers.i686 \
+                mesa-va-drivers-freeworld \
+                libva \
+                libva-utils \
+                vulkan-loader \
+                vulkan-loader.i686 \
+                glibc.i686 \
+                alsa-lib.i686 \
+                libXinerama.i686 \
+                xdg-desktop-portal \
+                xdg-desktop-portal-kde \
                 flatpak \
                 plasma-discover-flatpak \
                 plasma-discover-packagekit \
+                PackageKit \
+                polkit \
+                polkit-kde-agent-1 \
+                appstream-data \
                 logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
@@ -566,6 +586,19 @@ jobs:
           # Installer session .desktop (SDDM can select this as a session)
           sudo cp installer/lyrah-installer.desktop squashfs-root/usr/share/wayland-sessions/
 
+          # Set Thunar as default file manager (replacing Dolphin)
+          sudo mkdir -p squashfs-root/etc/skel/.config
+          sudo tee squashfs-root/etc/skel/.config/mimeapps.list > /dev/null << 'MIME_EOF'
+          [Default Applications]
+          inode/directory=thunar.desktop
+          MIME_EOF
+          # Also set system-wide default
+          sudo mkdir -p squashfs-root/usr/share/applications
+          sudo tee squashfs-root/usr/share/applications/mimeapps.list > /dev/null << 'MIME_EOF'
+          [Default Applications]
+          inode/directory=thunar.desktop
+          MIME_EOF
+
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
 
@@ -590,6 +623,13 @@ jobs:
           # Wine env config
           sudo mkdir -p squashfs-root/etc/profile.d
           sudo cp configs/common/lyrah-wine.sh squashfs-root/etc/profile.d/
+
+          # Brave browser: enable GPU acceleration and Wayland native rendering.
+          # Without these flags Brave falls back to software rendering (CPU)
+          # causing page load lag/freezes. Brave reads ~/.config/brave-flags.conf
+          # on startup; placing it in /etc/skel gives every new user the defaults.
+          sudo mkdir -p squashfs-root/etc/skel/.config
+          sudo cp configs/common/brave-flags.conf squashfs-root/etc/skel/.config/brave-flags.conf
 
           # Logrotate
           sudo mkdir -p squashfs-root/etc/logrotate.d
