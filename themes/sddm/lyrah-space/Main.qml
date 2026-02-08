@@ -6,7 +6,9 @@ Rectangle {
     width: Screen.width
     height: Screen.height
 
-    // Deep space gradient background - no external image needed
+    property int selectedUser: 0
+
+    // Deep space gradient background
     gradient: Gradient {
         GradientStop { position: 0.0; color: "#0a0d14" }
         GradientStop { position: 0.4; color: "#0f1419" }
@@ -14,7 +16,7 @@ Rectangle {
         GradientStop { position: 1.0; color: "#0e0b1e" }
     }
 
-    // Starfield: scattered dots to simulate distant stars
+    // Starfield
     Repeater {
         model: 80
         delegate: Rectangle {
@@ -47,7 +49,7 @@ Rectangle {
         }
     }
 
-    // Subtle nebula glow - top right
+    // Nebula glow - top right
     Rectangle {
         x: root.width * 0.6
         y: -root.height * 0.1
@@ -61,7 +63,7 @@ Rectangle {
         }
     }
 
-    // Subtle nebula glow - bottom left
+    // Nebula glow - bottom left
     Rectangle {
         x: -root.width * 0.15
         y: root.height * 0.55
@@ -75,125 +77,224 @@ Rectangle {
         }
     }
 
-    // Login panel
-    Rectangle {
+    // Main content
+    Column {
         anchors.centerIn: parent
-        width: 400
-        height: 380
-        radius: 16
-        color: Qt.rgba(0.04, 0.05, 0.15, 0.85)
-        border.color: Qt.rgba(0.55, 0.36, 0.96, 0.4)
-        border.width: 1
+        spacing: 32
+        width: Math.min(root.width - 80, 700)
 
+        // Logo + title
         Column {
-            anchors.centerIn: parent
-            spacing: 16
-            width: parent.width - 60
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 12
 
-            // Procedural logo mark: ring + L
+            // Procedural logo mark
             Item {
-                width: 64
-                height: 64
+                width: 72
+                height: 72
                 anchors.horizontalCenter: parent.horizontalCenter
 
-                // Outer ring
                 Rectangle {
                     anchors.centerIn: parent
-                    width: 60; height: 60; radius: 30
+                    width: 68; height: 68; radius: 34
                     color: "transparent"
-                    border.color: "#8b5cf6"
-                    border.width: 3
+                    border.color: "#8b5cf6"; border.width: 3
                 }
-
-                // Inner glow ring
                 Rectangle {
                     anchors.centerIn: parent
-                    width: 50; height: 50; radius: 25
+                    width: 56; height: 56; radius: 28
                     color: "transparent"
                     border.color: Qt.rgba(0.231, 0.510, 0.965, 0.4)
                     border.width: 1
                 }
-
-                // L letterform - vertical
-                Rectangle {
-                    x: 22; y: 16
-                    width: 5; height: 32
-                    color: "#ffffff"
-                }
-
-                // L letterform - horizontal
-                Rectangle {
-                    x: 22; y: 43
-                    width: 22; height: 5
-                    color: "#ffffff"
-                }
-
-                // Accent dot
-                Rectangle {
-                    x: 40; y: 18
-                    width: 7; height: 7; radius: 3.5
-                    color: "#06b6d4"
-                }
+                Rectangle { x: 25; y: 18; width: 6; height: 36; color: "#ffffff" }
+                Rectangle { x: 25; y: 49; width: 24; height: 6; color: "#ffffff" }
+                Rectangle { x: 46; y: 20; width: 8; height: 8; radius: 4; color: "#06b6d4" }
             }
 
             Text {
                 text: "Lyrah OS"
-                font.pixelSize: 28
+                font.pixelSize: 32
                 font.bold: true
-                color: "#8b5cf6"
+                color: "#ffffff"
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
-            // SddmComponents TextBox for username
-            TextBox {
-                id: userField
-                width: parent.width
-                height: 40
-                text: userModel.lastUser
-                font.pixelSize: 14
-                color: "#1a1f2e"
-                borderColor: "#2a2f3e"
-                focusColor: "#8b5cf6"
-                textColor: "white"
-            }
-
-            // SddmComponents PasswordBox for password
-            PasswordBox {
-                id: passwordField
-                width: parent.width
-                height: 40
-                font.pixelSize: 14
-                color: "#1a1f2e"
-                borderColor: "#2a2f3e"
-                focusColor: "#8b5cf6"
-                textColor: "white"
-                Keys.onReturnPressed: sddm.login(userField.text, passwordField.text, sessionSelect.index)
-            }
-
-            // SddmComponents ComboBox uses 'index' not 'currentIndex'
-            ComboBox {
-                id: sessionSelect
-                width: parent.width
-                height: 40
-                model: sessionModel
-                index: sessionModel.lastIndex
-                font.pixelSize: 14
-                color: "#1a1f2e"
-                borderColor: "#2a2f3e"
-                focusColor: "#8b5cf6"
-                textColor: "white"
-            }
-
-            // SddmComponents Button
-            Button {
-                id: loginButton
-                width: parent.width
-                height: 40
-                text: "Login"
-                color: "#8b5cf6"
-                textColor: "white"
+            Text {
+                text: "Who's playing?"
                 font.pixelSize: 16
-                onClicked: sddm.login(userField.text, passwordField.text, sessionSelect.index)
+                color: "#9ca3af"
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+
+        // ── User account cards ──
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: 20
+
+            Repeater {
+                model: userModel
+
+                Rectangle {
+                    width: 120
+                    height: 140
+                    radius: 12
+                    color: selectedUser === index
+                           ? Qt.rgba(0.55, 0.36, 0.96, 0.25)
+                           : Qt.rgba(0.04, 0.05, 0.15, 0.6)
+                    border.color: selectedUser === index
+                                  ? "#8b5cf6"
+                                  : cardMouse.containsMouse
+                                    ? Qt.rgba(0.55, 0.36, 0.96, 0.4)
+                                    : Qt.rgba(1, 1, 1, 0.08)
+                    border.width: selectedUser === index ? 2 : 1
+
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                    Behavior on color { ColorAnimation { duration: 150 } }
+
+                    scale: cardMouse.containsMouse ? 1.05 : 1.0
+                    Behavior on scale { NumberAnimation { duration: 150 } }
+
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 10
+
+                        // Avatar circle
+                        Rectangle {
+                            width: 56
+                            height: 56
+                            radius: 28
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            color: selectedUser === index ? "#7c3aed" : "#1f2937"
+                            border.color: selectedUser === index
+                                          ? "#a78bfa" : "#374151"
+                            border.width: 2
+
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                            // User icon image if available
+                            Image {
+                                anchors.fill: parent
+                                anchors.margins: 2
+                                source: icon || ""
+                                fillMode: Image.PreserveAspectCrop
+                                visible: status === Image.Ready
+
+                                // Clip to circle
+                                layer.enabled: true
+                                layer.effect: Item {}
+                            }
+
+                            // Fallback: first letter of name
+                            Text {
+                                anchors.centerIn: parent
+                                text: (realName || name).charAt(0).toUpperCase()
+                                font.pixelSize: 24
+                                font.bold: true
+                                color: "#ffffff"
+                                visible: !icon || icon === ""
+                            }
+                        }
+
+                        // Display name
+                        Text {
+                            text: realName || name
+                            font.pixelSize: 13
+                            font.bold: selectedUser === index
+                            color: selectedUser === index
+                                   ? "#ffffff" : "#9ca3af"
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            elide: Text.ElideRight
+                            width: 100
+                            horizontalAlignment: Text.AlignHCenter
+
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                        }
+                    }
+
+                    MouseArea {
+                        id: cardMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: {
+                            selectedUser = index
+                            passwordField.text = ""
+                            passwordField.focus = true
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Password + session panel ──
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 360
+            height: passwordCol.height + 40
+            radius: 12
+            color: Qt.rgba(0.04, 0.05, 0.15, 0.7)
+            border.color: Qt.rgba(1, 1, 1, 0.06)
+            border.width: 1
+
+            Column {
+                id: passwordCol
+                anchors.centerIn: parent
+                width: parent.width - 40
+                spacing: 12
+
+                PasswordBox {
+                    id: passwordField
+                    width: parent.width
+                    height: 44
+                    font.pixelSize: 14
+                    color: "#1a1f2e"
+                    borderColor: "#2a2f3e"
+                    focusColor: "#8b5cf6"
+                    textColor: "white"
+                    focus: true
+                    Keys.onReturnPressed: sddm.login(userModel.data(userModel.index(selectedUser, 0), Qt.UserRole + 1), passwordField.text, sessionSelect.index)
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: 10
+
+                    ComboBox {
+                        id: sessionSelect
+                        width: parent.width - loginBtn.width - 10
+                        height: 44
+                        model: sessionModel
+                        index: sessionModel.lastIndex
+                        font.pixelSize: 13
+                        color: "#1a1f2e"
+                        borderColor: "#2a2f3e"
+                        focusColor: "#8b5cf6"
+                        textColor: "white"
+                    }
+
+                    Button {
+                        id: loginBtn
+                        width: 100
+                        height: 44
+                        text: "Login"
+                        color: "#7c3aed"
+                        textColor: "white"
+                        font.pixelSize: 15
+                        onClicked: sddm.login(userModel.data(userModel.index(selectedUser, 0), Qt.UserRole + 1), passwordField.text, sessionSelect.index)
+                    }
+                }
+            }
+        }
+    }
+
+    // Initialize selected user to last logged in
+    Component.onCompleted: {
+        for (var i = 0; i < userModel.count; i++) {
+            if (userModel.data(userModel.index(i, 0), Qt.UserRole + 1) === userModel.lastUser) {
+                selectedUser = i
+                break
             }
         }
     }
