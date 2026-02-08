@@ -874,7 +874,10 @@ jobs:
 
           # Create SquashFS directly from squashfs-root/ directory.
           # mksquashfs reads and compresses in streaming fashion - no intermediate copy needed.
-          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp xz -b 1M -xattrs
+          # Use zstd instead of xz: ~10x faster decompression with comparable ratio.
+          # The entire OS runs from this SquashFS — xz's slow decompression caused
+          # visible lag on every library/driver load (mouse stuttering, UI delays).
+          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp zstd -Xcompression-level 15 -b 256K -xattrs
 
           # Clean up extracted rootfs and replace old image
           sudo rm -rf squashfs-root
