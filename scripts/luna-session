@@ -26,10 +26,27 @@ exec &> >(systemd-cat -t luna-session)
 
 echo "luna-session: starting at $(date)"
 
-# SDDM's greeter compositor (kwin_wayland) may not have fully released
-# the DRM device when this session starts.  Retry gamescope with
-# increasing delays to wait for the DRM handoff to complete.
-#
+# Wait for SDDM's greeter compositor (kwin_wayland) to fully release
+# the DRM device.  SDDM stops its greeter when the user session starts,
+# but kwin_wayland may take a moment to exit and release DRM master.
+# If we start gamescope too early it can't acquire DRM and fails.
+echo "luna-session: waiting for SDDM greeter to release DRM..."
+for i in $(seq 1 20); do
+    if ! pgrep -x kwin_wayland > /dev/null 2>&1; then
+        echo "luna-session: greeter exited after ${i}00ms"
+        break
+    fi
+    sleep 0.1
+done
+
+# If kwin_wayland is STILL running after 2s, it's stuck — kill it so
+# gamescope can take DRM master.
+if pgrep -x kwin_wayland > /dev/null 2>&1; then
+    echo "luna-session: greeter still alive, killing stale kwin_wayland"
+    killall kwin_wayland 2>/dev/null || true
+    sleep 0.5
+fi
+
 # Do NOT use --force-grab-cursor — it forces software cursor rendering,
 # meaning every mouse movement triggers a full frame re-composite.
 # The hardware cursor plane (default) updates independently of the
@@ -62,25 +79,10 @@ for attempt in 1 2 3 4 5; do
     sleep "$attempt"
 done
 
-# DRM mode failed after all retries — fall back to nested mode inside
-# kwin_wayland.  This adds compositor overhead but works on GPUs where
-# gamescope cannot get DRM master (e.g. NVIDIA with nouveau/NVK).
-echo "luna-session: DRM mode failed, falling back to kwin_wayland nested mode"
-export QT_QPA_PLATFORM=wayland
-
-# Don't use exec — we need the script alive to clean up kwin_wayland
-# after gamescope exits, since kwin_wayland may not exit on its own.
-kwin_wayland --no-lockscreen --no-global-shortcuts -- \
-    gamescope --fullscreen "${GAMESCOPE_ARGS[@]}" -- /usr/bin/luna-ui &
-KWIN_PID=$!
-wait $KWIN_PID 2>/dev/null
-
-# kwin_wayland may still be running if it didn't notice gamescope exit.
-# Kill it explicitly so the session fully ends and SDDM resumes.
-kill $KWIN_PID 2>/dev/null || true
-sleep 0.5
-kill -9 $KWIN_PID 2>/dev/null || true
-
+# All retries exhausted — do NOT fall back to kwin_wayland.
+# A kwin_wayland + gamescope nested stack causes software rendering
+# and 90%+ CPU usage. Instead, exit cleanly so SDDM shows the login
+# screen and the user can switch to Desktop Mode.
+echo "luna-session: gamescope failed after 5 attempts, exiting to SDDM"
 rm -f "$SWITCH_SIGNAL"
-echo "luna-session: session ended"
-exit 0
+exit 1
