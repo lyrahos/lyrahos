@@ -7,6 +7,15 @@
 export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=gamescope
 
+# On hybrid GPU laptops (AMD/Intel iGPU + NVIDIA dGPU), compositors
+# can't auto-detect the right DRM device and fall back to llvmpipe
+# (CPU software rendering at 90%+ CPU). Detect the integrated GPU
+# and tell kwin_wayland to use it. gamescope also benefits from this.
+PRIMARY_GPU=$(/usr/share/lyrah/setup/detect-primary-gpu.sh 2>/dev/null)
+if [ -n "$PRIMARY_GPU" ]; then
+    export KWIN_DRM_DEVICES="$PRIMARY_GPU"
+fi
+
 # Wine/DXVK environment variables
 export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr

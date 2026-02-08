@@ -579,6 +579,8 @@ jobs:
           sudo mkdir -p squashfs-root/usr/share/lyrah/setup
           sudo cp scripts/first-boot.sh squashfs-root/usr/share/lyrah/setup/
           sudo cp scripts/configure-gpu.sh squashfs-root/usr/share/lyrah/setup/
+          sudo cp scripts/detect-primary-gpu.sh squashfs-root/usr/share/lyrah/setup/
+          sudo cp scripts/lyrah-kwin-wrapper.sh squashfs-root/usr/share/lyrah/setup/
           sudo chmod +x squashfs-root/usr/share/lyrah/setup/*.sh
 
           sudo mkdir -p squashfs-root/usr/bin
@@ -628,9 +630,10 @@ jobs:
           sudo cp installer/scripts/setup-kernel.sh squashfs-root/usr/share/lyrah/installer/
           sudo chmod +x squashfs-root/usr/share/lyrah/installer/*.sh
 
-          # Wine env config
+          # Wine env config + GPU detection for hybrid laptops
           sudo mkdir -p squashfs-root/etc/profile.d
           sudo cp configs/common/lyrah-wine.sh squashfs-root/etc/profile.d/
+          sudo cp configs/common/lyrah-gpu-env.sh squashfs-root/etc/profile.d/
 
           # Brave browser: enable GPU acceleration and Wayland native rendering.
           # Without these flags Brave falls back to software rendering (CPU)
