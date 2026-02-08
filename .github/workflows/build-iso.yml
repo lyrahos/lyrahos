@@ -68,6 +68,7 @@ jobs:
             genisoimage \
             xorriso \
             squashfs-tools \
+            isolinux \
             wget \
             rsync \
             zstd \
@@ -964,7 +965,31 @@ jobs:
           mkdir -p output
           ISO_NAME="Lyrah-OS-${{ steps.variant.outputs.version }}-${{ steps.variant.outputs.variant }}-x86_64.iso"
 
-          # Build xorriso arguments dynamically based on available boot files
+          # Build xorriso arguments dynamically based on available boot files.
+          #
+          # For USB compatibility (Etcher, Rufus, dd), the ISO must be a
+          # "hybrid ISO" with:
+          #   1. MBR bootstrap code (-isohybrid-mbr) so BIOS firmware can
+          #      boot the raw USB device after a dd-style write
+          #   2. GPT partition entry (-isohybrid-gpt-basdat) so UEFI firmware
+          #      can find the EFI System Partition on the raw USB device
+          #
+          # Without -isohybrid-mbr, tools like Etcher that do raw block
+          # writes produce a USB with no MBR boot code — the firmware sees
+          # no bootable partition and drops to "no boot device" error.
+          # Rufus works around this by rewriting the partition table itself,
+          # but Etcher and dd do not.
+          #
+          # isohdpfx.bin is the MBR bootstrap from the isolinux package.
+          # xorriso embeds it into the first 432 bytes of the ISO so the
+          # image is directly bootable when written to a USB drive.
+          ISOHDPFX="/usr/lib/ISOLINUX/isohdpfx.bin"
+          if [ ! -f "$ISOHDPFX" ]; then
+            echo "ERROR: isohdpfx.bin not found at $ISOHDPFX"
+            echo "The 'isolinux' package may not be installed"
+            exit 1
+          fi
+
           XORRISO_ARGS=(
             -o "output/$ISO_NAME"
             -V "LyrahOS"
@@ -975,6 +1000,7 @@ jobs:
           if [ -f iso-build/isolinux/isolinux.bin ]; then
             echo "Found isolinux — enabling BIOS boot"
             XORRISO_ARGS+=(
+              -isohybrid-mbr "$ISOHDPFX"
               -b isolinux/isolinux.bin
               -c isolinux/boot.cat
               -no-emul-boot
@@ -1007,9 +1033,15 @@ jobs:
           echo "Running xorriso with args: ${XORRISO_ARGS[*]}"
           sudo xorriso -as mkisofs "${XORRISO_ARGS[@]}"
 
-          if [ "$HAS_BIOS" = "true" ]; then
-            sudo isohybrid --uefi "output/$ISO_NAME" || echo "isohybrid not available, skipping"
+          # Verify the ISO has a valid MBR signature (0x55AA at offset 510)
+          # This confirms the hybrid MBR was written correctly.
+          MBR_SIG=$(xxd -s 510 -l 2 -p "output/$ISO_NAME")
+          if [ "$MBR_SIG" = "55aa" ]; then
+            echo "Hybrid MBR verified (signature: 0x55AA)"
+          else
+            echo "WARNING: MBR signature is $MBR_SIG (expected 55aa) — USB boot may fail"
           fi
+
           ls -lh output/
 
       - name: Verify ISO was created
