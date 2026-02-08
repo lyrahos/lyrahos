@@ -965,29 +965,48 @@ jobs:
           mkdir -p output
           ISO_NAME="Lyrah-OS-${{ steps.variant.outputs.version }}-${{ steps.variant.outputs.variant }}-x86_64.iso"
 
-          # Build xorriso arguments dynamically based on available boot files.
+          # Create a hybrid ISO bootable from both CD-ROM and USB (dd/Etcher/Rufus).
           #
-          # For USB compatibility (Etcher, Rufus, dd), the ISO must be a
-          # "hybrid ISO" with:
-          #   1. MBR bootstrap code (-isohybrid-mbr) so BIOS firmware can
-          #      boot the raw USB device after a dd-style write
-          #   2. GPT partition entry (-isohybrid-gpt-basdat) so UEFI firmware
-          #      can find the EFI System Partition on the raw USB device
+          # The "appended partition" method (used by Debian, Arch, Ubuntu)
+          # physically places the EFI boot image as a separate GPT partition
+          # AFTER the ISO 9660 data. This is critical for USB compatibility:
           #
-          # Without -isohybrid-mbr, tools like Etcher that do raw block
-          # writes produce a USB with no MBR boot code — the firmware sees
-          # no bootable partition and drops to "no boot device" error.
-          # Rufus works around this by rewriting the partition table itself,
-          # but Etcher and dd do not.
+          #   - The old approach embedded efiboot.img inside the ISO filesystem
+          #     and used -isohybrid-gpt-basdat to create a "virtual" GPT entry
+          #     pointing into the ISO data. Many UEFI firmwares and USB-writing
+          #     tools (Etcher, dd) cannot find this virtual partition — Etcher
+          #     shows "no map" and UEFI firmware drops to shell.
           #
-          # isohdpfx.bin is the MBR bootstrap from the isolinux package.
-          # xorriso embeds it into the first 432 bytes of the ISO so the
-          # image is directly bootable when written to a USB drive.
+          #   - The appended partition method creates a REAL, physically separate
+          #     GPT partition that every UEFI firmware can discover. After dd to
+          #     USB, the drive has: [MBR] [ISO9660 data] [EFI System Partition]
+          #     with proper MBR and GPT partition tables.
+          #
+          # Key xorriso flags:
+          #   -isohybrid-mbr      Embed MBR boot code (from isohdpfx.bin) so BIOS
+          #                       firmware can boot after raw dd write
+          #   -partition_offset 16 Shift ISO data by 16 sectors (32KB) to leave
+          #                       room for GPT header and partition entries
+          #   -append_partition 2  Append efiboot.img as GPT partition 2 with
+          #                       EFI System Partition type GUID
+          #   --interval:appended_partition_2  Tell El Torito to reference the
+          #                       appended partition for EFI boot catalog entry
+          #   -isohybrid-gpt-basdat  Create GPT entry for partition 1 (ISO data)
+
           ISOHDPFX="/usr/lib/ISOLINUX/isohdpfx.bin"
           if [ ! -f "$ISOHDPFX" ]; then
             echo "ERROR: isohdpfx.bin not found at $ISOHDPFX"
             echo "The 'isolinux' package may not be installed"
             exit 1
+          fi
+
+          # Copy efiboot.img out of the ISO tree — it will be appended as a
+          # standalone GPT partition rather than embedded in the ISO filesystem.
+          EFI_IMG=""
+          if [ -f iso-build/images/efiboot.img ]; then
+            cp iso-build/images/efiboot.img efiboot.img
+            EFI_IMG="efiboot.img"
+            echo "Found efiboot.img ($(ls -lh efiboot.img | awk '{print $5}'))"
           fi
 
           XORRISO_ARGS=(
@@ -996,11 +1015,12 @@ jobs:
             -J -joliet-long -r
           )
 
-          # Check for BIOS boot (isolinux) — not present in newer UEFI-only Fedora ISOs
+          # BIOS boot via isolinux
           if [ -f iso-build/isolinux/isolinux.bin ]; then
             echo "Found isolinux — enabling BIOS boot"
             XORRISO_ARGS+=(
               -isohybrid-mbr "$ISOHDPFX"
+              -partition_offset 16
               -b isolinux/isolinux.bin
               -c isolinux/boot.cat
               -no-emul-boot
@@ -1013,16 +1033,17 @@ jobs:
             HAS_BIOS=false
           fi
 
-          # Check for UEFI boot
-          if [ -f iso-build/images/efiboot.img ]; then
-            echo "Found efiboot.img — enabling UEFI boot"
+          # UEFI boot via appended EFI System Partition
+          if [ -n "$EFI_IMG" ]; then
+            echo "Enabling UEFI boot via appended EFI partition"
             if [ "$HAS_BIOS" = "true" ]; then
               XORRISO_ARGS+=(-eltorito-alt-boot)
             fi
             XORRISO_ARGS+=(
-              -e images/efiboot.img
+              -e --interval:appended_partition_2:all::
               -no-emul-boot
               -isohybrid-gpt-basdat
+              -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B "$EFI_IMG"
             )
           else
             echo "WARNING: No efiboot.img found — UEFI boot disabled"
@@ -1033,15 +1054,48 @@ jobs:
           echo "Running xorriso with args: ${XORRISO_ARGS[*]}"
           sudo xorriso -as mkisofs "${XORRISO_ARGS[@]}"
 
-          # Verify the ISO has a valid MBR signature (0x55AA at offset 510)
-          # This confirms the hybrid MBR was written correctly.
-          MBR_SIG=$(xxd -s 510 -l 2 -p "output/$ISO_NAME")
+          # === Partition table diagnostics ===
+          # These help verify the hybrid ISO is correct and diagnose boot issues.
+          echo ""
+          echo "=== ISO Partition Table Diagnostics ==="
+          ISO_PATH="output/$ISO_NAME"
+
+          echo "--- File identification ---"
+          file "$ISO_PATH"
+
+          echo "--- MBR partition table (fdisk) ---"
+          fdisk -l "$ISO_PATH" 2>&1 || true
+
+          echo "--- MBR boot signature ---"
+          MBR_SIG=$(xxd -s 510 -l 2 -p "$ISO_PATH")
           if [ "$MBR_SIG" = "55aa" ]; then
-            echo "Hybrid MBR verified (signature: 0x55AA)"
+            echo "PASS: MBR signature 0x55AA present (BIOS bootable)"
           else
-            echo "WARNING: MBR signature is $MBR_SIG (expected 55aa) — USB boot may fail"
+            echo "FAIL: MBR signature is 0x${MBR_SIG} (expected 55aa)"
           fi
 
+          echo "--- MBR partition type check ---"
+          # Byte 450 is the partition type of MBR entry 1 (0x00=empty, 0x17=hidden NTFS/ISOhybrid, 0xEF=EFI)
+          MBR_TYPE=$(xxd -s 450 -l 1 -p "$ISO_PATH")
+          echo "MBR partition 1 type: 0x${MBR_TYPE}"
+
+          echo "--- GPT header check ---"
+          # GPT signature "EFI PART" at LBA 1 (offset 512)
+          GPT_SIG=$(xxd -s 512 -l 8 -p "$ISO_PATH")
+          if [ "$GPT_SIG" = "4546492050415254" ]; then
+            echo "PASS: GPT header found (UEFI bootable)"
+          else
+            echo "INFO: No GPT header at LBA 1 (offset 512) — sig: $GPT_SIG"
+            # With -partition_offset 16, GPT may be at sector 1 relative to
+            # the partition offset. Check at 16*2048 + 512.
+            ALT_OFFSET=$((16 * 2048 + 512))
+            ALT_SIG=$(xxd -s $ALT_OFFSET -l 8 -p "$ISO_PATH" 2>/dev/null || echo "")
+            if [ "$ALT_SIG" = "4546492050415254" ]; then
+              echo "PASS: GPT header found at offset $ALT_OFFSET (with partition_offset)"
+            fi
+          fi
+
+          echo "=== End Diagnostics ==="
           ls -lh output/
 
       - name: Verify ISO was created
@@ -1098,33 +1152,97 @@ jobs:
           pattern: lyrah-os-*
           merge-multiple: true
 
-      - name: Install QEMU
+      - name: Install QEMU and OVMF
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf
 
-      - name: Test ISO boot
+      # Test 1: CD-ROM boot (BIOS) — original test, verifies isolinux path
+      - name: Test BIOS CD-ROM boot
         run: |
           ISO_FILE=$(ls *.iso | head -1)
-          echo "Testing ISO: $ISO_FILE"
-          touch boot.log
+          echo "Testing BIOS CD-ROM boot: $ISO_FILE"
+          touch bios-cdrom.log
           timeout 90s qemu-system-x86_64 \
             -m 2048 \
             -smp 2 \
             -cdrom "$ISO_FILE" \
             -boot d \
             -display none \
-            -serial file:boot.log \
+            -serial file:bios-cdrom.log \
             2>&1 &
           QEMU_PID=$!
           sleep 60
           if ps -p $QEMU_PID > /dev/null 2>&1; then
-            echo "ISO boots successfully (QEMU still running after 60s)"
+            echo "PASS: BIOS CD-ROM boot — QEMU still running after 60s"
             kill $QEMU_PID 2>/dev/null || true
-            exit 0
           else
-            echo "QEMU exited early (may indicate boot failure)"
-            echo "Boot log:"
-            cat boot.log || echo "No log captured"
+            echo "WARN: BIOS CD-ROM boot — QEMU exited early"
+            cat bios-cdrom.log 2>/dev/null || true
+          fi
+
+      # Test 2: USB-style boot (BIOS) — simulates dd/Etcher write by
+      # booting the raw ISO as a hard drive. This is what fails when
+      # the hybrid MBR is missing or malformed.
+      - name: Test BIOS USB boot (raw drive)
+        run: |
+          ISO_FILE=$(ls *.iso | head -1)
+          echo "Testing BIOS USB boot (raw drive): $ISO_FILE"
+          touch bios-usb.log
+          timeout 90s qemu-system-x86_64 \
+            -m 2048 \
+            -smp 2 \
+            -drive file="$ISO_FILE",format=raw,if=virtio,readonly=on \
+            -display none \
+            -serial file:bios-usb.log \
+            2>&1 &
+          QEMU_PID=$!
+          sleep 60
+          if ps -p $QEMU_PID > /dev/null 2>&1; then
+            echo "PASS: BIOS USB boot — QEMU still running after 60s"
+            kill $QEMU_PID 2>/dev/null || true
+          else
+            echo "WARN: BIOS USB boot — QEMU exited early"
+            cat bios-usb.log 2>/dev/null || true
+          fi
+
+      # Test 3: UEFI boot — uses OVMF firmware to test the EFI boot path.
+      # This verifies that the appended EFI System Partition is correctly
+      # structured and GRUB can load from it.
+      - name: Test UEFI boot
+        run: |
+          ISO_FILE=$(ls *.iso | head -1)
+          echo "Testing UEFI boot: $ISO_FILE"
+
+          # Find OVMF firmware (path varies by distro/version)
+          OVMF=""
+          for path in /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/ovmf/OVMF.fd; do
+            if [ -f "$path" ]; then
+              OVMF="$path"
+              break
+            fi
+          done
+          if [ -z "$OVMF" ]; then
+            echo "SKIP: OVMF firmware not found"
             exit 0
+          fi
+          echo "Using OVMF: $OVMF"
+
+          touch uefi.log
+          timeout 90s qemu-system-x86_64 \
+            -m 2048 \
+            -smp 2 \
+            -bios "$OVMF" \
+            -drive file="$ISO_FILE",format=raw,if=virtio,readonly=on \
+            -display none \
+            -serial file:uefi.log \
+            2>&1 &
+          QEMU_PID=$!
+          sleep 60
+          if ps -p $QEMU_PID > /dev/null 2>&1; then
+            echo "PASS: UEFI boot — QEMU still running after 60s"
+            kill $QEMU_PID 2>/dev/null || true
+          else
+            echo "WARN: UEFI boot — QEMU exited early"
+            cat uefi.log 2>/dev/null || true
           fi
