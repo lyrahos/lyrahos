@@ -8,4 +8,4 @@ if [ -n "$PRIMARY_GPU" ]; then
     export KWIN_DRM_DEVICES="$PRIMARY_GPU"
 fi
 
-exec kwin_wayland_wrapper "$@"
+exec kwin_wayland "$@"
