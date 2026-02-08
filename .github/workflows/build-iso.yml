@@ -319,7 +319,15 @@ jobs:
                 mesa-dri-drivers.i686 \
                 mesa-vulkan-drivers \
                 mesa-vulkan-drivers.i686 \
-                mesa-va-drivers-freeworld \
+                mesa-va-drivers \
+                mesa-libEGL \
+                mesa-libGL \
+                mesa-libgbm \
+                mesa-libglapi \
+                libglvnd-egl \
+                libglvnd-glx \
+                libglvnd-gles \
+                libdrm \
                 libva \
                 libva-utils \
                 vulkan-loader \

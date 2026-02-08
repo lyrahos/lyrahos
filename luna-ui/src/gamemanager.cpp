@@ -148,33 +148,17 @@ void GameManager::launchSteam() {
 }
 
 void GameManager::launchSteamLogin() {
-    // Launch Steam and poll for library data.
-    // luna-ui's window will be hidden by QML so Steam is visible in gamescope.
-    QProcess::startDetached("steam", QStringList());
+    // Signal luna-session to launch Steam directly as gamescope's child.
+    // We can't launch Steam from inside luna-ui because gamescope only
+    // manages windows from its direct child process tree. By exiting
+    // luna-ui and letting luna-session run "gamescope -- steam", Steam
+    // gets full window management (just like SteamOS does it).
+    // luna-session will restart luna-ui after Steam exits.
+    QFile signal("/tmp/luna-launch-steam");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
 
-    m_steamCheckCount = 0;
-    if (m_steamCheckTimer) {
-        m_steamCheckTimer->stop();
-        m_steamCheckTimer->deleteLater();
-    }
-    m_steamCheckTimer = new QTimer(this);
-    connect(m_steamCheckTimer, &QTimer::timeout, this, [this]() {
-        m_steamCheckCount++;
-        if (isSteamAvailable()) {
-            m_steamCheckTimer->stop();
-            m_steamCheckTimer->deleteLater();
-            m_steamCheckTimer = nullptr;
-            scanAllStores();
-            emit steamLoginComplete(true);
-        } else if (m_steamCheckCount > 90) {
-            // 3s * 90 = ~4.5 min timeout — give up
-            m_steamCheckTimer->stop();
-            m_steamCheckTimer->deleteLater();
-            m_steamCheckTimer = nullptr;
-            emit steamLoginComplete(false);
-        }
-    });
-    m_steamCheckTimer->start(3000);
+    QCoreApplication::quit();
 }
 
 void GameManager::switchToDesktop() {

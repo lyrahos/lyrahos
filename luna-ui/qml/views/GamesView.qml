@@ -288,12 +288,10 @@ Rectangle {
                                                 refreshGames()
                                                 activeTab = 0
                                             } else {
-                                                // Minimize luna-ui so gamescope focuses
-                                                // the Steam window once it appears.
-                                                // (Window.Hidden unmaps the X window
-                                                //  entirely, leaving gamescope with
-                                                //  nothing to show.)
-                                                gamesRoot.window.showMinimized()
+                                                // Exit luna-ui and signal luna-session
+                                                // to launch Steam directly as gamescope's
+                                                // child. luna-session restarts luna-ui
+                                                // when Steam exits.
                                                 GameManager.launchSteamLogin()
                                             }
                                         }
@@ -337,21 +335,9 @@ Rectangle {
         }
     }
 
-    // ── Steam login complete handler ──
-    // When luna-ui hides for Steam login, GameManager polls for library data.
-    // Once detected (or timeout), this fires and restores the window.
-    Connections {
-        target: GameManager
-        function onSteamLoginComplete(success) {
-            gamesRoot.window.showFullScreen()
-            if (success) {
-                refreshGames()
-                activeTab = 0
-            }
-        }
-    }
-
     // ── Load games on startup and when store scan completes ──
+    // When luna-ui restarts after Steam login (via luna-session),
+    // Component.onCompleted fires and picks up newly imported games.
     Component.onCompleted: refreshGames()
 
     Connections {

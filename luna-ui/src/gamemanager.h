@@ -33,7 +33,6 @@ signals:
     void gameLaunched(int gameId);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
-    void steamLoginComplete(bool success);
 
 private:
     Database *m_db;
@@ -41,8 +40,6 @@ private:
     int m_activeSessionId = -1;
     int m_activeGameId = -1;
     QTimer *m_processMonitor;
-    QTimer *m_steamCheckTimer = nullptr;
-    int m_steamCheckCount = 0;
 
     void registerBackends();
     void monitorGameProcess();
