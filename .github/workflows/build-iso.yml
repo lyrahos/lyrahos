@@ -314,11 +314,17 @@ jobs:
                 corectrl \
                 brave-browser \
                 mesa-dri-drivers \
+                mesa-dri-drivers.i686 \
                 mesa-vulkan-drivers \
+                mesa-vulkan-drivers.i686 \
                 mesa-va-drivers-freeworld \
                 libva \
                 libva-utils \
                 vulkan-loader \
+                vulkan-loader.i686 \
+                glibc.i686 \
+                alsa-lib.i686 \
+                libXinerama.i686 \
                 xdg-desktop-portal \
                 xdg-desktop-portal-kde \
                 flatpak \
