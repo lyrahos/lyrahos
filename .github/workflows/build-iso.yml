@@ -920,13 +920,26 @@ jobs:
             sudo sed -i "s/Fedora/Lyrah OS/g" iso-build/.discinfo
           fi
           find iso-build -name "isolinux.cfg" -o -name "grub.cfg" | while read cfg; do
-            # CRITICAL: Fix CDLABEL to match the ISO volume label set by
-            # xorriso (-V "LyrahOS"). The base Fedora ISO uses something
-            # like CDLABEL=Fedora-KDE-Live-43-1-6. A naive s/Fedora/Lyrah OS/
-            # introduces a SPACE which breaks kernel parameter parsing and
-            # the resulting label doesn't match the actual volume ID anyway.
-            # Fix the label BEFORE the cosmetic rename below.
+            # CRITICAL: Fix ALL volume label references to match the ISO
+            # volume label set by xorriso (-V "LyrahOS").
+            #
+            # Fedora's grub.cfg uses the label in THREE different patterns:
+            #   1. CDLABEL=Fedora-KDE-Live-43-1-6  (kernel command line)
+            #   2. search --set=root -l 'Fedora-KDE-Live-43-1-6'  (find ISO)
+            #   3. set isolabel="Fedora-KDE-Live-43-1-6"  (variable)
+            #
+            # Pattern 2 is what GRUB uses to locate the ISO filesystem for
+            # loading the kernel and initrd. If it doesn't match, GRUB can't
+            # find the kernel → black screen. Pattern 1 is what dracut uses
+            # to find the live squashfs at runtime. If it doesn't match,
+            # dracut can't mount the root → underscore "_" on black screen.
+            #
+            # All three MUST be replaced BEFORE the cosmetic "Fedora → Lyrah OS"
+            # rename, otherwise the label gets a space ("Lyrah OS-KDE-...")
+            # which doesn't match "LyrahOS".
             sudo sed -i -E 's/CDLABEL=[^ "]+/CDLABEL=LyrahOS/g' "$cfg" || true
+            sudo sed -i -E "s/search ([^']*)-l '[^']*'/search \1-l 'LyrahOS'/g" "$cfg" || true
+            sudo sed -i -E 's/set isolabel="[^"]*"/set isolabel="LyrahOS"/g' "$cfg" || true
             # Disable SELinux from the kernel command line. The config-file
             # change above only takes effect after init; selinux=0 disables
             # it immediately so no AVC denials are generated at all.
