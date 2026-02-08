@@ -29,7 +29,16 @@ echo "luna-session: starting at $(date)"
 # SDDM's greeter compositor (kwin_wayland) may not have fully released
 # the DRM device when this session starts.  Retry gamescope with
 # increasing delays to wait for the DRM handoff to complete.
-GAMESCOPE_ARGS=(--adaptive-sync --force-grab-cursor)
+#
+# Do NOT use --force-grab-cursor — it forces software cursor rendering,
+# meaning every mouse movement triggers a full frame re-composite.
+# The hardware cursor plane (default) updates independently of the
+# compositor at essentially zero cost.
+#
+# Do NOT use --adaptive-sync globally — VRR causes frame pacing
+# issues on displays that don't support it. Games can enable VRR
+# individually via mangohud or gamescope env vars.
+GAMESCOPE_ARGS=()
 
 for attempt in 1 2 3 4 5; do
     echo "luna-session: gamescope attempt $attempt (DRM mode)"

@@ -319,7 +319,7 @@ jobs:
                 mesa-dri-drivers.i686 \
                 mesa-vulkan-drivers \
                 mesa-vulkan-drivers.i686 \
-                mesa-va-drivers-freeworld \
+                mesa-va-drivers \
                 libva \
                 libva-utils \
                 vulkan-loader \
