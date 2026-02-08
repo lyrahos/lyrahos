@@ -961,7 +961,16 @@ jobs:
             # the squashfs lives — prevents mismatches when the rootfs is
             # built from scratch rather than extracted from the original ISO.
             # Add Plymouth splash parameters for smooth boot experience.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 splash plymouth.enable=1/' "$cfg" || true
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0/' "$cfg" || true
+            # DEBUG: Strip quiet/splash/plymouth so ALL boot messages show on
+            # screen. When the boot stalls, whatever is on the monitor tells
+            # us exactly where it broke. Remove these lines once debugging is done.
+            sudo sed -i -E 's/ quiet//g' "$cfg" || true
+            sudo sed -i -E 's/ splash//g' "$cfg" || true
+            sudo sed -i -E 's/ rhgb//g' "$cfg" || true
+            sudo sed -i -E 's/ plymouth\.enable=[01]//g' "$cfg" || true
+            # Add dracut and systemd debug output
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.debug systemd.log_level=debug plymouth.enable=0/' "$cfg" || true
             # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
@@ -985,13 +994,14 @@ jobs:
           # GRUB (UEFI boot): force immediate boot into the first entry and
           # suppress interactive prompts/menu flashes as much as possible.
           find iso-build -name "grub.cfg" | while read cfg; do
-            sudo sed -i -E 's/^(\s*)set timeout=.*/\1set timeout=0/' "$cfg" || true
+            # DEBUG: Show GRUB menu for 5 seconds so you can see entries
+            # and press 'e' to edit boot params if needed.
+            sudo sed -i -E 's/^(\s*)set timeout=.*/\1set timeout=5/' "$cfg" || true
             sudo sed -i -E 's/^(\s*)set default=.*/\1set default=0/' "$cfg" || true
-            # Hide the menu entirely (prevents brief flash before timeout)
             if grep -q 'set timeout_style=' "$cfg" 2>/dev/null; then
-              sudo sed -i -E 's/set timeout_style=.*/set timeout_style=hidden/' "$cfg" || true
+              sudo sed -i -E 's/set timeout_style=.*/set timeout_style=menu/' "$cfg" || true
             else
-              sudo sed -i -E '/^set timeout=0/a set timeout_style=hidden' "$cfg" || true
+              sudo sed -i -E '/^set timeout=5/a set timeout_style=menu' "$cfg" || true
             fi
             # Some Fedora EFI configs include an interruptible sleep with
             # "Press any key ... system reset" messaging before GRUB menu.
