@@ -71,11 +71,16 @@ while true; do
         gamescope "${GAMESCOPE_ARGS[@]}" -- /usr/bin/luna-ui
         rc=$?
 
-        # If user requested desktop switch, exit immediately
+        # If user requested desktop switch, launch KDE Plasma directly.
+        # Don't exit to SDDM (greeter often fails to restart, causing
+        # a black screen). Instead, replace this session with KDE —
+        # same approach SteamOS uses to switch Game Mode → Desktop.
         if [ -f "$SWITCH_SIGNAL" ]; then
             rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL"
-            echo "luna-session: user requested desktop switch, exiting"
-            exit 0
+            echo "luna-session: switching to Desktop Mode (startplasma-wayland)..."
+            export XDG_CURRENT_DESKTOP=KDE
+            export QT_QPA_PLATFORM=wayland
+            exec startplasma-wayland
         fi
 
         # If luna-ui requested Steam login, break out of retry loop
