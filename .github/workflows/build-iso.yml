@@ -69,6 +69,7 @@ jobs:
             xorriso \
             squashfs-tools \
             isolinux \
+            dosfstools \
             wget \
             rsync \
             zstd \
@@ -97,6 +98,25 @@ jobs:
           sudo rm -f iso-build/LiveOS/squashfs.img iso-build/LiveOS/rootfs.img 2>/dev/null || true
           echo "Disk after ISO extraction (rootfs images removed):"
           df -h /
+
+          # List ISO boot infrastructure so we can see what's available.
+          # Fedora 43+ may be UEFI-only (no isolinux directory).
+          echo "=== Extracted ISO directory structure (boot files) ==="
+          echo "--- Top-level directories ---"
+          ls -la iso-build/
+          echo "--- EFI directory ---"
+          find iso-build/EFI -type f 2>/dev/null || echo "(no EFI directory)"
+          echo "--- images directory ---"
+          find iso-build/images -type f 2>/dev/null || echo "(no images directory)"
+          echo "--- isolinux directory ---"
+          find iso-build/isolinux -type f 2>/dev/null || echo "(no isolinux directory)"
+          echo "--- boot directory ---"
+          find iso-build/boot -type f 2>/dev/null || echo "(no boot directory)"
+          echo "--- All .img files ---"
+          find iso-build/ -name "*.img" -type f 2>/dev/null || echo "(no .img files)"
+          echo "--- All .efi files ---"
+          find iso-build/ -name "*.efi" -o -name "*.EFI" 2>/dev/null || echo "(no .efi files)"
+          echo "=== End directory listing ==="
 
           # Detect kernel version from ISO boot area.
           # Phase 2 must install this EXACT version so modules match the
@@ -994,70 +1014,94 @@ jobs:
           #   -isohybrid-gpt-basdat  Create GPT entry for partition 1 (ISO data)
 
           ISOHDPFX="/usr/lib/ISOLINUX/isohdpfx.bin"
-          if [ ! -f "$ISOHDPFX" ]; then
-            echo "ERROR: isohdpfx.bin not found at $ISOHDPFX"
-            echo "The 'isolinux' package may not be installed"
-            exit 1
+
+          # Search for efiboot.img at all common Fedora paths.
+          # Fedora 43+ may place it in different locations depending on
+          # whether the ISO is UEFI-only or dual-boot.
+          EFI_IMG=""
+          for efi_path in \
+            iso-build/images/efiboot.img \
+            iso-build/boot/images/efiboot.img \
+            iso-build/EFI/BOOT/efiboot.img \
+            iso-build/images/macboot.img \
+          ; do
+            if [ -f "$efi_path" ]; then
+              cp "$efi_path" efiboot.img
+              EFI_IMG="efiboot.img"
+              echo "Found EFI boot image at $efi_path ($(ls -lh efiboot.img | awk '{print $5}'))"
+              break
+            fi
+          done
+
+          # If no standalone efiboot.img, try to extract one from the EFI
+          # directory. Fedora 43 UEFI-only ISOs may not ship a separate
+          # efiboot.img file — instead the EFI binaries live directly in
+          # the ISO's /EFI/BOOT/ directory. In that case, create an
+          # efiboot.img (FAT12/16 image) from those EFI binaries.
+          if [ -z "$EFI_IMG" ] && [ -d iso-build/EFI ]; then
+            echo "No efiboot.img found — creating one from EFI directory..."
+            # Calculate size needed (EFI dir + padding)
+            EFI_SIZE_KB=$(du -sk iso-build/EFI | cut -f1)
+            # Add 512KB padding for FAT overhead, round up to nearest 1MB
+            IMG_SIZE_KB=$(( (EFI_SIZE_KB + 512 + 1023) / 1024 * 1024 ))
+            [ "$IMG_SIZE_KB" -lt 4096 ] && IMG_SIZE_KB=4096
+            echo "Creating ${IMG_SIZE_KB}KB FAT image for EFI boot..."
+            dd if=/dev/zero of=efiboot.img bs=1K count="$IMG_SIZE_KB" 2>/dev/null
+            mkfs.vfat efiboot.img
+            MOUNT_DIR=$(mktemp -d)
+            sudo mount -o loop efiboot.img "$MOUNT_DIR"
+            sudo cp -r iso-build/EFI "$MOUNT_DIR/"
+            sudo umount "$MOUNT_DIR"
+            rmdir "$MOUNT_DIR"
+            EFI_IMG="efiboot.img"
+            echo "Created efiboot.img ($(ls -lh efiboot.img | awk '{print $5}'))"
           fi
 
-          # Copy efiboot.img out of the ISO tree — it will be appended as a
-          # standalone GPT partition rather than embedded in the ISO filesystem.
-          EFI_IMG=""
-          if [ -f iso-build/images/efiboot.img ]; then
-            cp iso-build/images/efiboot.img efiboot.img
-            EFI_IMG="efiboot.img"
-            echo "Found efiboot.img ($(ls -lh efiboot.img | awk '{print $5}'))"
+          if [ -z "$EFI_IMG" ]; then
+            echo "FATAL: No EFI boot image found and no EFI directory to create one from"
+            echo "Contents of iso-build/:"
+            find iso-build/ -maxdepth 3 -type f | head -50
+            exit 1
           fi
 
           XORRISO_ARGS=(
             -o "output/$ISO_NAME"
             -V "LyrahOS"
             -J -joliet-long -r
-          )
-
-          # -isohybrid-mbr is the MASTER SWITCH for all hybrid ISO features.
-          # Without it, xorriso ignores -isohybrid-gpt-basdat, -append_partition,
-          # and all partition table creation — producing a plain CD-ROM ISO that
-          # cannot boot from USB. This must be set UNCONDITIONALLY, regardless
-          # of whether BIOS boot via isolinux is available.
-          # isohdpfx.bin provides MBR bootstrap code + partition table skeleton.
-          # -partition_offset 16 reserves 32KB at the start for GPT headers.
-          XORRISO_ARGS+=(
-            -isohybrid-mbr "$ISOHDPFX"
             -partition_offset 16
           )
 
-          # BIOS boot via isolinux (optional — Fedora 43+ may be UEFI-only)
-          if [ -f iso-build/isolinux/isolinux.bin ]; then
-            echo "Found isolinux — enabling BIOS boot"
+          # BIOS + UEFI hybrid: isolinux available (older Fedora / dual-boot ISOs)
+          # -isohybrid-mbr embeds MBR boot code from isohdpfx.bin for BIOS USB boot.
+          # It REQUIRES an isolinux El Torito entry to patch — cannot be used alone.
+          if [ -f iso-build/isolinux/isolinux.bin ] && [ -f "$ISOHDPFX" ]; then
+            echo "Found isolinux — enabling BIOS + UEFI hybrid boot"
             XORRISO_ARGS+=(
+              -isohybrid-mbr "$ISOHDPFX"
               -b isolinux/isolinux.bin
               -c isolinux/boot.cat
               -no-emul-boot
               -boot-load-size 4
               -boot-info-table
+              -eltorito-alt-boot
             )
-            HAS_BIOS=true
           else
-            echo "No isolinux found — BIOS boot disabled (UEFI-only)"
-            HAS_BIOS=false
+            # UEFI-only hybrid: no isolinux (Fedora 43+ KDE)
+            # --mbr-force-bootable creates a minimal MBR with the bootable flag
+            # set, without needing isohdpfx.bin or isolinux. This gives USB
+            # tools (Etcher, Rufus) a valid MBR to recognize.
+            echo "No isolinux — enabling UEFI-only hybrid boot"
+            XORRISO_ARGS+=(--mbr-force-bootable)
           fi
 
-          # UEFI boot via appended EFI System Partition
-          if [ -n "$EFI_IMG" ]; then
-            echo "Enabling UEFI boot via appended EFI partition"
-            if [ "$HAS_BIOS" = "true" ]; then
-              XORRISO_ARGS+=(-eltorito-alt-boot)
-            fi
-            XORRISO_ARGS+=(
-              -e --interval:appended_partition_2:all::
-              -no-emul-boot
-              -isohybrid-gpt-basdat
-              -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B "$EFI_IMG"
-            )
-          else
-            echo "WARNING: No efiboot.img found — UEFI boot disabled"
-          fi
+          # Append EFI System Partition as a real GPT partition after the ISO data.
+          XORRISO_ARGS+=(
+            -e --interval:appended_partition_2:all::
+            -no-emul-boot
+            -isohybrid-gpt-basdat
+            -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B "$EFI_IMG"
+            -appended_part_as_gpt
+          )
 
           XORRISO_ARGS+=(iso-build/)
 
