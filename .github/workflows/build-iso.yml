@@ -1041,7 +1041,7 @@ jobs:
           if [ -z "$EFI_IMG" ] && [ -d iso-build/EFI ]; then
             echo "No efiboot.img found — creating one from EFI directory..."
             # Calculate size needed (EFI dir + padding)
-            EFI_SIZE_KB=$(du -sk iso-build/EFI | cut -f1)
+            EFI_SIZE_KB=$(du -skL iso-build/EFI | cut -f1)
             # Add 512KB padding for FAT overhead, round up to nearest 1MB
             IMG_SIZE_KB=$(( (EFI_SIZE_KB + 512 + 1023) / 1024 * 1024 ))
             [ "$IMG_SIZE_KB" -lt 4096 ] && IMG_SIZE_KB=4096
@@ -1050,7 +1050,14 @@ jobs:
             mkfs.vfat efiboot.img
             MOUNT_DIR=$(mktemp -d)
             sudo mount -o loop efiboot.img "$MOUNT_DIR"
-            sudo cp -r iso-build/EFI "$MOUNT_DIR/"
+            # Fedora's EFI directory often has symlinks where e.g.
+            # bootx64.efi -> shimx64.efi. The FAT filesystem is
+            # case-insensitive, so BOOTX64.EFI and bootx64.efi collide.
+            # Dereference symlinks (-L) and skip files that already exist
+            # on the case-insensitive FAT target (--no-clobber).
+            sudo cp -rL --no-clobber iso-build/EFI "$MOUNT_DIR/" 2>/dev/null || true
+            echo "EFI image contents:"
+            ls -laR "$MOUNT_DIR/EFI/" 2>/dev/null || true
             sudo umount "$MOUNT_DIR"
             rmdir "$MOUNT_DIR"
             EFI_IMG="efiboot.img"
