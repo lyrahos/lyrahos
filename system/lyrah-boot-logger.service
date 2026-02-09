@@ -1,0 +1,15 @@
+[Unit]
+Description=Lyrah OS Boot Diagnostics Logger
+DefaultDependencies=no
+After=local-fs.target
+Before=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/lyrah-boot-logger
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target

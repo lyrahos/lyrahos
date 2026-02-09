@@ -556,6 +556,7 @@ jobs:
           sudo cp scripts/lyrah-update squashfs-root/usr/bin/
           sudo cp scripts/lyrah-upload-log squashfs-root/usr/bin/
           sudo cp scripts/lyrah-crash-monitor squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-boot-logger squashfs-root/usr/bin/
           sudo chmod +x squashfs-root/usr/bin/luna-session squashfs-root/usr/bin/lyrah-*
 
           # Installer session .desktop (SDDM can select this as a session)
