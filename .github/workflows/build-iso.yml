@@ -961,17 +961,27 @@ jobs:
           fi
           echo "Installed kernel modules: $INSTALLED_KVER"
 
-          # Check if versions match
+          # Check if ISO boot kernel needs replacement
+          REPLACE_KERNEL=false
           if [ -n "$ISO_KVER" ] && [ "$ISO_KVER" = "$INSTALLED_KVER" ]; then
-            echo "Kernel versions match — no sync needed"
+            echo "Kernel versions match ($INSTALLED_KVER) — keeping ISO boot kernel"
           else
             echo "KERNEL VERSION MISMATCH: ISO=${ISO_KVER:-none} vs modules=$INSTALLED_KVER"
-            echo "Replacing ISO boot kernel and regenerating initramfs..."
+            echo "Will replace ISO boot kernel"
+            REPLACE_KERNEL=true
+          fi
 
-            # Ensure the target directory exists
-            sudo mkdir -p "$(dirname "$ISO_BOOT_VMLINUZ")"
+          # ALWAYS regenerate initramfs regardless of kernel version match.
+          # The base Fedora ISO's initramfs lacks dmsquash-live module needed
+          # for live boot. Phase 2 uses tsflags=noscripts (no initramfs from RPM),
+          # so we MUST generate it here.
+          echo "Generating live initramfs for kernel $INSTALLED_KVER..."
 
-            # Step 1: Copy the matching vmlinuz to the ISO boot area
+          # Ensure the target directory exists
+          sudo mkdir -p "$(dirname "$ISO_BOOT_VMLINUZ")"
+
+          # Step 1: Copy vmlinuz to ISO boot area (if version mismatch)
+          if [ "$REPLACE_KERNEL" = true ]; then
             VMLINUZ_SRC="squashfs-root/lib/modules/$INSTALLED_KVER/vmlinuz"
             if [ -f "$VMLINUZ_SRC" ]; then
               sudo cp "$VMLINUZ_SRC" "$ISO_BOOT_VMLINUZ"
@@ -988,90 +998,92 @@ jobs:
                 exit 1
               fi
             fi
-
-            # Step 2: Generate a live-boot initramfs with dracut
-            # The initramfs must include dmsquash-live (for booting from squashfs)
-            # and the kernel modules for the installed version.
-            echo "Generating live initramfs for kernel $INSTALLED_KVER..."
-
-            # Mount required filesystems for chroot dracut
-            sudo mount --bind /proc squashfs-root/proc
-            sudo mount --bind /sys squashfs-root/sys
-            sudo mount --bind /dev squashfs-root/dev
-
-            # Run depmod to ensure module dependency DB is current
-            sudo chroot squashfs-root depmod "$INSTALLED_KVER" 2>&1 || echo "WARN: depmod failed"
-
-            # Generate live initramfs
-            sudo chroot squashfs-root dracut \
-              --force \
-              --no-hostonly \
-              --add "dmsquash-live" \
-              --omit "livenet" \
-              --kver "$INSTALLED_KVER" \
-              /tmp/initramfs-live.img 2>&1
-
-            # Unmount chroot filesystems
-            sudo umount squashfs-root/dev 2>/dev/null || true
-            sudo umount squashfs-root/sys 2>/dev/null || true
-            sudo umount squashfs-root/proc 2>/dev/null || true
-
-            if [ -f squashfs-root/tmp/initramfs-live.img ]; then
-              sudo cp squashfs-root/tmp/initramfs-live.img "$ISO_BOOT_INITRD"
-              sudo chmod a+r "$ISO_BOOT_INITRD"
-              sudo rm -f squashfs-root/tmp/initramfs-live.img
-              echo "Generated and installed new live initramfs"
-            else
-              echo "FATAL: dracut did not produce initramfs-live.img"
-              exit 1
-            fi
-
-            # Step 3: Apply Plymouth theme to the new initramfs
-            # The dracut-generated initramfs includes whatever Plymouth theme
-            # is in the squashfs. Verify the Lyrah theme is present.
-            echo "Verifying Plymouth theme in new initramfs..."
-            WORK_DIR=$(mktemp -d)
-            cd "$WORK_DIR"
-            initramfs_info=$(file "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD")
-            if echo "$initramfs_info" | grep -qi "zstd"; then
-              zstd -dc "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" | cpio -idm --quiet 2>/dev/null || true
-            elif echo "$initramfs_info" | grep -qi "gzip"; then
-              gunzip -c "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" | cpio -idm --quiet 2>/dev/null || true
-            else
-              cpio -idm --quiet < "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" 2>/dev/null || true
-            fi
-
-            if [ -d usr/share/plymouth/themes ]; then
-              # Ensure Lyrah theme is present
-              if [ ! -d usr/share/plymouth/themes/lyrah ]; then
-                echo "Adding Lyrah Plymouth theme to initramfs..."
-                mkdir -p usr/share/plymouth/themes/lyrah
-                cp -r "${GITHUB_WORKSPACE}/themes/plymouth/lyrah/"* usr/share/plymouth/themes/lyrah/
-              fi
-              # Set as default theme
-              mkdir -p etc/plymouth
-              echo -e "[Daemon]\nTheme=lyrah" > etc/plymouth/plymouthd.conf
-              # Remove Fedora themes
-              rm -rf usr/share/plymouth/themes/fedora* usr/share/plymouth/themes/spinner 2>/dev/null || true
-
-              # Repack with same compression dracut used
-              echo "Repacking initramfs with Plymouth theme..."
-              if echo "$initramfs_info" | grep -qi "zstd"; then
-                find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | zstd -19 -T0 > "${WORK_DIR}/initramfs.new"
-              else
-                find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | gzip -9 > "${WORK_DIR}/initramfs.new"
-              fi
-              sudo cp "${WORK_DIR}/initramfs.new" "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD"
-              echo "Plymouth theme applied to initramfs"
-            fi
-            cd "$GITHUB_WORKSPACE"
-            rm -rf "$WORK_DIR"
-
-            # Verify the new boot kernel
-            NEW_KVER=$(file "$ISO_BOOT_VMLINUZ" | grep -oP 'version \K\S+' || true)
-            echo "New ISO boot kernel: $NEW_KVER"
-            echo "Initramfs size: $(du -sh "$ISO_BOOT_INITRD" | cut -f1)"
+          else
+            echo "Keeping ISO boot kernel (versions match)"
           fi
+
+          # Step 2: Generate a live-boot initramfs with dracut
+          # The initramfs must include dmsquash-live (for booting from squashfs)
+          # and the kernel modules for the installed version.
+
+          # Mount required filesystems for chroot dracut
+          sudo mount --bind /proc squashfs-root/proc
+          sudo mount --bind /sys squashfs-root/sys
+          sudo mount --bind /dev squashfs-root/dev
+
+          # Run depmod to ensure module dependency DB is current
+          sudo chroot squashfs-root depmod "$INSTALLED_KVER" 2>&1 || echo "WARN: depmod failed"
+
+          # Generate live initramfs
+          sudo chroot squashfs-root dracut \
+            --force \
+            --no-hostonly \
+            --add "dmsquash-live" \
+            --omit "livenet" \
+            --kver "$INSTALLED_KVER" \
+            /tmp/initramfs-live.img 2>&1
+
+          # Unmount chroot filesystems
+          sudo umount squashfs-root/dev 2>/dev/null || true
+          sudo umount squashfs-root/sys 2>/dev/null || true
+          sudo umount squashfs-root/proc 2>/dev/null || true
+
+          if [ -f squashfs-root/tmp/initramfs-live.img ]; then
+            sudo cp squashfs-root/tmp/initramfs-live.img "$ISO_BOOT_INITRD"
+            sudo chmod a+r "$ISO_BOOT_INITRD"
+            sudo rm -f squashfs-root/tmp/initramfs-live.img
+            echo "Generated and installed new live initramfs"
+          else
+            echo "FATAL: dracut did not produce initramfs-live.img"
+            exit 1
+          fi
+
+          # Step 3: Apply Plymouth theme to the new initramfs
+          # The dracut-generated initramfs includes whatever Plymouth theme
+          # is in the squashfs. Verify the Lyrah theme is present.
+          echo "Verifying Plymouth theme in new initramfs..."
+          WORK_DIR=$(mktemp -d)
+          cd "$WORK_DIR"
+          initramfs_info=$(file "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD")
+          if echo "$initramfs_info" | grep -qi "zstd"; then
+            zstd -dc "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" | cpio -idm --quiet 2>/dev/null || true
+          elif echo "$initramfs_info" | grep -qi "gzip"; then
+            gunzip -c "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" | cpio -idm --quiet 2>/dev/null || true
+          else
+            cpio -idm --quiet < "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" 2>/dev/null || true
+          fi
+
+          if [ -d usr/share/plymouth/themes ]; then
+            # Ensure Lyrah theme is present
+            if [ ! -d usr/share/plymouth/themes/lyrah ]; then
+              echo "Adding Lyrah Plymouth theme to initramfs..."
+              mkdir -p usr/share/plymouth/themes/lyrah
+              cp -r "${GITHUB_WORKSPACE}/themes/plymouth/lyrah/"* usr/share/plymouth/themes/lyrah/
+            fi
+            # Set as default theme
+            mkdir -p etc/plymouth
+            echo -e "[Daemon]\nTheme=lyrah" > etc/plymouth/plymouthd.conf
+            # Remove Fedora themes
+            rm -rf usr/share/plymouth/themes/fedora* usr/share/plymouth/themes/spinner 2>/dev/null || true
+
+            # Repack with same compression dracut used
+            echo "Repacking initramfs with Plymouth theme..."
+            if echo "$initramfs_info" | grep -qi "zstd"; then
+              find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | zstd -19 -T0 > "${WORK_DIR}/initramfs.new"
+            else
+              find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | gzip -9 > "${WORK_DIR}/initramfs.new"
+            fi
+            sudo cp "${WORK_DIR}/initramfs.new" "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD"
+            echo "Plymouth theme applied to initramfs"
+          fi
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$WORK_DIR"
+
+          # Verify the boot kernel and initramfs
+          BOOT_KVER=$(file "$ISO_BOOT_VMLINUZ" | grep -oP 'version \K\S+' || true)
+          echo "ISO boot kernel version: $BOOT_KVER"
+          echo "Initramfs size: $(du -sh "$ISO_BOOT_INITRD" | cut -f1)"
+          echo "Initramfs generated for kernel: $INSTALLED_KVER"
 
           echo "=== Boot kernel sync complete ==="
 
