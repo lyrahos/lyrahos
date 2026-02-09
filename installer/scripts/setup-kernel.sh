@@ -136,8 +136,8 @@ else
     cat > "$BLS_FILE" << EOF
 title $PRETTY_NAME ($KVER)
 version $KVER
-linux /vmlinuz-$KVER
-initrd /initramfs-$KVER.img
+linux /boot/vmlinuz-$KVER
+initrd /boot/initramfs-$KVER.img
 options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 systemd.log_level=info
 grub_users \$grub_users
 grub_arg --unrestricted
@@ -152,8 +152,8 @@ EOF
     cat > "$BLS_DEBUG_FILE" << DEBUGEOF
 title $PRETTY_NAME ($KVER) - DEBUG MODE
 version $KVER-debug
-linux /vmlinuz-$KVER
-initrd /initramfs-$KVER.img
+linux /boot/vmlinuz-$KVER
+initrd /boot/initramfs-$KVER.img
 options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 rd.shell rd.debug systemd.log_level=debug systemd.log_target=console console=tty0 earlyprintk=vga,keep loglevel=7 nomodeset
 grub_users \$grub_users
 grub_arg --unrestricted
