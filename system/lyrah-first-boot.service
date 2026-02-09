@@ -1,6 +1,5 @@
 [Unit]
 Description=Lyrah OS First Boot Setup
-After=graphical.target
 ConditionPathExists=!/var/lib/lyrah/.first-boot-done
 
 [Service]
