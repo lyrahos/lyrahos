@@ -342,6 +342,7 @@ GRUB_TERMINAL_OUTPUT="console"
 GRUB_CMDLINE_LINUX="quiet splash plymouth.enable=1 selinux=0"
 GRUB_DISABLE_RECOVERY="true"
 GRUB_DISABLE_OS_PROBER=true
+GRUB_ENABLE_BLSCFG=true
 GRUBDEFAULT
 echo "Created /etc/default/grub with Lyrah OS settings"
 
