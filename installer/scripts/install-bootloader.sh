@@ -224,9 +224,15 @@ echo ""
 # Step 3: Create redirect grub.cfg on the ESP
 # ---------------------------------------------------------------
 echo "=== Step 3: Create ESP grub.cfg ==="
-ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
-if [ -z "$ROOT_UUID" ] && [ -f /etc/fstab ]; then
+# Use fstab FIRST because findmnt in a Calamares chroot reads
+# /proc/mounts which shows the HOST's mount table — returning
+# the CI runner's UUID, not the target disk's UUID.
+ROOT_UUID=""
+if [ -f /etc/fstab ]; then
     ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/UUID=/, "", $1); print $1}' /etc/fstab)
+fi
+if [ -z "$ROOT_UUID" ]; then
+    ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
 fi
 
 if [ -n "$ROOT_UUID" ]; then
@@ -275,10 +281,21 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# Copy the redirect grub.cfg to the fallback location too
+# Copy the redirect grub.cfg to ALL potential prefix locations.
+# Different grubx64.efi binaries have different compiled-in prefixes:
+#   - grub2-install output: /EFI/lyrah/
+#   - RPM-shipped (Fedora): /EFI/fedora/
+#   - Fallback (same dir):  /EFI/BOOT/
+# Without a grub.cfg at the binary's prefix, GRUB drops to command line.
 if [ -f "$ESP/EFI/$BOOTLOADER_ID/grub.cfg" ]; then
     cp -f "$ESP/EFI/$BOOTLOADER_ID/grub.cfg" "$ESP/EFI/BOOT/grub.cfg"
     echo "Copied redirect grub.cfg to /EFI/BOOT/"
+
+    # Also create at /EFI/fedora/ in case the RPM-shipped grubx64.efi
+    # is used (its prefix is /EFI/fedora/, which setup-kernel.sh deletes)
+    mkdir -p "$ESP/EFI/fedora"
+    cp -f "$ESP/EFI/$BOOTLOADER_ID/grub.cfg" "$ESP/EFI/fedora/grub.cfg"
+    echo "Copied redirect grub.cfg to /EFI/fedora/ (RPM prefix backup)"
 fi
 
 # If shim was installed as BOOTX64.EFI, also need grubx64.efi alongside it
@@ -293,6 +310,12 @@ if [ -n "$FALLBACK_SRC" ] && echo "$FALLBACK_SRC" | grep -q "shimx64"; then
         echo "Copied grubx64.efi alongside shim in /EFI/BOOT/"
     fi
 fi
+
+# Create BOOTX64.CSV so shim auto-registers "Lyrah OS" in the UEFI
+# firmware boot menu on first boot. Without this, the firmware shows
+# a generic name like "UEFI OS" for the fallback boot path.
+echo "shimx64.efi,Lyrah OS,,This is the boot entry for Lyrah OS" > "$ESP/EFI/$BOOTLOADER_ID/BOOTX64.CSV" 2>/dev/null || true
+echo "Created BOOTX64.CSV for firmware boot entry naming"
 echo ""
 
 # ---------------------------------------------------------------
