@@ -123,7 +123,7 @@ jobs:
           # vmlinuz that GRUB actually boots. A mismatch means no runtime
           # module loading (no GPU drivers, no network, no sound).
           ISO_KVER=""
-          for vmlinuz_path in iso-build/images/pxeboot/vmlinuz iso-build/isolinux/vmlinuz; do
+          for vmlinuz_path in iso-build/images/pxeboot/vmlinuz iso-build/isolinux/vmlinuz iso-build/boot/x86_64/loader/linux; do
             if [ -f "$vmlinuz_path" ]; then
               ISO_KVER=$(file "$vmlinuz_path" | grep -oP 'version \K\S+' || true)
               if [ -n "$ISO_KVER" ]; then
@@ -951,11 +951,17 @@ jobs:
           for candidate in \
             iso-build/images/pxeboot/vmlinuz \
             iso-build/isolinux/vmlinuz \
-            iso-build/boot/vmlinuz; do
+            iso-build/boot/vmlinuz \
+            iso-build/boot/x86_64/loader/linux; do
             if [ -f "$candidate" ]; then
               ISO_BOOT_VMLINUZ="$candidate"
-              # Derive initrd path from vmlinuz location
-              ISO_BOOT_INITRD="$(dirname "$candidate")/initrd.img"
+              # Derive initrd path from vmlinuz location (try initrd.img then initrd)
+              CANDIDATE_DIR="$(dirname "$candidate")"
+              if [ -f "$CANDIDATE_DIR/initrd.img" ]; then
+                ISO_BOOT_INITRD="$CANDIDATE_DIR/initrd.img"
+              else
+                ISO_BOOT_INITRD="$CANDIDATE_DIR/initrd"
+              fi
               ISO_KVER=$(file "$candidate" | grep -oP 'version \K\S+' || true)
               echo "Found ISO kernel at: $candidate (version: ${ISO_KVER:-unknown})"
               break
@@ -981,16 +987,17 @@ jobs:
             for grub_cfg in $(find iso-build/ -name "grub.cfg" -type f 2>/dev/null); do
               echo "  Checking $grub_cfg..."
               # Match linux, linuxefi, or linux16 directives
-              GRUB_LINUX_PATH=$(grep -oP '^\s*(linux|linuxefi|linux16)\s+\K/\S+' "$grub_cfg" | head -1 || true)
+              # Handle paths like /images/pxeboot/vmlinuz OR ($root)/boot/x86_64/loader/linux
+              GRUB_LINUX_PATH=$(grep -oP '^\s*(linux|linuxefi|linux16)\s+(\(\S+\))?(?=/)\K/\S+' "$grub_cfg" | head -1 || true)
               if [ -n "$GRUB_LINUX_PATH" ]; then
                 echo "  GRUB config references kernel at: $GRUB_LINUX_PATH"
                 ISO_BOOT_VMLINUZ="iso-build${GRUB_LINUX_PATH}"
                 # Match corresponding initrd/initrdefi
-                GRUB_INITRD_PATH=$(grep -oP '^\s*(initrd|initrdefi|initrd16)\s+\K/\S+' "$grub_cfg" | head -1 || true)
+                GRUB_INITRD_PATH=$(grep -oP '^\s*(initrd|initrdefi|initrd16)\s+(\(\S+\))?(?=/)\K/\S+' "$grub_cfg" | head -1 || true)
                 if [ -n "$GRUB_INITRD_PATH" ]; then
                   ISO_BOOT_INITRD="iso-build${GRUB_INITRD_PATH}"
                 else
-                  ISO_BOOT_INITRD="$(dirname "$ISO_BOOT_VMLINUZ")/initrd.img"
+                  ISO_BOOT_INITRD="$(dirname "$ISO_BOOT_VMLINUZ")/initrd"
                 fi
                 break
               else
