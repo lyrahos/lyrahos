@@ -943,6 +943,7 @@ jobs:
 
           ISO_BOOT_VMLINUZ="iso-build/images/pxeboot/vmlinuz"
           ISO_BOOT_INITRD="iso-build/images/pxeboot/initrd.img"
+          ISO_KVER=""
 
           # Detect what's currently in the ISO boot area
           if [ -f "$ISO_BOOT_VMLINUZ" ]; then
