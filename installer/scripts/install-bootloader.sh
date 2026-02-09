@@ -197,7 +197,7 @@ if [ "$GRUB_INSTALL_OK" = "false" ] || [ ! -f "$ESP/EFI/$BOOTLOADER_ID/grubx64.e
                 loopback chain efifwsetup efi_gop efi_uga ls search \
                 search_label search_fs_uuid search_fs_file gfxterm \
                 gfxterm_background gfxterm_menu test all_video loadenv \
-                exfat ext2 btrfs 2>&1 && echo "  Built grubx64.efi successfully" || {
+                exfat ext2 btrfs blscfg 2>&1 && echo "  Built grubx64.efi successfully" || {
                 echo "  WARN: grub2-mkimage failed"
                 ERRORS=$((ERRORS + 1))
             }
