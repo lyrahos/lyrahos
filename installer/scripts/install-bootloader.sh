@@ -332,7 +332,7 @@ GRUB_DISTRIBUTOR="Lyrah OS"
 GRUB_DEFAULT=saved
 GRUB_DISABLE_SUBMENU=true
 GRUB_TERMINAL_OUTPUT="console"
-GRUB_CMDLINE_LINUX="quiet splash rhgb plymouth.enable=1"
+GRUB_CMDLINE_LINUX="quiet splash plymouth.enable=1 selinux=0"
 GRUB_DISABLE_RECOVERY="true"
 GRUB_DISABLE_OS_PROBER=true
 GRUBDEFAULT
