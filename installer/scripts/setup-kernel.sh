@@ -10,7 +10,11 @@
 #
 # This script runs inside the Calamares chroot (target system) BEFORE
 # the bootloader module to ensure /boot/ is properly populated.
-set -e
+#
+# NOTE: We intentionally do NOT use "set -e" here. In a Calamares
+# chroot, commands like findmnt, ls with globs, and grep can fail
+# unexpectedly, causing silent script exits. Every error is handled
+# manually so we always complete the critical steps.
 
 echo "=== Lyrah OS Kernel Setup ==="
 
@@ -121,11 +125,16 @@ grub_class lyrah
 EOF
     echo "Created BLS entry: $BLS_FILE"
 
-    # Fill in the root UUID. Try findmnt first, fall back to fstab
-    # (which Calamares's fstab module generates before this step).
-    ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
-    if [ -z "$ROOT_UUID" ] && [ -f /etc/fstab ]; then
+    # Fill in the root UUID. Use fstab FIRST because findmnt in a
+    # Calamares chroot reads /proc/mounts which shows the HOST's
+    # mount table — returning the CI runner's UUID, not the target's.
+    # Calamares's fstab module writes the correct UUID before this step.
+    ROOT_UUID=""
+    if [ -f /etc/fstab ]; then
         ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/UUID=/, "", $1); print $1}' /etc/fstab)
+    fi
+    if [ -z "$ROOT_UUID" ]; then
+        ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
     fi
     if [ -n "$ROOT_UUID" ]; then
         sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_FILE"

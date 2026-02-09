@@ -230,6 +230,9 @@ jobs:
           # Process PXE boot initramfs if it exists
           customize_initramfs "${GITHUB_WORKSPACE}/iso-build/images/pxeboot/initrd.img"
 
+          # Process UEFI-only boot initramfs (Fedora 43+ KDE uses this path)
+          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/boot/x86_64/loader/initrd"
+
           echo "=== Plymouth theme customization complete ==="
 
       # Swap must be expanded BEFORE rootfs build — the default runner swap
@@ -1223,7 +1226,15 @@ jobs:
             # UEFI GOP sets native resolution before the kernel, so the
             # installer still displays at the monitor's native resolution.
             sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 nomodeset splash plymouth.enable=1/' "$cfg" || true
-            # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
+            # Cosmetic: replace entire menuentry titles with clean Lyrah OS names.
+            # The naive "s/Fedora/Lyrah OS/g" turns "Start Fedora-KDE-Desktop-Live-43-1.6"
+            # into "Start Lyrah OS-KDE-Desktop-Live-43-1.6" — ugly. Instead, replace
+            # the entire title strings with clean names.
+            # Order matters: specific patterns before generic to prevent early matching.
+            sudo sed -i -E "s/menuentry 'Start [^']*basic graphics[^']*'/menuentry 'Start Lyrah OS in basic graphics mode'/g" "$cfg" || true
+            sudo sed -i -E "s/menuentry 'Test this media[^']*'/menuentry 'Test this media \& start Lyrah OS'/g" "$cfg" || true
+            sudo sed -i -E "s/menuentry 'Start Fedora[^']*'/menuentry 'Start Lyrah OS'/g" "$cfg" || true
+            # Catch any remaining "Fedora" references (variables, comments, etc.)
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
 

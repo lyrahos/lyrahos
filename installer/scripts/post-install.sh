@@ -1,6 +1,9 @@
 #!/bin/bash
 # Post-installation script for Lyrah OS
-set -e
+#
+# NOTE: We intentionally do NOT use "set -e" here. In a Calamares
+# chroot, commands can fail unexpectedly, causing silent script exits.
+# Each step handles its own errors so the remaining steps still run.
 
 echo "=== Lyrah OS Post-Installation ==="
 
