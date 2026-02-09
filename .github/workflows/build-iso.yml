@@ -941,15 +941,70 @@ jobs:
           # Fix: replace the ISO's vmlinuz and initramfs with the version
           # that matches the modules we installed.
 
-          ISO_BOOT_VMLINUZ="iso-build/images/pxeboot/vmlinuz"
-          ISO_BOOT_INITRD="iso-build/images/pxeboot/initrd.img"
+          # Find vmlinuz in the ISO boot area — Fedora puts it at different
+          # paths depending on the variant (BIOS, UEFI-only, etc.)
+          ISO_BOOT_VMLINUZ=""
+          ISO_BOOT_INITRD=""
           ISO_KVER=""
 
-          # Detect what's currently in the ISO boot area
-          if [ -f "$ISO_BOOT_VMLINUZ" ]; then
-            ISO_KVER=$(file "$ISO_BOOT_VMLINUZ" | grep -oP 'version \K\S+' || true)
-            echo "Current ISO boot kernel: ${ISO_KVER:-unknown}"
+          echo "Searching for kernel in ISO boot area..."
+          for candidate in \
+            iso-build/images/pxeboot/vmlinuz \
+            iso-build/isolinux/vmlinuz \
+            iso-build/boot/vmlinuz; do
+            if [ -f "$candidate" ]; then
+              ISO_BOOT_VMLINUZ="$candidate"
+              # Derive initrd path from vmlinuz location
+              ISO_BOOT_INITRD="$(dirname "$candidate")/initrd.img"
+              ISO_KVER=$(file "$candidate" | grep -oP 'version \K\S+' || true)
+              echo "Found ISO kernel at: $candidate (version: ${ISO_KVER:-unknown})"
+              break
+            fi
+          done
+
+          # Also search dynamically
+          if [ -z "$ISO_BOOT_VMLINUZ" ]; then
+            FOUND=$(find iso-build/ -name "vmlinuz" -type f 2>/dev/null | head -1 || true)
+            if [ -n "$FOUND" ]; then
+              ISO_BOOT_VMLINUZ="$FOUND"
+              ISO_BOOT_INITRD="$(dirname "$FOUND")/initrd.img"
+              ISO_KVER=$(file "$FOUND" | grep -oP 'version \K\S+' || true)
+              echo "Found ISO kernel at: $FOUND (version: ${ISO_KVER:-unknown})"
+            fi
           fi
+
+          # If no kernel found in ISO at all, determine the correct path from
+          # the GRUB config (the 'linux' directive tells us where GRUB expects it)
+          if [ -z "$ISO_BOOT_VMLINUZ" ]; then
+            echo "No kernel found in ISO boot area — checking GRUB config..."
+            GRUB_LINUX_PATH=""
+            for grub_cfg in $(find iso-build/ -name "grub.cfg" -type f 2>/dev/null); do
+              GRUB_LINUX_PATH=$(grep -oP '^\s*linux\s+\K/\S+' "$grub_cfg" | head -1 || true)
+              if [ -n "$GRUB_LINUX_PATH" ]; then
+                echo "GRUB config $grub_cfg references kernel at: $GRUB_LINUX_PATH"
+                # Convert absolute GRUB path to ISO-relative path
+                # GRUB paths like /images/pxeboot/vmlinuz are relative to ISO root
+                ISO_BOOT_VMLINUZ="iso-build${GRUB_LINUX_PATH}"
+                GRUB_INITRD_PATH=$(grep -oP '^\s*initrd\s+\K/\S+' "$grub_cfg" | head -1 || true)
+                if [ -n "$GRUB_INITRD_PATH" ]; then
+                  ISO_BOOT_INITRD="iso-build${GRUB_INITRD_PATH}"
+                else
+                  ISO_BOOT_INITRD="$(dirname "$ISO_BOOT_VMLINUZ")/initrd.img"
+                fi
+                break
+              fi
+            done
+          fi
+
+          # Last resort: use images/pxeboot/ as the standard Fedora path
+          if [ -z "$ISO_BOOT_VMLINUZ" ]; then
+            echo "Could not determine kernel path — using default images/pxeboot/"
+            ISO_BOOT_VMLINUZ="iso-build/images/pxeboot/vmlinuz"
+            ISO_BOOT_INITRD="iso-build/images/pxeboot/initrd.img"
+          fi
+
+          echo "Boot kernel path: $ISO_BOOT_VMLINUZ"
+          echo "Boot initrd path: $ISO_BOOT_INITRD"
 
           # Detect the installed kernel version in the squashfs
           INSTALLED_KVER=$(ls squashfs-root/lib/modules/ 2>/dev/null | sort -V | tail -1)
@@ -960,11 +1015,14 @@ jobs:
           echo "Installed kernel modules: $INSTALLED_KVER"
 
           # Check if versions match
-          if [ "${ISO_KVER:-}" = "$INSTALLED_KVER" ]; then
+          if [ -n "$ISO_KVER" ] && [ "$ISO_KVER" = "$INSTALLED_KVER" ]; then
             echo "Kernel versions match — no sync needed"
           else
-            echo "KERNEL VERSION MISMATCH: ISO=$ISO_KVER vs modules=$INSTALLED_KVER"
+            echo "KERNEL VERSION MISMATCH: ISO=${ISO_KVER:-none} vs modules=$INSTALLED_KVER"
             echo "Replacing ISO boot kernel and regenerating initramfs..."
+
+            # Ensure the target directory exists
+            sudo mkdir -p "$(dirname "$ISO_BOOT_VMLINUZ")"
 
             # Step 1: Copy the matching vmlinuz to the ISO boot area
             VMLINUZ_SRC="squashfs-root/lib/modules/$INSTALLED_KVER/vmlinuz"
@@ -972,9 +1030,16 @@ jobs:
               sudo cp "$VMLINUZ_SRC" "$ISO_BOOT_VMLINUZ"
               echo "Copied vmlinuz from $VMLINUZ_SRC"
             else
-              echo "FATAL: vmlinuz not found at $VMLINUZ_SRC"
-              ls -la "squashfs-root/lib/modules/$INSTALLED_KVER/" || true
-              exit 1
+              # Try alternate location
+              VMLINUZ_SRC="squashfs-root/boot/vmlinuz-$INSTALLED_KVER"
+              if [ -f "$VMLINUZ_SRC" ]; then
+                sudo cp "$VMLINUZ_SRC" "$ISO_BOOT_VMLINUZ"
+                echo "Copied vmlinuz from $VMLINUZ_SRC"
+              else
+                echo "FATAL: vmlinuz not found for kernel $INSTALLED_KVER"
+                find squashfs-root/ -name "vmlinuz*" 2>/dev/null || true
+                exit 1
+              fi
             fi
 
             # Step 2: Generate a live-boot initramfs with dracut
