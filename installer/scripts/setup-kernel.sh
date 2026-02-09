@@ -127,17 +127,37 @@ else
     # (which install-bootloader.sh creates with plymouth.enable=1).
     # Remove rhgb (Fedora-specific Red Hat Graphical Boot) and use
     # plymouth.enable=1 instead for Lyrah branding.
+    #
+    # CRITICAL boot parameters:
+    #   selinux=0 - Disable SELinux (filesystem has no labels from ISO build)
+    #   rd.driver.blacklist=nouveau - Blacklist nouveau (NVIDIA) if it causes crashes
+    #   modprobe.blacklist=nouveau - Persistent blacklist for nouveau
     cat > "$BLS_FILE" << EOF
 title $PRETTY_NAME ($KVER)
 version $KVER
 linux /vmlinuz-$KVER
 initrd /initramfs-$KVER.img
-options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet splash plymouth.enable=1
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet splash plymouth.enable=1 selinux=0
 grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
 EOF
     echo "Created BLS entry: $BLS_FILE"
+
+    # Create a DEBUG boot entry that shows all boot messages
+    # This helps diagnose boot failures when the normal entry fails silently
+    BLS_DEBUG_FILE="$BLS_DIR/$BLS_ID-debug.conf"
+    cat > "$BLS_DEBUG_FILE" << DEBUGEOF
+title $PRETTY_NAME ($KVER) - DEBUG MODE
+version $KVER-debug
+linux /vmlinuz-$KVER
+initrd /initramfs-$KVER.img
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 rd.shell rd.debug systemd.log_level=debug systemd.log_target=console console=tty0 earlyprintk=vga,keep loglevel=7 nomodeset
+grub_users \$grub_users
+grub_arg --unrestricted
+grub_class lyrah
+DEBUGEOF
+    echo "Created DEBUG BLS entry: $BLS_DEBUG_FILE"
 
     # Fill in the root UUID. Use fstab FIRST because findmnt in a
     # Calamares chroot reads /proc/mounts which shows the HOST's
@@ -152,6 +172,7 @@ EOF
     fi
     if [ -n "$ROOT_UUID" ]; then
         sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_FILE"
+        sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_DEBUG_FILE"
         echo "Root UUID: $ROOT_UUID"
     else
         echo "WARNING: Could not determine root UUID — bootloader module will set it"
