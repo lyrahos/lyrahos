@@ -57,14 +57,23 @@ else
 fi
 
 # --- initramfs ---
-# ALWAYS regenerate the initramfs. The ISO build generates one inside
-# a Docker container WITHOUT /proc/sys/dev mounted, so dracut produces
-# a broken initramfs (missing modules, no dmsquash-live support).
-# The Calamares chroot has /proc/sys/dev properly mounted, so dracut
-# here produces a working initramfs.
-echo "Generating initramfs with dracut..."
-dracut --force --kver "$KVER" "$INITRAMFS_DST"
-echo "Generated initramfs at $INITRAMFS_DST"
+# ALWAYS regenerate the initramfs for the installed system.
+#
+# Critical: Use --no-hostonly to include ALL kernel modules. The Calamares
+# chroot may not have full access to the target hardware (especially for
+# disk controllers, filesystems, and RAID), so --hostonly could create an
+# incomplete initramfs that fails to boot. --no-hostonly is larger but
+# guarantees the system boots on any hardware configuration.
+#
+# The installed system does NOT need dmsquash-live (that's only for live
+# ISO boot from squashfs). Standard dracut boot modules suffice.
+echo "Generating initramfs with dracut (--no-hostonly for maximum compatibility)..."
+dracut --force --no-hostonly --kver "$KVER" "$INITRAMFS_DST"
+if [ ! -f "$INITRAMFS_DST" ]; then
+    echo "FATAL: dracut failed to generate initramfs at $INITRAMFS_DST"
+    exit 1
+fi
+echo "Generated initramfs at $INITRAMFS_DST (size: $(du -h "$INITRAMFS_DST" | cut -f1))"
 
 # --- Detect btrfs subvolume on root filesystem ---
 # When Calamares formats root as btrfs, it may create subvolumes (e.g., @).
@@ -114,12 +123,16 @@ else
 
     PRETTY_NAME="Lyrah OS"
 
+    # BLS entry kernel command line options MUST match /etc/default/grub
+    # (which install-bootloader.sh creates with plymouth.enable=1).
+    # Remove rhgb (Fedora-specific Red Hat Graphical Boot) and use
+    # plymouth.enable=1 instead for Lyrah branding.
     cat > "$BLS_FILE" << EOF
 title $PRETTY_NAME ($KVER)
 version $KVER
 linux /vmlinuz-$KVER
 initrd /initramfs-$KVER.img
-options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet rhgb
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet splash plymouth.enable=1
 grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
@@ -191,6 +204,16 @@ GRUBEOF
     fi
 fi
 
-echo "Kernel setup complete. Contents of /boot/:"
+echo "=== Kernel setup complete ==="
+echo "Contents of /boot/:"
 ls -lh /boot/vmlinuz-* /boot/initramfs-*.img 2>/dev/null || echo "(no kernel files found)"
-ls "$BLS_DIR"/ 2>/dev/null || echo "(no BLS entries)"
+echo ""
+echo "BLS entries:"
+ls -la "$BLS_DIR"/ 2>/dev/null || echo "(no BLS entries)"
+if [ -f "$BLS_FILE" ]; then
+    echo ""
+    echo "Active BLS entry contents:"
+    cat "$BLS_FILE"
+fi
+echo ""
+echo "Kernel setup complete."
