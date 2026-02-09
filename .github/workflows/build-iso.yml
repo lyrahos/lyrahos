@@ -346,6 +346,14 @@ jobs:
           # Pin to the ISO's kernel version so modules match the vmlinuz
           # that GRUB actually boots. A version mismatch means modprobe
           # can't find modules at runtime (no GPU, no network, no sound).
+          #
+          # SKIP RPM SCRIPTLETS: We add tsflags=noscripts to prevent kernel-install
+          # scriptlets from running. These scriptlets try to run grub2-probe and
+          # dracut, which fail because /proc/, /sys/, /dev/ are not mounted in the
+          # --installroot environment. We don't need these scriptlets because:
+          #   1. Boot infrastructure comes from the base Fedora ISO
+          #   2. We regenerate initramfs later with dracut (in "Sync ISO boot kernel")
+          #   3. We manually run depmod below (only essential operation)
           ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
           KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core"
           if [ -n "$ISO_KVER" ]; then
@@ -370,6 +378,7 @@ jobs:
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
+                --setopt=tsflags=noscripts \
                 $KERNEL_PKGS
 
               dnf clean all --installroot=/rootfs
@@ -381,7 +390,7 @@ jobs:
               }
 
               # Run depmod to ensure modprobe can find all modules.
-              # The RPM %post may not run it correctly inside --installroot.
+              # This is the only essential operation from the RPM scriptlets.
               INSTALLED_KVER=\$(ls /rootfs/lib/modules/ | sort -V | tail -1)
               if [ -n \"\$INSTALLED_KVER\" ]; then
                 chroot /rootfs depmod \"\$INSTALLED_KVER\" 2>&1 || echo 'WARN: depmod failed'
