@@ -311,11 +311,17 @@ if [ -n "$FALLBACK_SRC" ] && echo "$FALLBACK_SRC" | grep -q "shimx64"; then
     fi
 fi
 
-# Create BOOTX64.CSV so shim auto-registers "Lyrah OS" in the UEFI
-# firmware boot menu on first boot. Without this, the firmware shows
-# a generic name like "UEFI OS" for the fallback boot path.
-echo "shimx64.efi,Lyrah OS,,This is the boot entry for Lyrah OS" > "$ESP/EFI/$BOOTLOADER_ID/BOOTX64.CSV" 2>/dev/null || true
-echo "Created BOOTX64.CSV for firmware boot entry naming"
+# Create BOOTX64.CSV so the firmware shows "Lyrah OS" instead of "UEFI OS".
+# The CSV file tells shim what name to register in the firmware boot menu.
+# It MUST be in the same directory as BOOTX64.EFI (/EFI/BOOT/) to work.
+cat > "$ESP/EFI/BOOT/BOOTX64.CSV" << 'CSVEOF'
+shimx64.efi,Lyrah OS,,This is the boot entry for Lyrah OS
+grubx64.efi,Lyrah OS,,This is the boot entry for Lyrah OS
+CSVEOF
+echo "Created BOOTX64.CSV in /EFI/BOOT/ for firmware boot entry naming"
+
+# Also create it in the primary bootloader directory as a backup
+cp "$ESP/EFI/BOOT/BOOTX64.CSV" "$ESP/EFI/$BOOTLOADER_ID/BOOTX64.CSV" 2>/dev/null || true
 echo ""
 
 # ---------------------------------------------------------------
