@@ -57,13 +57,14 @@ else
 fi
 
 # --- initramfs ---
-if [ -f "$INITRAMFS_DST" ]; then
-    echo "initramfs already present at $INITRAMFS_DST"
-else
-    echo "Generating initramfs with dracut..."
-    dracut --force --kver "$KVER" "$INITRAMFS_DST"
-    echo "Generated initramfs at $INITRAMFS_DST"
-fi
+# ALWAYS regenerate the initramfs. The ISO build generates one inside
+# a Docker container WITHOUT /proc/sys/dev mounted, so dracut produces
+# a broken initramfs (missing modules, no dmsquash-live support).
+# The Calamares chroot has /proc/sys/dev properly mounted, so dracut
+# here produces a working initramfs.
+echo "Generating initramfs with dracut..."
+dracut --force --kver "$KVER" "$INITRAMFS_DST"
+echo "Generated initramfs at $INITRAMFS_DST"
 
 # --- Detect btrfs subvolume on root filesystem ---
 # When Calamares formats root as btrfs, it may create subvolumes (e.g., @).

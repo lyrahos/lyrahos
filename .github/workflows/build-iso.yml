@@ -230,8 +230,14 @@ jobs:
           # Process PXE boot initramfs if it exists
           customize_initramfs "${GITHUB_WORKSPACE}/iso-build/images/pxeboot/initrd.img"
 
-          # Process UEFI-only boot initramfs (Fedora 43+ KDE uses this path)
-          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/boot/x86_64/loader/initrd"
+          # NOTE: Do NOT process boot/x86_64/loader/initrd here!
+          # That is the LIVE BOOT initramfs — it contains dmsquash-live
+          # which is essential for mounting the squashfs root. Extracting
+          # and repacking it (especially changing compression from zstd
+          # to gzip) corrupts the archive and causes kernel panic:
+          # "unable to mount root fs on unknown block(0,0)".
+          # Plymouth theme for the live session is set via plymouthd.conf
+          # in the squashfs instead.
 
           echo "=== Plymouth theme customization complete ==="
 
