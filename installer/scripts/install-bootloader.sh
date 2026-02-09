@@ -330,9 +330,10 @@ echo ""
 echo "=== Step 5: Generate grub.cfg ==="
 
 # Ensure /etc/default/grub exists with sane defaults
+# ALWAYS overwrite to ensure Lyrah-specific settings are applied
+# (grub2-tools RPM may have created a default file)
 mkdir -p /etc/default
-if [ ! -f /etc/default/grub ]; then
-    cat > /etc/default/grub << 'GRUBDEFAULT'
+cat > /etc/default/grub << 'GRUBDEFAULT'
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR="Lyrah OS"
 GRUB_DEFAULT=saved
@@ -342,8 +343,7 @@ GRUB_CMDLINE_LINUX="quiet splash plymouth.enable=1 selinux=0"
 GRUB_DISABLE_RECOVERY="true"
 GRUB_DISABLE_OS_PROBER=true
 GRUBDEFAULT
-    echo "Created /etc/default/grub"
-fi
+echo "Created /etc/default/grub with Lyrah OS settings"
 
 # Run grub2-mkconfig to generate the actual boot menu
 if command -v grub2-mkconfig &>/dev/null; then

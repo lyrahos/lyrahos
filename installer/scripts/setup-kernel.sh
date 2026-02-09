@@ -130,19 +130,21 @@ else
     #
     # CRITICAL boot parameters:
     #   selinux=0 - Disable SELinux (filesystem has no labels from ISO build)
-    #   rd.driver.blacklist=nouveau - Blacklist nouveau (NVIDIA) if it causes crashes
-    #   modprobe.blacklist=nouveau - Persistent blacklist for nouveau
+    #
+    # TEMPORARILY using minimal boot params to diagnose crash - once working,
+    # can re-enable quiet/splash/plymouth for polished boot experience
     cat > "$BLS_FILE" << EOF
 title $PRETTY_NAME ($KVER)
 version $KVER
 linux /vmlinuz-$KVER
 initrd /initramfs-$KVER.img
-options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet splash plymouth.enable=1 selinux=0
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 systemd.log_level=info
 grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
 EOF
     echo "Created BLS entry: $BLS_FILE"
+    echo "  Boot options: ro selinux=0 systemd.log_level=info (verbose for debugging)"
 
     # Create a DEBUG boot entry that shows all boot messages
     # This helps diagnose boot failures when the normal entry fails silently
