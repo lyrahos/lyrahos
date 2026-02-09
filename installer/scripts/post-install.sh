@@ -44,6 +44,9 @@ systemctl enable sddm
 systemctl enable NetworkManager
 systemctl enable lyrah-crash-monitor
 systemctl enable lyrah-update.timer
+systemctl enable lyrah-boot-logger
+
+echo "Boot diagnostics logger enabled (logs saved to /var/log/lyrah-boot/)"
 
 # Create log directories
 mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}

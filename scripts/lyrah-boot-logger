@@ -1,0 +1,78 @@
+#!/bin/bash
+# Lyrah OS Boot Diagnostics Logger
+# Captures boot information for debugging crashes and boot failures
+# Logs are written to /var/log/lyrah-boot/ and survive crashes
+
+LOGDIR="/var/log/lyrah-boot"
+BOOTLOG="$LOGDIR/boot-$(date +%Y%m%d-%H%M%S).log"
+LATEST="$LOGDIR/latest.log"
+
+# Create log directory
+mkdir -p "$LOGDIR"
+
+# Start logging
+{
+    echo "========================================"
+    echo "Lyrah OS Boot Diagnostics"
+    echo "========================================"
+    echo "Boot Time: $(date)"
+    echo "Boot Count: $(cat /var/log/lyrah-boot/.boot-count 2>/dev/null || echo 0)"
+    echo ""
+
+    echo "=== System Information ==="
+    uname -a
+    echo ""
+
+    echo "=== Kernel Command Line ==="
+    cat /proc/cmdline
+    echo ""
+
+    echo "=== Disk Layout ==="
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,UUID
+    echo ""
+
+    echo "=== Mount Points ==="
+    mount | grep -E "^/dev/"
+    echo ""
+
+    echo "=== /boot/ Contents ==="
+    ls -lah /boot/ 2>&1
+    echo ""
+
+    echo "=== EFI Boot Entries ==="
+    efibootmgr -v 2>&1 || echo "Not available (non-UEFI or efibootmgr not installed)"
+    echo ""
+
+    echo "=== Kernel Messages (dmesg) ==="
+    dmesg | tail -100
+    echo ""
+
+    echo "=== Failed Systemd Units ==="
+    systemctl list-units --failed --no-pager 2>&1
+    echo ""
+
+    echo "=== Journal Errors (last 50 lines) ==="
+    journalctl -p err -n 50 --no-pager 2>&1
+    echo ""
+
+    echo "=== SELinux Status ==="
+    getenforce 2>&1 || echo "SELinux not available"
+    echo ""
+
+    echo "========================================"
+    echo "End of Boot Diagnostics"
+    echo "========================================"
+
+} > "$BOOTLOG" 2>&1
+
+# Create symlink to latest log
+ln -sf "$BOOTLOG" "$LATEST"
+
+# Increment boot counter
+COUNTER=$(cat "$LOGDIR/.boot-count" 2>/dev/null || echo 0)
+echo $((COUNTER + 1)) > "$LOGDIR/.boot-count"
+
+# Keep only last 10 boot logs to prevent disk fill
+cd "$LOGDIR" && ls -t boot-*.log 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+
+echo "Boot diagnostics saved to $BOOTLOG"
