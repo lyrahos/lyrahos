@@ -355,13 +355,13 @@ jobs:
           #   2. We regenerate initramfs later with dracut (in "Sync ISO boot kernel")
           #   3. We manually run depmod below (only essential operation)
           ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
-          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core"
+          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core kernel-devel"
           if [ -n "$ISO_KVER" ]; then
             # file reports: 6.x.y-z.fc43.x86_64 — strip arch suffix for dnf
             KVER_DNF="${ISO_KVER%.x86_64}"
             KVER_DNF="${KVER_DNF%.aarch64}"
             echo "Pinning kernel to ISO version: $KVER_DNF"
-            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-${KVER_DNF} kernel-modules-core-${KVER_DNF}"
+            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-${KVER_DNF} kernel-modules-core-${KVER_DNF} kernel-devel-${KVER_DNF}"
           else
             echo "WARNING: ISO kernel version unknown — installing latest"
           fi

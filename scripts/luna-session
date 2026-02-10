@@ -160,7 +160,7 @@ run_compositor() {
             ping -c1 -W2 store.steampowered.com >/dev/null 2>&1 && echo "  store.steampowered.com: REACHABLE" || echo "  store.steampowered.com: UNREACHABLE"
             echo ""
             echo "========================================="
-            echo "LAUNCHING: LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
+            echo "LAUNCHING: kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
             echo "Start time: $(date)"
             echo "========================================="
             echo ""
@@ -193,10 +193,11 @@ run_compositor() {
         MONITOR_PID=$!
 
         # ── Launch kwin_wayland with Steam ──
-        # LIBGL_ALWAYS_SOFTWARE=1: with nomodeset there's no GPU, Steam
-        # needs software OpenGL to render.
-        # The redirect target was already verified writable above.
-        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
+        # If LIBGL_ALWAYS_SOFTWARE=1 was exported earlier (no real GPU),
+        # it is inherited automatically.  Don't hardcode it — doing so
+        # forces software rendering even when a working GPU is present,
+        # which causes Steam to crash.
+        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
         STEAM_EXIT=$?
 
         # Kill the background monitor
