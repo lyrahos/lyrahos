@@ -59,10 +59,10 @@ run_compositor() {
         # startup (bootstrap, update dialog, CEF login) needs a full
         # desktop compositor.
         #
-        # Detailed diagnostics are written to STEAM_LOG so the user
-        # can review them from KDE Plasma Desktop.
-        STEAM_LOG="/var/log/lyrah/steam-login-debug.log"
-        mkdir -p /var/log/lyrah 2>/dev/null
+        # Log to /tmp/ (always writable) — NOT /var/log/ which requires
+        # root. A failed redirect in bash skips the entire command, so
+        # using a non-writable path would prevent kwin from launching.
+        STEAM_LOG="/tmp/lyrah-steam-login-debug.log"
 
         # ── Diagnostic header ──
         {
@@ -129,7 +129,7 @@ run_compositor() {
             echo "Start time: $(date)"
             echo "========================================="
             echo ""
-        } > "$STEAM_LOG"
+        } > "$STEAM_LOG" 2>/dev/null
 
         echo "luna-session: launching Steam via kwin_wayland (log: $STEAM_LOG)..."
 
@@ -151,8 +151,10 @@ run_compositor() {
         ) &
         MONITOR_PID=$!
 
-        # ── Launch kwin_wayland with Steam, all output to log ──
-        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
+        # ── Launch kwin_wayland with Steam ──
+        # Force software OpenGL for Steam — with nomodeset there's no
+        # GPU acceleration, and Steam's CEF browser needs this to render.
+        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
         STEAM_EXIT=$?
 
         # Kill the background monitor
@@ -180,11 +182,11 @@ run_compositor() {
             fi
             echo ""
             echo "========================================="
-            echo "View this log: cat /var/log/lyrah/steam-login-debug.log"
+            echo "View this log from KDE: cat /tmp/lyrah-steam-login-debug.log"
             echo "========================================="
-        } >> "$STEAM_LOG"
+        } >> "$STEAM_LOG" 2>/dev/null
 
-        # Copy to user-accessible locations
+        # Copy to user-accessible locations for KDE Desktop
         cp "$STEAM_LOG" "$HOME/Desktop/steam-login-debug.log" 2>/dev/null || \
         cp "$STEAM_LOG" "$HOME/steam-login-debug.log" 2>/dev/null || true
 
