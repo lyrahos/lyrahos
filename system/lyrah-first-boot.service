@@ -1,11 +1,15 @@
 [Unit]
 Description=Lyrah OS First Boot Setup
 ConditionPathExists=!/var/lib/lyrah/.first-boot-done
+After=network-online.target
+Before=display-manager.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/share/lyrah/setup/first-boot.sh
 RemainAfterExit=yes
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target

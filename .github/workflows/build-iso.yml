@@ -550,6 +550,7 @@ jobs:
 
           sudo mkdir -p squashfs-root/usr/bin
           sudo cp scripts/luna-session squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-desktop-session squashfs-root/usr/bin/
           sudo cp scripts/lyrah-installer-session squashfs-root/usr/bin/
           sudo cp scripts/lyrah-switch-mode squashfs-root/usr/bin/
           sudo cp scripts/lyrah-configure-autologin squashfs-root/usr/bin/
