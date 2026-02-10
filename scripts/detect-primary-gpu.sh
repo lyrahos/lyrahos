@@ -7,9 +7,15 @@
 #   - Many gaming laptops (ASUS ROG/TUF): eDP on the dGPU (NVIDIA)
 #
 # Strategy:
-#   1. Find which DRM card has a physically connected display
+#   1. Find which real DRM card has a physically connected display
 #   2. Fall back to integrated GPU (amdgpu/i915/xe) if detection fails
-#   3. Last resort: /dev/dri/card0
+#   3. Accept NVIDIA proprietary driver
+#   4. Last resort: first non-simpledrm card, then card0
+#
+# simpledrm (kernel UEFI framebuffer) is skipped in strategies 1 & 4
+# because its connector always reports "connected" even though it has
+# no GPU rendering capability.  Selecting it as primary would force
+# software rendering and break gamescope/gaming.
 #
 # The result is used as KWIN_DRM_DEVICES so kwin_wayland composites
 # on the GPU that actually drives the screen.
@@ -17,9 +23,23 @@
 # Usage:
 #   export KWIN_DRM_DEVICES=$(detect-primary-gpu.sh)
 
+# Helper: return 0 (true) if the card is simpledrm (UEFI framebuffer stub).
+is_simpledrm() {
+    local drvlink="/sys/class/drm/$1/device/driver"
+    if [ -L "$drvlink" ]; then
+        case "$(basename "$(readlink "$drvlink")")" in
+            simple-framebuffer|simpledrm) return 0 ;;
+        esac
+    fi
+    return 1
+}
+
 # --- Strategy 1: Find the card with a connected display ---
+# Skip simpledrm: its "Unknown-1" connector always reports "connected"
+# but it's just a UEFI framebuffer, not a real GPU.
 for card in /dev/dri/card*; do
     cardname=$(basename "$card")
+    is_simpledrm "$cardname" && continue
     for connector in /sys/class/drm/"$cardname"-*/status; do
         if [ -f "$connector" ] && [ "$(cat "$connector" 2>/dev/null)" = "connected" ]; then
             echo "$card"
@@ -60,7 +80,14 @@ for card in /dev/dri/card*; do
     fi
 done
 
-# --- Last resort: first card (works with simpledrm/nomodeset) ---
+# --- Last resort: prefer non-simpledrm, then accept simpledrm ---
+for card in /dev/dri/card*; do
+    cardname=$(basename "$card")
+    is_simpledrm "$cardname" && continue
+    echo "$card"
+    exit 0
+done
+# All cards are simpledrm — accept card0 as final fallback
 if [ -e /dev/dri/card0 ]; then
     echo "/dev/dri/card0"
 fi
