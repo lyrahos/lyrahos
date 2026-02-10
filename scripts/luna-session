@@ -18,10 +18,10 @@ fi
 
 # If no render nodes exist (simpledrm / nomodeset / VM), force
 # Mesa software rendering EARLY — before any compositor is launched.
-# Mirrors the proven SDDM fallback in lyrah-kwin-wrapper.sh:
-# unset KWIN_DRM_DEVICES so kwin auto-detects, and force llvmpipe.
+# Keep KWIN_DRM_DEVICES as-is: on hybrid GPU systems, unsetting it
+# causes kwin to discover secondary GPUs it can't access (Permission
+# denied), which cascades into total output failure.
 if ! ls /dev/dri/renderD* >/dev/null 2>&1; then
-    unset KWIN_DRM_DEVICES
     export LIBGL_ALWAYS_SOFTWARE=1
 fi
 
@@ -258,12 +258,13 @@ elif [ $rc -ne 0 ]; then
         COMPOSITOR="kwin_wayland"
 
         # Gamescope needs Vulkan — if it failed, there's likely no
-        # working GPU (nomodeset, simpledrm, VM).  Mirror the proven
-        # SDDM fallback (lyrah-kwin-wrapper.sh): unset KWIN_DRM_DEVICES
-        # and force llvmpipe so kwin_wayland can composite via software.
-        unset KWIN_DRM_DEVICES
+        # working GPU (nomodeset, simpledrm, VM).  Force llvmpipe so
+        # kwin_wayland can composite via software OpenGL.
+        # Keep KWIN_DRM_DEVICES: on hybrid GPU systems it restricts kwin
+        # to the display-connected card, preventing it from discovering
+        # secondary GPUs the user can't access (Permission denied).
         export LIBGL_ALWAYS_SOFTWARE=1
-        echo "luna-session: enabling software rendering (LIBGL_ALWAYS_SOFTWARE=1, KWIN_DRM_DEVICES unset)"
+        echo "luna-session: enabling software rendering (LIBGL_ALWAYS_SOFTWARE=1, KWIN_DRM_DEVICES=${KWIN_DRM_DEVICES:-<unset>})"
     fi
 fi
 
