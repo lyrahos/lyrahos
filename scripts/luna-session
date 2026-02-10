@@ -243,6 +243,13 @@ elif [ $rc -ne 0 ]; then
         # (NOT nested inside gamescope) to avoid double compositing.
         echo "luna-session: gamescope DRM failed, using kwin_wayland"
         COMPOSITOR="kwin_wayland"
+
+        # Gamescope needs Vulkan — if it failed, there's likely no
+        # working GPU (nomodeset, simpledrm, VM).  Force Mesa to use
+        # llvmpipe (software OpenGL) so kwin_wayland compositing and
+        # luna-ui rendering don't freeze on a missing EGL context.
+        export LIBGL_ALWAYS_SOFTWARE=1
+        echo "luna-session: enabling software rendering (LIBGL_ALWAYS_SOFTWARE=1)"
     fi
 fi
 
