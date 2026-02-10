@@ -14,14 +14,31 @@ export XDG_CURRENT_DESKTOP=gamescope
 PRIMARY_GPU=$(/usr/share/lyrah/setup/detect-primary-gpu.sh 2>/dev/null)
 if [ -n "$PRIMARY_GPU" ]; then
     export KWIN_DRM_DEVICES="$PRIMARY_GPU"
+
+    # On hybrid GPU systems the primary GPU might not drive the physical
+    # display (e.g. eDP wired through NVIDIA while we selected AMD iGPU).
+    # If simpledrm exists as a separate card, append it so kwin can render
+    # on the real GPU and output to the UEFI framebuffer.
+    _primary_card=$(basename "$PRIMARY_GPU")
+    for _card in /dev/dri/card*; do
+        [ "$(basename "$_card")" = "$_primary_card" ] && continue
+        _dl="/sys/class/drm/$(basename "$_card")/device/driver"
+        if [ -L "$_dl" ]; then
+            case "$(basename "$(readlink "$_dl")")" in
+                simple-framebuffer|simpledrm)
+                    export KWIN_DRM_DEVICES="${PRIMARY_GPU}:${_card}"
+                    break ;;
+            esac
+        fi
+    done
 fi
 
 # If no render nodes exist (simpledrm / nomodeset / VM), force
 # Mesa software rendering EARLY — before any compositor is launched.
-# Mirrors the proven SDDM fallback in lyrah-kwin-wrapper.sh:
-# unset KWIN_DRM_DEVICES so kwin auto-detects, and force llvmpipe.
+# Keep KWIN_DRM_DEVICES as-is: on hybrid GPU systems, unsetting it
+# causes kwin to discover secondary GPUs it can't access (Permission
+# denied), which cascades into total output failure.
 if ! ls /dev/dri/renderD* >/dev/null 2>&1; then
-    unset KWIN_DRM_DEVICES
     export LIBGL_ALWAYS_SOFTWARE=1
 fi
 
@@ -143,7 +160,7 @@ run_compositor() {
             ping -c1 -W2 store.steampowered.com >/dev/null 2>&1 && echo "  store.steampowered.com: REACHABLE" || echo "  store.steampowered.com: UNREACHABLE"
             echo ""
             echo "========================================="
-            echo "LAUNCHING: LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
+            echo "LAUNCHING: kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
             echo "Start time: $(date)"
             echo "========================================="
             echo ""
@@ -176,10 +193,11 @@ run_compositor() {
         MONITOR_PID=$!
 
         # ── Launch kwin_wayland with Steam ──
-        # LIBGL_ALWAYS_SOFTWARE=1: with nomodeset there's no GPU, Steam
-        # needs software OpenGL to render.
-        # The redirect target was already verified writable above.
-        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
+        # If LIBGL_ALWAYS_SOFTWARE=1 was exported earlier (no real GPU),
+        # it is inherited automatically.  Don't hardcode it — doing so
+        # forces software rendering even when a working GPU is present,
+        # which causes Steam to crash.
+        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
         STEAM_EXIT=$?
 
         # Kill the background monitor
@@ -257,13 +275,30 @@ elif [ $rc -ne 0 ]; then
         echo "luna-session: gamescope DRM failed, using kwin_wayland"
         COMPOSITOR="kwin_wayland"
 
-        # Gamescope needs Vulkan — if it failed, there's likely no
-        # working GPU (nomodeset, simpledrm, VM).  Mirror the proven
-        # SDDM fallback (lyrah-kwin-wrapper.sh): unset KWIN_DRM_DEVICES
-        # and force llvmpipe so kwin_wayland can composite via software.
-        unset KWIN_DRM_DEVICES
-        export LIBGL_ALWAYS_SOFTWARE=1
-        echo "luna-session: enabling software rendering (LIBGL_ALWAYS_SOFTWARE=1, KWIN_DRM_DEVICES unset)"
+        # Gamescope needs Vulkan — it can fail because:
+        #   a) No GPU at all (simpledrm/nomodeset) → need software rendering
+        #   b) Real GPU exists but Vulkan isn't available (missing mesa-vulkan-drivers)
+        #      → kwin_wayland can still use OpenGL on the real GPU
+        # Only force software rendering if the primary GPU is simpledrm.
+        if [ -z "$KWIN_DRM_DEVICES" ] || [ ! -e "$KWIN_DRM_DEVICES" ]; then
+            export LIBGL_ALWAYS_SOFTWARE=1
+            echo "luna-session: no primary GPU, enabling software rendering"
+        else
+            # Check if the selected card is simpledrm (UEFI framebuffer)
+            _cardname=$(basename "$KWIN_DRM_DEVICES")
+            _drvlink="/sys/class/drm/$_cardname/device/driver"
+            _drv=""
+            [ -L "$_drvlink" ] && _drv=$(basename "$(readlink "$_drvlink")")
+            case "$_drv" in
+                simple-framebuffer|simpledrm|"")
+                    export LIBGL_ALWAYS_SOFTWARE=1
+                    echo "luna-session: primary GPU is simpledrm, enabling software rendering"
+                    ;;
+                *)
+                    echo "luna-session: primary GPU is $_drv ($KWIN_DRM_DEVICES), using hardware rendering"
+                    ;;
+            esac
+        fi
     fi
 fi
 
