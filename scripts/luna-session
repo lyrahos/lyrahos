@@ -55,23 +55,140 @@ handle_signals() {
 run_compositor() {
     if [ "$1" = "steam" ]; then
         # Always use kwin_wayland for Steam login/setup, even when
-        # gamescope is the primary compositor. Reasons:
+        # gamescope is the primary compositor. Steam's multi-window
+        # startup (bootstrap, update dialog, CEF login) needs a full
+        # desktop compositor.
         #
-        # 1. Steam's first-run bootstrap downloads ~350 MB of client
-        #    files, then shows an update dialog, THEN a CEF login
-        #    browser — multiple separate X11 windows. gamescope is
-        #    designed for a single fullscreen app and can't manage
-        #    this multi-window startup without SteamOS-specific
-        #    patches (the --steam flag).
-        #
-        # 2. Don't pass -bigpicture/-gamepadui: Steam can't enter
-        #    Big Picture Mode until its first-run setup completes.
-        #    Let it do the standard login flow first.
-        #
-        # After the user logs in and exits Steam, luna-session
-        # restarts luna-ui in the normal compositor (gamescope).
-        echo "luna-session: launching Steam via kwin_wayland for login..."
-        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam
+        # Detailed diagnostics are written to STEAM_LOG so the user
+        # can review them from KDE Plasma Desktop.
+        STEAM_LOG="/var/log/lyrah/steam-login-debug.log"
+        mkdir -p /var/log/lyrah 2>/dev/null
+
+        # ── Diagnostic header ──
+        {
+            echo "========================================="
+            echo "LYRAH OS - STEAM LOGIN DIAGNOSTICS"
+            echo "Date: $(date)"
+            echo "========================================="
+            echo ""
+            echo "--- Environment ---"
+            echo "USER: $USER"
+            echo "HOME: $HOME"
+            echo "DISPLAY: ${DISPLAY:-<not set>}"
+            echo "WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-<not set>}"
+            echo "XDG_SESSION_TYPE: ${XDG_SESSION_TYPE:-<not set>}"
+            echo "XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-<not set>}"
+            echo "KWIN_DRM_DEVICES: ${KWIN_DRM_DEVICES:-<not set>}"
+            echo "COMPOSITOR (luna-session): $COMPOSITOR"
+            echo ""
+            echo "--- Steam binary ---"
+            STEAM_BIN=$(command -v steam 2>/dev/null || true)
+            echo "Path: ${STEAM_BIN:-NOT FOUND IN PATH}"
+            if [ -n "$STEAM_BIN" ]; then
+                echo "File type: $(file "$STEAM_BIN" 2>/dev/null || echo unknown)"
+                echo "First 3 lines:"
+                head -3 "$STEAM_BIN" 2>/dev/null | sed 's/^/  /'
+            fi
+            echo ""
+            echo "--- Steam data directories ---"
+            echo "~/.local/share/Steam: $([ -d "$HOME/.local/share/Steam" ] && echo "EXISTS ($(ls "$HOME/.local/share/Steam/" 2>/dev/null | wc -l) items)" || echo "DOES NOT EXIST")"
+            echo "~/.steam: $([ -d "$HOME/.steam" ] && echo "EXISTS" || echo "DOES NOT EXIST")"
+            if [ -d "$HOME/.local/share/Steam" ]; then
+                ls -la "$HOME/.local/share/Steam/" 2>/dev/null | head -20 | sed 's/^/  /'
+            fi
+            echo ""
+            echo "--- DRM devices ---"
+            ls -la /dev/dri/ 2>/dev/null || echo "  (no /dev/dri)"
+            for card in /dev/dri/card*; do
+                [ -e "$card" ] || continue
+                cardname=$(basename "$card")
+                drmdir="/sys/class/drm/$cardname/device/driver"
+                if [ -L "$drmdir" ]; then
+                    drv=$(basename "$(readlink "$drmdir")")
+                    echo "  $card -> driver: $drv"
+                else
+                    echo "  $card -> driver: unknown (simpledrm?)"
+                fi
+                for conn in /sys/class/drm/"$cardname"-*/status; do
+                    [ -f "$conn" ] || continue
+                    connname=$(basename "$(dirname "$conn")")
+                    echo "    $connname: $(cat "$conn" 2>/dev/null)"
+                done
+            done
+            echo ""
+            echo "--- Kernel command line ---"
+            cat /proc/cmdline 2>/dev/null || echo "  (unreadable)"
+            echo ""
+            echo "--- Network (Steam needs this for first-run download) ---"
+            echo "  Default route: $(ip route show default 2>/dev/null | head -1 || echo 'NONE')"
+            echo "  DNS resolv: $(head -1 /etc/resolv.conf 2>/dev/null || echo 'NONE')"
+            ping -c1 -W2 store.steampowered.com >/dev/null 2>&1 && echo "  store.steampowered.com: REACHABLE" || echo "  store.steampowered.com: UNREACHABLE"
+            echo ""
+            echo "========================================="
+            echo "LAUNCHING: kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
+            echo "Start time: $(date)"
+            echo "========================================="
+            echo ""
+        } > "$STEAM_LOG"
+
+        echo "luna-session: launching Steam via kwin_wayland (log: $STEAM_LOG)..."
+
+        # ── Background monitor: snapshot process state at intervals ──
+        (
+            for delay in 3 10 30 60; do
+                sleep "$delay"
+                {
+                    echo ""
+                    echo "--- Process snapshot (${delay}s after launch) ---"
+                    echo "Steam processes:"
+                    ps aux 2>/dev/null | grep -i '[s]team' || echo "  (none)"
+                    echo "kwin processes:"
+                    ps aux 2>/dev/null | grep -i '[k]win' || echo "  (none)"
+                    echo "Xwayland:"
+                    ps aux 2>/dev/null | grep -i '[X]wayland' || echo "  (none)"
+                } >> "$STEAM_LOG" 2>/dev/null
+            done
+        ) &
+        MONITOR_PID=$!
+
+        # ── Launch kwin_wayland with Steam, all output to log ──
+        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
+        STEAM_EXIT=$?
+
+        # Kill the background monitor
+        kill "$MONITOR_PID" 2>/dev/null; wait "$MONITOR_PID" 2>/dev/null
+
+        # ── Post-mortem ──
+        {
+            echo ""
+            echo "========================================="
+            echo "STEAM SESSION ENDED"
+            echo "kwin_wayland exit code: $STEAM_EXIT"
+            echo "End time: $(date)"
+            echo "========================================="
+            echo ""
+            echo "--- Remaining Steam processes ---"
+            ps aux 2>/dev/null | grep -i '[s]team' || echo "  (none)"
+            echo ""
+            if [ -d "$HOME/.local/share/Steam/logs" ]; then
+                echo "--- Steam client logs (last 30 lines of bootstrap) ---"
+                tail -30 "$HOME/.local/share/Steam/logs/bootstrap_log.txt" 2>/dev/null | sed 's/^/  /' || echo "  (no bootstrap log)"
+            else
+                echo "--- Steam logs directory does not exist ---"
+                echo "  This means Steam never completed its first-run bootstrap."
+                echo "  Possible causes: no network, missing 32-bit libs, steam binary issue"
+            fi
+            echo ""
+            echo "========================================="
+            echo "View this log: cat /var/log/lyrah/steam-login-debug.log"
+            echo "========================================="
+        } >> "$STEAM_LOG"
+
+        # Copy to user-accessible locations
+        cp "$STEAM_LOG" "$HOME/Desktop/steam-login-debug.log" 2>/dev/null || \
+        cp "$STEAM_LOG" "$HOME/steam-login-debug.log" 2>/dev/null || true
+
+        echo "luna-session: Steam exited ($STEAM_EXIT). Log saved to $STEAM_LOG"
     elif [ "$COMPOSITOR" = "gamescope" ]; then
         gamescope --fullscreen -- "$@"
     else
