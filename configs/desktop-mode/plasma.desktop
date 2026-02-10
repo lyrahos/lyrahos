@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Desktop Mode (KDE Plasma)
 Comment=Full desktop environment
-Exec=/usr/bin/startplasma-wayland
+Exec=/usr/bin/lyrah-desktop-session
 Type=Application
 DesktopNames=KDE

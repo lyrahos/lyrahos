@@ -1,0 +1,17 @@
+#!/bin/bash
+# Desktop Mode Session Launcher
+# Detects the primary GPU on hybrid laptops before starting Plasma.
+#
+# On systems with multiple GPUs (e.g. AMD iGPU + NVIDIA dGPU),
+# kwin_wayland can't auto-detect the right DRM device and falls back
+# to the discrete GPU (nouveau), which often hangs or black-screens.
+# This wrapper runs the same GPU detection as luna-session and the
+# SDDM greeter compositor so the Plasma session uses the integrated
+# GPU for compositing.
+
+PRIMARY_GPU=$(/usr/share/lyrah/setup/detect-primary-gpu.sh 2>/dev/null)
+if [ -n "$PRIMARY_GPU" ]; then
+    export KWIN_DRM_DEVICES="$PRIMARY_GPU"
+fi
+
+exec startplasma-wayland

@@ -10,7 +10,11 @@
 #
 # This script runs inside the Calamares chroot (target system) BEFORE
 # the bootloader module to ensure /boot/ is properly populated.
-set -e
+#
+# NOTE: We intentionally do NOT use "set -e" here. In a Calamares
+# chroot, commands like findmnt, ls with globs, and grep can fail
+# unexpectedly, causing silent script exits. Every error is handled
+# manually so we always complete the critical steps.
 
 echo "=== Lyrah OS Kernel Setup ==="
 
@@ -53,13 +57,23 @@ else
 fi
 
 # --- initramfs ---
-if [ -f "$INITRAMFS_DST" ]; then
-    echo "initramfs already present at $INITRAMFS_DST"
-else
-    echo "Generating initramfs with dracut..."
-    dracut --force --kver "$KVER" "$INITRAMFS_DST"
-    echo "Generated initramfs at $INITRAMFS_DST"
+# ALWAYS regenerate the initramfs for the installed system.
+#
+# Critical: Use --no-hostonly to include ALL kernel modules. The Calamares
+# chroot may not have full access to the target hardware (especially for
+# disk controllers, filesystems, and RAID), so --hostonly could create an
+# incomplete initramfs that fails to boot. --no-hostonly is larger but
+# guarantees the system boots on any hardware configuration.
+#
+# The installed system does NOT need dmsquash-live (that's only for live
+# ISO boot from squashfs). Standard dracut boot modules suffice.
+echo "Generating initramfs with dracut (--no-hostonly for maximum compatibility)..."
+dracut --force --no-hostonly --kver "$KVER" "$INITRAMFS_DST"
+if [ ! -f "$INITRAMFS_DST" ]; then
+    echo "FATAL: dracut failed to generate initramfs at $INITRAMFS_DST"
+    exit 1
 fi
+echo "Generated initramfs at $INITRAMFS_DST (size: $(du -h "$INITRAMFS_DST" | cut -f1))"
 
 # --- Detect btrfs subvolume on root filesystem ---
 # When Calamares formats root as btrfs, it may create subvolumes (e.g., @).
@@ -109,26 +123,61 @@ else
 
     PRETTY_NAME="Lyrah OS"
 
+    # BLS entry kernel command line options MUST match /etc/default/grub
+    # (which install-bootloader.sh creates with plymouth.enable=1).
+    # Remove rhgb (Fedora-specific Red Hat Graphical Boot) and use
+    # plymouth.enable=1 instead for Lyrah branding.
+    #
+    # CRITICAL boot parameters:
+    #   selinux=0         - Disable SELinux (filesystem has no labels from ISO build)
+    #   nouveau.modeset=0 - Prevent nouveau DRM hangs on hybrid GPU laptops
+    #   nomodeset         - Safe first boot (software rendering); first-boot.sh
+    #                       removes this after GPU drivers are properly configured
+    #
+    # TEMPORARILY using minimal boot params to diagnose crash - once working,
+    # can re-enable quiet/splash/plymouth for polished boot experience
     cat > "$BLS_FILE" << EOF
 title $PRETTY_NAME ($KVER)
 version $KVER
-linux /vmlinuz-$KVER
-initrd /initramfs-$KVER.img
-options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro quiet rhgb
+linux /boot/vmlinuz-$KVER
+initrd /boot/initramfs-$KVER.img
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 nouveau.modeset=0 nomodeset systemd.log_level=info
 grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
 EOF
     echo "Created BLS entry: $BLS_FILE"
+    echo "  Boot options: ro selinux=0 nouveau.modeset=0 nomodeset systemd.log_level=info (verbose for debugging)"
 
-    # Fill in the root UUID. Try findmnt first, fall back to fstab
-    # (which Calamares's fstab module generates before this step).
-    ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
-    if [ -z "$ROOT_UUID" ] && [ -f /etc/fstab ]; then
+    # Create a DEBUG boot entry that shows all boot messages
+    # This helps diagnose boot failures when the normal entry fails silently
+    BLS_DEBUG_FILE="$BLS_DIR/$BLS_ID-debug.conf"
+    cat > "$BLS_DEBUG_FILE" << DEBUGEOF
+title $PRETTY_NAME ($KVER) - DEBUG MODE
+version $KVER-debug
+linux /boot/vmlinuz-$KVER
+initrd /boot/initramfs-$KVER.img
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 rd.shell rd.debug systemd.log_level=debug systemd.log_target=console console=tty0 earlyprintk=vga,keep loglevel=7 nomodeset
+grub_users \$grub_users
+grub_arg --unrestricted
+grub_class lyrah
+DEBUGEOF
+    echo "Created DEBUG BLS entry: $BLS_DEBUG_FILE"
+
+    # Fill in the root UUID. Use fstab FIRST because findmnt in a
+    # Calamares chroot reads /proc/mounts which shows the HOST's
+    # mount table — returning the CI runner's UUID, not the target's.
+    # Calamares's fstab module writes the correct UUID before this step.
+    ROOT_UUID=""
+    if [ -f /etc/fstab ]; then
         ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/UUID=/, "", $1); print $1}' /etc/fstab)
+    fi
+    if [ -z "$ROOT_UUID" ]; then
+        ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
     fi
     if [ -n "$ROOT_UUID" ]; then
         sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_FILE"
+        sed -i "s/@@ROOT_UUID@@/$ROOT_UUID/" "$BLS_DEBUG_FILE"
         echo "Root UUID: $ROOT_UUID"
     else
         echo "WARNING: Could not determine root UUID — bootloader module will set it"
@@ -181,6 +230,16 @@ GRUBEOF
     fi
 fi
 
-echo "Kernel setup complete. Contents of /boot/:"
+echo "=== Kernel setup complete ==="
+echo "Contents of /boot/:"
 ls -lh /boot/vmlinuz-* /boot/initramfs-*.img 2>/dev/null || echo "(no kernel files found)"
-ls "$BLS_DIR"/ 2>/dev/null || echo "(no BLS entries)"
+echo ""
+echo "BLS entries:"
+ls -la "$BLS_DIR"/ 2>/dev/null || echo "(no BLS entries)"
+if [ -f "$BLS_FILE" ]; then
+    echo ""
+    echo "Active BLS entry contents:"
+    cat "$BLS_FILE"
+fi
+echo ""
+echo "Kernel setup complete."

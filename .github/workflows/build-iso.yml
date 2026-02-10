@@ -68,6 +68,8 @@ jobs:
             genisoimage \
             xorriso \
             squashfs-tools \
+            isolinux \
+            dosfstools \
             wget \
             rsync \
             zstd \
@@ -97,12 +99,31 @@ jobs:
           echo "Disk after ISO extraction (rootfs images removed):"
           df -h /
 
+          # List ISO boot infrastructure so we can see what's available.
+          # Fedora 43+ may be UEFI-only (no isolinux directory).
+          echo "=== Extracted ISO directory structure (boot files) ==="
+          echo "--- Top-level directories ---"
+          ls -la iso-build/
+          echo "--- EFI directory ---"
+          find iso-build/EFI -type f 2>/dev/null || echo "(no EFI directory)"
+          echo "--- images directory ---"
+          find iso-build/images -type f 2>/dev/null || echo "(no images directory)"
+          echo "--- isolinux directory ---"
+          find iso-build/isolinux -type f 2>/dev/null || echo "(no isolinux directory)"
+          echo "--- boot directory ---"
+          find iso-build/boot -type f 2>/dev/null || echo "(no boot directory)"
+          echo "--- All .img files ---"
+          find iso-build/ -name "*.img" -type f 2>/dev/null || echo "(no .img files)"
+          echo "--- All .efi files ---"
+          find iso-build/ -name "*.efi" -o -name "*.EFI" 2>/dev/null || echo "(no .efi files)"
+          echo "=== End directory listing ==="
+
           # Detect kernel version from ISO boot area.
           # Phase 2 must install this EXACT version so modules match the
           # vmlinuz that GRUB actually boots. A mismatch means no runtime
           # module loading (no GPU drivers, no network, no sound).
           ISO_KVER=""
-          for vmlinuz_path in iso-build/images/pxeboot/vmlinuz iso-build/isolinux/vmlinuz; do
+          for vmlinuz_path in iso-build/images/pxeboot/vmlinuz iso-build/isolinux/vmlinuz iso-build/boot/x86_64/loader/linux; do
             if [ -f "$vmlinuz_path" ]; then
               ISO_KVER=$(file "$vmlinuz_path" | grep -oP 'version \K\S+' || true)
               if [ -n "$ISO_KVER" ]; then
@@ -116,100 +137,19 @@ jobs:
           fi
           echo "iso_kver=${ISO_KVER}" >> $GITHUB_OUTPUT
 
-      # Replace Fedora Plymouth theme in the boot area initramfs with Lyrah theme.
-      # The live ISO uses the base Fedora initramfs from iso-build/isolinux/ and
-      # iso-build/images/pxeboot/, which has the Fedora theme embedded. This step
-      # extracts the initramfs, replaces the Fedora theme with Lyrah, and repacks it.
-      - name: Customize boot area Plymouth theme
-        run: |
-          set -euo pipefail
-          echo "=== Customizing Plymouth theme in boot initramfs ==="
-
-          # Function to extract, modify, and repack an initramfs
-          customize_initramfs() {
-            local initramfs_path="$1"
-
-            if [ ! -f "$initramfs_path" ]; then
-              echo "WARN: $initramfs_path not found, skipping"
-              return 0
-            fi
-
-            echo "Processing: $initramfs_path"
-
-            # Create temporary directory for extraction
-            local work_dir=$(mktemp -d)
-            cd "$work_dir"
-
-            # Detect compression and extract.
-            # Fedora 43+ commonly uses zstd-compressed initramfs; if we don't
-            # handle that format, Fedora branding stays in place.
-            initramfs_file_info=$(file "$initramfs_path")
-            if echo "$initramfs_file_info" | grep -qi "zstd"; then
-              echo "  Detected zstd compression"
-              zstd -dc "$initramfs_path" | cpio -idm --quiet
-            elif echo "$initramfs_file_info" | grep -qi "gzip"; then
-              echo "  Detected gzip compression"
-              gunzip -c "$initramfs_path" | cpio -idm --quiet
-            elif echo "$initramfs_file_info" | grep -qi "XZ"; then
-              echo "  Detected XZ compression"
-              xz -dc "$initramfs_path" | cpio -idm --quiet
-            elif echo "$initramfs_file_info" | grep -qi "LZ4"; then
-              echo "  Detected LZ4 compression"
-              lz4 -dc "$initramfs_path" | cpio -idm --quiet
-            else
-              echo "  Extracting as plain cpio"
-              cpio -idm --quiet < "$initramfs_path"
-            fi
-
-            # Check if Plymouth theme directory exists
-            if [ -d usr/share/plymouth/themes ]; then
-              echo "  Found Plymouth themes directory"
-
-              # Remove Fedora themes
-              sudo rm -rf usr/share/plymouth/themes/fedora* usr/share/plymouth/themes/spinner 2>/dev/null || true
-              echo "  Removed Fedora themes"
-
-              # Add Lyrah theme
-              mkdir -p usr/share/plymouth/themes/lyrah
-              cp -r "${GITHUB_WORKSPACE}/themes/plymouth/lyrah/"* usr/share/plymouth/themes/lyrah/
-              echo "  Added Lyrah theme"
-
-              # Update plymouthd.conf if it exists
-              if [ -f etc/plymouth/plymouthd.conf ]; then
-                sed -i 's/^Theme=.*/Theme=lyrah/' etc/plymouth/plymouthd.conf
-                echo "  Updated plymouthd.conf to use Lyrah theme"
-              else
-                # Create config if it doesn't exist
-                mkdir -p etc/plymouth
-                echo "[Daemon]" > etc/plymouth/plymouthd.conf
-                echo "Theme=lyrah" >> etc/plymouth/plymouthd.conf
-                echo "  Created plymouthd.conf with Lyrah theme"
-              fi
-            else
-              echo "  WARN: No Plymouth themes directory found in initramfs"
-            fi
-
-            # Repack the initramfs (using gzip compression like Fedora does)
-            echo "  Repacking initramfs..."
-            find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | gzip -9 > "${work_dir}/initramfs.new"
-
-            # Replace original
-            sudo cp "${work_dir}/initramfs.new" "$initramfs_path"
-            echo "  Replaced $initramfs_path"
-
-            # Cleanup
-            cd /
-            rm -rf "$work_dir"
-            echo "  Done processing $initramfs_path"
-          }
-
-          # Process BIOS/isolinux initramfs
-          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/isolinux/initrd.img"
-
-          # Process PXE boot initramfs if it exists
-          customize_initramfs "${GITHUB_WORKSPACE}/iso-build/images/pxeboot/initrd.img"
-
-          echo "=== Plymouth theme customization complete ==="
+      # NOTE: Plymouth theme customization is handled later in the "Sync ISO boot
+      # kernel with installed modules" step (after rootfs build). That step:
+      #   1. Finds the actual boot kernel location dynamically
+      #   2. Regenerates initramfs with dracut (includes correct modules)
+      #   3. Applies Lyrah Plymouth theme to the new initramfs
+      #
+      # We do NOT customize the base ISO's initramfs here because:
+      #   - Fedora 43 KDE (UEFI-focused) may not have isolinux/initrd.img
+      #   - The live boot initramfs must match the installed kernel modules
+      #   - Early modification can cause compression/corruption issues
+      #
+      # Plymouth theme for the live session is also set via plymouthd.conf
+      # in the squashfs (see "Stage Lyrah OS files" step).
 
       # Swap must be expanded BEFORE rootfs build — the default runner swap
       # (3GB) is not enough for dnf dependency resolution of large package sets.
@@ -243,6 +183,13 @@ jobs:
       #
       # Phase 1: Install everything EXCEPT kernel* to keep peak memory low.
       # Phase 2: Install kernel in a separate pass after phase 1 memory is freed.
+      #
+      # EXPECTED WARNINGS: You will see RPM scriptlet warnings like:
+      #   "/proc/ is not mounted. This is not a supported mode of operation."
+      #   "Running in chroot, ignoring command 'start'"
+      # These are HARMLESS - dnf --installroot creates a filesystem tree, not
+      # a running system. Scriptlets detect this and skip operations that need
+      # a live system. We mount /proc/ later before the actual configuration chroot.
       - name: Build rootfs (phase 1 - base system, no kernel)
         run: |
           set -euo pipefail
@@ -274,6 +221,11 @@ jobs:
                 https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${{ env.FEDORA_VERSION }}.noarch.rpm \
                 https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${{ env.FEDORA_VERSION }}.noarch.rpm
 
+              # Add Brave browser repo
+              dnf install -y dnf-plugins-core
+              dnf config-manager addrepo --from-repofile=https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo
+              rpm --import https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+
               dnf install -y \
                 --installroot=/rootfs \
                 --use-host-config \
@@ -288,9 +240,11 @@ jobs:
                 --exclude=kernel-devel \
                 --exclude=kernel-debug* \
                 --exclude=virtualbox-guest-additions* \
+                --exclude=dolphin \
                 filesystem \
                 setup \
                 @kde-desktop-environment \
+                thunar \
                 NetworkManager \
                 NetworkManager-wifi \
                 wpa_supplicant \
@@ -307,6 +261,36 @@ jobs:
                 winetricks \
                 protontricks \
                 corectrl \
+                brave-browser \
+                mesa-dri-drivers \
+                mesa-dri-drivers.i686 \
+                mesa-vulkan-drivers \
+                mesa-vulkan-drivers.i686 \
+                mesa-va-drivers \
+                mesa-libEGL \
+                mesa-libGL \
+                mesa-libgbm \
+                mesa-libglapi \
+                libglvnd-egl \
+                libglvnd-glx \
+                libglvnd-gles \
+                libdrm \
+                libva \
+                libva-utils \
+                vulkan-loader \
+                vulkan-loader.i686 \
+                glibc.i686 \
+                alsa-lib.i686 \
+                libXinerama.i686 \
+                xdg-desktop-portal \
+                xdg-desktop-portal-kde \
+                flatpak \
+                plasma-discover-flatpak \
+                plasma-discover-packagekit \
+                PackageKit \
+                polkit \
+                polkit-kde-agent-1 \
+                appstream-data \
                 logrotate \
                 grub2-efi-x64 \
                 grub2-efi-x64-modules \
@@ -314,6 +298,7 @@ jobs:
                 shim-x64 \
                 plymouth \
                 dracut \
+                dracut-live \
                 systemd \
                 dnf \
                 passwd \
@@ -361,6 +346,14 @@ jobs:
           # Pin to the ISO's kernel version so modules match the vmlinuz
           # that GRUB actually boots. A version mismatch means modprobe
           # can't find modules at runtime (no GPU, no network, no sound).
+          #
+          # SKIP RPM SCRIPTLETS: We add tsflags=noscripts to prevent kernel-install
+          # scriptlets from running. These scriptlets try to run grub2-probe and
+          # dracut, which fail because /proc/, /sys/, /dev/ are not mounted in the
+          # --installroot environment. We don't need these scriptlets because:
+          #   1. Boot infrastructure comes from the base Fedora ISO
+          #   2. We regenerate initramfs later with dracut (in "Sync ISO boot kernel")
+          #   3. We manually run depmod below (only essential operation)
           ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
           KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core"
           if [ -n "$ISO_KVER" ]; then
@@ -385,6 +378,7 @@ jobs:
                 --releasever=${{ env.FEDORA_VERSION }} \
                 --setopt=install_weak_deps=False \
                 --setopt=max_parallel_downloads=2 \
+                --setopt=tsflags=noscripts \
                 $KERNEL_PKGS
 
               dnf clean all --installroot=/rootfs
@@ -394,6 +388,14 @@ jobs:
                 echo 'FATAL: No kernel modules found after dnf install'
                 exit 1
               }
+
+              # Run depmod to ensure modprobe can find all modules.
+              # This is the only essential operation from the RPM scriptlets.
+              INSTALLED_KVER=\$(ls /rootfs/lib/modules/ | sort -V | tail -1)
+              if [ -n \"\$INSTALLED_KVER\" ]; then
+                chroot /rootfs depmod \"\$INSTALLED_KVER\" 2>&1 || echo 'WARN: depmod failed'
+                echo \"Ran depmod for kernel \$INSTALLED_KVER\"
+              fi
             "
 
           echo "Phase 2 complete. Rootfs size: $(sudo du -sh squashfs-root/ | cut -f1)"
@@ -542,45 +544,102 @@ jobs:
           sudo mkdir -p squashfs-root/usr/share/lyrah/setup
           sudo cp scripts/first-boot.sh squashfs-root/usr/share/lyrah/setup/
           sudo cp scripts/configure-gpu.sh squashfs-root/usr/share/lyrah/setup/
+          sudo cp scripts/detect-primary-gpu.sh squashfs-root/usr/share/lyrah/setup/
+          sudo cp scripts/lyrah-kwin-wrapper.sh squashfs-root/usr/share/lyrah/setup/
           sudo chmod +x squashfs-root/usr/share/lyrah/setup/*.sh
 
           sudo mkdir -p squashfs-root/usr/bin
           sudo cp scripts/luna-session squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-desktop-session squashfs-root/usr/bin/
           sudo cp scripts/lyrah-installer-session squashfs-root/usr/bin/
           sudo cp scripts/lyrah-switch-mode squashfs-root/usr/bin/
           sudo cp scripts/lyrah-configure-autologin squashfs-root/usr/bin/
           sudo cp scripts/lyrah-update squashfs-root/usr/bin/
           sudo cp scripts/lyrah-upload-log squashfs-root/usr/bin/
           sudo cp scripts/lyrah-crash-monitor squashfs-root/usr/bin/
+          sudo cp scripts/lyrah-boot-logger squashfs-root/usr/bin/
           sudo chmod +x squashfs-root/usr/bin/luna-session squashfs-root/usr/bin/lyrah-*
 
           # Installer session .desktop (SDDM can select this as a session)
           sudo cp installer/lyrah-installer.desktop squashfs-root/usr/share/wayland-sessions/
 
+          # Set Thunar as default file manager (replacing Dolphin)
+          sudo mkdir -p squashfs-root/etc/skel/.config
+          sudo tee squashfs-root/etc/skel/.config/mimeapps.list > /dev/null << 'MIME_EOF'
+          [Default Applications]
+          inode/directory=thunar.desktop
+          MIME_EOF
+          # Also set system-wide default
+          sudo mkdir -p squashfs-root/usr/share/applications
+          sudo tee squashfs-root/usr/share/applications/mimeapps.list > /dev/null << 'MIME_EOF'
+          [Default Applications]
+          inode/directory=thunar.desktop
+          MIME_EOF
+
           # Systemd units
           sudo cp system/*.service system/*.timer squashfs-root/etc/systemd/system/ 2>/dev/null || true
 
-          # Remove Fedora EFI files from rootfs.
-          # The grub2-efi-x64 and shim-x64 RPMs install a GRUB binary and
-          # redirect grub.cfg into /boot/efi/EFI/fedora/. If these ship in
-          # the squashfs, Calamares copies them to the real ESP and the
-          # firmware shows a duplicate "Fedora" boot entry with stale UUIDs
-          # that either hangs at a GRUB shell or fails to find the kernel.
-          # Calamares's bootloader module re-installs GRUB properly via
-          # grub2-install, so these pre-packaged files are never needed.
+          # Save signed EFI binaries from the grub2-efi-x64 and shim-x64
+          # RPMs. These are the Fedora-signed grubx64.efi and shimx64.efi
+          # that work with Secure Boot. We save them to a non-EFI location
+          # so our install-bootloader.sh can use them during installation
+          # (grub2-install may fail inside the Calamares chroot, and its
+          # output is unsigned anyway).
+          sudo mkdir -p squashfs-root/usr/share/lyrah/efi-binaries
+          for efi_bin in grubx64.efi shimx64.efi shimx64-fedora.efi mmx64.efi; do
+            if [ -f "squashfs-root/boot/efi/EFI/fedora/$efi_bin" ]; then
+              sudo cp "squashfs-root/boot/efi/EFI/fedora/$efi_bin" squashfs-root/usr/share/lyrah/efi-binaries/
+              echo "Saved $efi_bin for bootloader installation"
+            fi
+          done
+          # Now remove the Fedora EFI directory. If these ship in the
+          # squashfs, Calamares copies them to the real ESP and the firmware
+          # shows a duplicate "Fedora" boot entry with stale UUIDs.
           sudo rm -rf squashfs-root/boot/efi/EFI/fedora
           echo "Removed stale Fedora EFI directory from rootfs"
+
+          # Verify EFI binaries were actually saved — if not, the installed
+          # system won't be bootable. Also check alternate RPM install locations.
+          if [ ! -f "squashfs-root/usr/share/lyrah/efi-binaries/grubx64.efi" ]; then
+            echo "WARN: grubx64.efi not found at /boot/efi/EFI/fedora/"
+            echo "Searching for grubx64.efi in alternate locations..."
+            # Fedora may install the signed binary elsewhere
+            for alt_path in \
+              "squashfs-root/usr/lib/grub/x86_64-efi/grubx64.efi" \
+              "squashfs-root/boot/efi/EFI/BOOT/grubx64.efi"; do
+              if [ -f "$alt_path" ]; then
+                sudo cp "$alt_path" squashfs-root/usr/share/lyrah/efi-binaries/grubx64.efi
+                echo "Found and saved grubx64.efi from $alt_path"
+                break
+              fi
+            done
+            # Last resort: build one from GRUB modules if available
+            if [ ! -f "squashfs-root/usr/share/lyrah/efi-binaries/grubx64.efi" ]; then
+              echo "WARN: No prebuilt grubx64.efi found — install-bootloader.sh will try grub2-mkimage at install time"
+            fi
+          fi
+          echo "=== EFI binaries in squashfs ==="
+          ls -la squashfs-root/usr/share/lyrah/efi-binaries/ 2>/dev/null || echo "  (none saved!)"
 
           # Post-install scripts for Calamares shellprocess
           sudo mkdir -p squashfs-root/usr/share/lyrah/installer
           sudo cp installer/scripts/post-install.sh squashfs-root/usr/share/lyrah/installer/
           sudo cp installer/scripts/configure-session.sh squashfs-root/usr/share/lyrah/installer/
           sudo cp installer/scripts/setup-kernel.sh squashfs-root/usr/share/lyrah/installer/
+          sudo cp installer/scripts/install-bootloader.sh squashfs-root/usr/share/lyrah/installer/
           sudo chmod +x squashfs-root/usr/share/lyrah/installer/*.sh
 
-          # Wine env config
+          # Wine env config + GPU detection for hybrid laptops
           sudo mkdir -p squashfs-root/etc/profile.d
           sudo cp configs/common/lyrah-wine.sh squashfs-root/etc/profile.d/
+          sudo cp configs/common/lyrah-gpu-env.sh squashfs-root/etc/profile.d/
+
+          # Brave browser: enable GPU acceleration and Wayland native rendering.
+          # Without these flags Brave falls back to software rendering (CPU)
+          # causing page load lag/freezes. Brave reads ~/.config/brave-flags.conf
+          # on startup; placing it in /etc/skel gives every new user the defaults.
+          sudo mkdir -p squashfs-root/etc/skel/.config
+          sudo cp configs/common/brave-flags.conf squashfs-root/etc/skel/.config/brave-flags.conf
 
           # Logrotate
           sudo mkdir -p squashfs-root/etc/logrotate.d
@@ -719,6 +778,11 @@ jobs:
           systemctl set-default graphical.target 2>/dev/null || \
             ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target 2>/dev/null || true
 
+          # Add Flathub remote so Discover has apps to install.
+          # --if-not-exists avoids failure if Fedora's flatpak package
+          # already ships the remote.
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+
           # Create log directories
           mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}
 
@@ -801,6 +865,230 @@ jobs:
           sudo umount squashfs-root/proc
           sudo rm squashfs-root/customize.sh
 
+      - name: Sync ISO boot kernel with installed modules
+        run: |
+          set -euo pipefail
+          echo "=== Syncing ISO boot kernel with installed kernel modules ==="
+
+          # The base Fedora ISO ships kernel X, but our Phase 2 may have
+          # installed kernel Y (if X is no longer in the repos). When the
+          # ISO boots with kernel X but modules are for Y, NOTHING works:
+          # no vfat (can't mount ESP), no GPU drivers, no network, etc.
+          #
+          # Fix: replace the ISO's vmlinuz and initramfs with the version
+          # that matches the modules we installed.
+
+          # Find vmlinuz in the ISO boot area — Fedora puts it at different
+          # paths depending on the variant (BIOS, UEFI-only, etc.)
+          ISO_BOOT_VMLINUZ=""
+          ISO_BOOT_INITRD=""
+          ISO_KVER=""
+
+          echo "Searching for kernel in ISO boot area..."
+          for candidate in \
+            iso-build/images/pxeboot/vmlinuz \
+            iso-build/isolinux/vmlinuz \
+            iso-build/boot/vmlinuz \
+            iso-build/boot/x86_64/loader/linux; do
+            if [ -f "$candidate" ]; then
+              ISO_BOOT_VMLINUZ="$candidate"
+              # Derive initrd path from vmlinuz location (try initrd.img then initrd)
+              CANDIDATE_DIR="$(dirname "$candidate")"
+              if [ -f "$CANDIDATE_DIR/initrd.img" ]; then
+                ISO_BOOT_INITRD="$CANDIDATE_DIR/initrd.img"
+              else
+                ISO_BOOT_INITRD="$CANDIDATE_DIR/initrd"
+              fi
+              ISO_KVER=$(file "$candidate" | grep -oP 'version \K\S+' || true)
+              echo "Found ISO kernel at: $candidate (version: ${ISO_KVER:-unknown})"
+              break
+            fi
+          done
+
+          # Also search dynamically
+          if [ -z "$ISO_BOOT_VMLINUZ" ]; then
+            FOUND=$(find iso-build/ -name "vmlinuz" -type f 2>/dev/null | head -1 || true)
+            if [ -n "$FOUND" ]; then
+              ISO_BOOT_VMLINUZ="$FOUND"
+              ISO_BOOT_INITRD="$(dirname "$FOUND")/initrd.img"
+              ISO_KVER=$(file "$FOUND" | grep -oP 'version \K\S+' || true)
+              echo "Found ISO kernel at: $FOUND (version: ${ISO_KVER:-unknown})"
+            fi
+          fi
+
+          # If no kernel found in ISO at all, determine the correct path from
+          # the GRUB config (the 'linux'/'linuxefi' directive tells us where GRUB expects it)
+          if [ -z "$ISO_BOOT_VMLINUZ" ]; then
+            echo "No kernel found in ISO boot area — checking GRUB config..."
+            GRUB_LINUX_PATH=""
+            for grub_cfg in $(find iso-build/ -name "grub.cfg" -type f 2>/dev/null); do
+              echo "  Checking $grub_cfg..."
+              # Match linux, linuxefi, or linux16 directives
+              # Handle paths like /images/pxeboot/vmlinuz OR ($root)/boot/x86_64/loader/linux
+              GRUB_LINUX_PATH=$(grep -oP '^\s*(linux|linuxefi|linux16)\s+(\(\S+\))?(?=/)\K/\S+' "$grub_cfg" | head -1 || true)
+              if [ -n "$GRUB_LINUX_PATH" ]; then
+                echo "  GRUB config references kernel at: $GRUB_LINUX_PATH"
+                ISO_BOOT_VMLINUZ="iso-build${GRUB_LINUX_PATH}"
+                # Match corresponding initrd/initrdefi
+                GRUB_INITRD_PATH=$(grep -oP '^\s*(initrd|initrdefi|initrd16)\s+(\(\S+\))?(?=/)\K/\S+' "$grub_cfg" | head -1 || true)
+                if [ -n "$GRUB_INITRD_PATH" ]; then
+                  ISO_BOOT_INITRD="iso-build${GRUB_INITRD_PATH}"
+                else
+                  ISO_BOOT_INITRD="$(dirname "$ISO_BOOT_VMLINUZ")/initrd"
+                fi
+                break
+              else
+                echo "  No linux/linuxefi directive found in $grub_cfg"
+                # Debug: show what the grub.cfg actually contains
+                grep -i 'linux\|vmlinuz' "$grub_cfg" | head -5 || true
+              fi
+            done
+          fi
+
+          # Last resort: use images/pxeboot/ as the standard Fedora path
+          if [ -z "$ISO_BOOT_VMLINUZ" ]; then
+            echo "Could not determine kernel path — using default images/pxeboot/"
+            ISO_BOOT_VMLINUZ="iso-build/images/pxeboot/vmlinuz"
+            ISO_BOOT_INITRD="iso-build/images/pxeboot/initrd.img"
+          fi
+
+          echo "Boot kernel path: $ISO_BOOT_VMLINUZ"
+          echo "Boot initrd path: $ISO_BOOT_INITRD"
+
+          # Detect the installed kernel version in the squashfs
+          INSTALLED_KVER=$(ls squashfs-root/lib/modules/ 2>/dev/null | sort -V | tail -1)
+          if [ -z "$INSTALLED_KVER" ]; then
+            echo "FATAL: No kernel modules found in squashfs-root/lib/modules/"
+            exit 1
+          fi
+          echo "Installed kernel modules: $INSTALLED_KVER"
+
+          # Check if ISO boot kernel needs replacement
+          REPLACE_KERNEL=false
+          if [ -n "$ISO_KVER" ] && [ "$ISO_KVER" = "$INSTALLED_KVER" ]; then
+            echo "Kernel versions match ($INSTALLED_KVER) — keeping ISO boot kernel"
+          else
+            echo "KERNEL VERSION MISMATCH: ISO=${ISO_KVER:-none} vs modules=$INSTALLED_KVER"
+            echo "Will replace ISO boot kernel"
+            REPLACE_KERNEL=true
+          fi
+
+          # ALWAYS regenerate initramfs regardless of kernel version match.
+          # The base Fedora ISO's initramfs lacks dmsquash-live module needed
+          # for live boot. Phase 2 uses tsflags=noscripts (no initramfs from RPM),
+          # so we MUST generate it here.
+          echo "Generating live initramfs for kernel $INSTALLED_KVER..."
+
+          # Ensure the target directory exists
+          sudo mkdir -p "$(dirname "$ISO_BOOT_VMLINUZ")"
+
+          # Step 1: Copy vmlinuz to ISO boot area (if version mismatch)
+          if [ "$REPLACE_KERNEL" = true ]; then
+            VMLINUZ_SRC="squashfs-root/lib/modules/$INSTALLED_KVER/vmlinuz"
+            if [ -f "$VMLINUZ_SRC" ]; then
+              sudo cp "$VMLINUZ_SRC" "$ISO_BOOT_VMLINUZ"
+              echo "Copied vmlinuz from $VMLINUZ_SRC"
+            else
+              # Try alternate location
+              VMLINUZ_SRC="squashfs-root/boot/vmlinuz-$INSTALLED_KVER"
+              if [ -f "$VMLINUZ_SRC" ]; then
+                sudo cp "$VMLINUZ_SRC" "$ISO_BOOT_VMLINUZ"
+                echo "Copied vmlinuz from $VMLINUZ_SRC"
+              else
+                echo "FATAL: vmlinuz not found for kernel $INSTALLED_KVER"
+                find squashfs-root/ -name "vmlinuz*" 2>/dev/null || true
+                exit 1
+              fi
+            fi
+          else
+            echo "Keeping ISO boot kernel (versions match)"
+          fi
+
+          # Step 2: Generate a live-boot initramfs with dracut
+          # The initramfs must include dmsquash-live (for booting from squashfs)
+          # and the kernel modules for the installed version.
+
+          # Mount required filesystems for chroot dracut
+          sudo mount --bind /proc squashfs-root/proc
+          sudo mount --bind /sys squashfs-root/sys
+          sudo mount --bind /dev squashfs-root/dev
+
+          # Run depmod to ensure module dependency DB is current
+          sudo chroot squashfs-root depmod "$INSTALLED_KVER" 2>&1 || echo "WARN: depmod failed"
+
+          # Generate live initramfs
+          sudo chroot squashfs-root dracut \
+            --force \
+            --no-hostonly \
+            --add "dmsquash-live" \
+            --omit "livenet" \
+            --kver "$INSTALLED_KVER" \
+            /tmp/initramfs-live.img 2>&1
+
+          # Unmount chroot filesystems
+          sudo umount squashfs-root/dev 2>/dev/null || true
+          sudo umount squashfs-root/sys 2>/dev/null || true
+          sudo umount squashfs-root/proc 2>/dev/null || true
+
+          if [ -f squashfs-root/tmp/initramfs-live.img ]; then
+            sudo cp squashfs-root/tmp/initramfs-live.img "$ISO_BOOT_INITRD"
+            sudo chmod a+r "$ISO_BOOT_INITRD"
+            sudo rm -f squashfs-root/tmp/initramfs-live.img
+            echo "Generated and installed new live initramfs"
+          else
+            echo "FATAL: dracut did not produce initramfs-live.img"
+            exit 1
+          fi
+
+          # Step 3: Apply Plymouth theme to the new initramfs
+          # The dracut-generated initramfs includes whatever Plymouth theme
+          # is in the squashfs. Verify the Lyrah theme is present.
+          echo "Verifying Plymouth theme in new initramfs..."
+          WORK_DIR=$(mktemp -d)
+          cd "$WORK_DIR"
+          initramfs_info=$(file "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD")
+          if echo "$initramfs_info" | grep -qi "zstd"; then
+            zstd -dc "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" | cpio -idm --quiet 2>/dev/null || true
+          elif echo "$initramfs_info" | grep -qi "gzip"; then
+            gunzip -c "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" | cpio -idm --quiet 2>/dev/null || true
+          else
+            cpio -idm --quiet < "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD" 2>/dev/null || true
+          fi
+
+          if [ -d usr/share/plymouth/themes ]; then
+            # Ensure Lyrah theme is present
+            if [ ! -d usr/share/plymouth/themes/lyrah ]; then
+              echo "Adding Lyrah Plymouth theme to initramfs..."
+              mkdir -p usr/share/plymouth/themes/lyrah
+              cp -r "${GITHUB_WORKSPACE}/themes/plymouth/lyrah/"* usr/share/plymouth/themes/lyrah/
+            fi
+            # Set as default theme
+            mkdir -p etc/plymouth
+            echo -e "[Daemon]\nTheme=lyrah" > etc/plymouth/plymouthd.conf
+            # Remove Fedora themes
+            rm -rf usr/share/plymouth/themes/fedora* usr/share/plymouth/themes/spinner 2>/dev/null || true
+
+            # Repack with same compression dracut used
+            echo "Repacking initramfs with Plymouth theme..."
+            if echo "$initramfs_info" | grep -qi "zstd"; then
+              find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | zstd -19 -T0 > "${WORK_DIR}/initramfs.new"
+            else
+              find . -print0 | cpio -0 -o -H newc --quiet 2>/dev/null | gzip -9 > "${WORK_DIR}/initramfs.new"
+            fi
+            sudo cp "${WORK_DIR}/initramfs.new" "$GITHUB_WORKSPACE/$ISO_BOOT_INITRD"
+            echo "Plymouth theme applied to initramfs"
+          fi
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$WORK_DIR"
+
+          # Verify the boot kernel and initramfs
+          BOOT_KVER=$(file "$ISO_BOOT_VMLINUZ" | grep -oP 'version \K\S+' || true)
+          echo "ISO boot kernel version: $BOOT_KVER"
+          echo "Initramfs size: $(du -sh "$ISO_BOOT_INITRD" | cut -f1)"
+          echo "Initramfs generated for kernel: $INSTALLED_KVER"
+
+          echo "=== Boot kernel sync complete ==="
+
       - name: Repack rootfs into SquashFS
         run: |
           echo "Repacking rootfs into SquashFS..."
@@ -812,7 +1100,10 @@ jobs:
 
           # Create SquashFS directly from squashfs-root/ directory.
           # mksquashfs reads and compresses in streaming fashion - no intermediate copy needed.
-          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp xz -b 1M -xattrs
+          # Use zstd instead of xz: ~10x faster decompression with comparable ratio.
+          # The entire OS runs from this SquashFS — xz's slow decompression caused
+          # visible lag on every library/driver load (mouse stuttering, UI delays).
+          sudo mksquashfs squashfs-root "$SQUASHFS_PATH.new" -comp zstd -Xcompression-level 15 -b 256K -xattrs
 
           # Clean up extracted rootfs and replace old image
           sudo rm -rf squashfs-root
@@ -827,17 +1118,44 @@ jobs:
         run: |
           # Fix permissions on iso-build (EFI directory may be restrictive)
           sudo chmod -R a+rX iso-build/
+
+          # Replace shim with GRUB as the default EFI bootloader.
+          # Fedora ships BOOTX64.EFI as shim (Secure Boot first-stage loader).
+          # On live USB boot, shim detects the device isn't in NVRAM and shows
+          # a blue "Boot Option Restoration" screen every time. This is
+          # disruptive for a live USB experience.
+          # Bypass shim entirely: copy grubx64.efi over BOOTX64.EFI so UEFI
+          # firmware loads GRUB directly. Secure Boot won't work, but live
+          # USBs don't need it — the installed system still uses shim via
+          # Calamares's grub2-install.
+          if [ -f iso-build/EFI/BOOT/grubx64.efi ]; then
+            echo "Replacing shim with GRUB as default EFI bootloader (removes Boot Option Restoration screen)"
+            sudo cp -f iso-build/EFI/BOOT/grubx64.efi iso-build/EFI/BOOT/BOOTX64.EFI
+          fi
           if [ -f iso-build/.discinfo ]; then
             sudo sed -i "s/Fedora/Lyrah OS/g" iso-build/.discinfo
           fi
           find iso-build -name "isolinux.cfg" -o -name "grub.cfg" | while read cfg; do
-            # CRITICAL: Fix CDLABEL to match the ISO volume label set by
-            # xorriso (-V "LyrahOS"). The base Fedora ISO uses something
-            # like CDLABEL=Fedora-KDE-Live-43-1-6. A naive s/Fedora/Lyrah OS/
-            # introduces a SPACE which breaks kernel parameter parsing and
-            # the resulting label doesn't match the actual volume ID anyway.
-            # Fix the label BEFORE the cosmetic rename below.
+            # CRITICAL: Fix ALL volume label references to match the ISO
+            # volume label set by xorriso (-V "LyrahOS").
+            #
+            # Fedora's grub.cfg uses the label in THREE different patterns:
+            #   1. CDLABEL=Fedora-KDE-Live-43-1-6  (kernel command line)
+            #   2. search --set=root -l 'Fedora-KDE-Live-43-1-6'  (find ISO)
+            #   3. set isolabel="Fedora-KDE-Live-43-1-6"  (variable)
+            #
+            # Pattern 2 is what GRUB uses to locate the ISO filesystem for
+            # loading the kernel and initrd. If it doesn't match, GRUB can't
+            # find the kernel → black screen. Pattern 1 is what dracut uses
+            # to find the live squashfs at runtime. If it doesn't match,
+            # dracut can't mount the root → underscore "_" on black screen.
+            #
+            # All three MUST be replaced BEFORE the cosmetic "Fedora → Lyrah OS"
+            # rename, otherwise the label gets a space ("Lyrah OS-KDE-...")
+            # which doesn't match "LyrahOS".
             sudo sed -i -E 's/CDLABEL=[^ "]+/CDLABEL=LyrahOS/g' "$cfg" || true
+            sudo sed -i -E "s/search ([^']*)-l '[^']*'/search \1-l 'LyrahOS'/g" "$cfg" || true
+            sudo sed -i -E 's/set isolabel="[^"]*"/set isolabel="LyrahOS"/g' "$cfg" || true
             # Disable SELinux from the kernel command line. The config-file
             # change above only takes effect after init; selinux=0 disables
             # it immediately so no AVC denials are generated at all.
@@ -845,8 +1163,24 @@ jobs:
             # the squashfs lives — prevents mismatches when the rootfs is
             # built from scratch rather than extracted from the original ISO.
             # Add Plymouth splash parameters for smooth boot experience.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 splash plymouth.enable=1/' "$cfg" || true
-            # Cosmetic: rename Fedora to Lyrah OS in menu entry titles
+            # nomodeset: Disable hardware GPU drivers for the live session.
+            # This forces software rendering (llvmpipe) which works on ALL
+            # hardware. Without it, kwin_wayland fails to initialize on GPUs
+            # with poor open-source driver support (notably newer NVIDIA with
+            # nouveau). The installed system does NOT inherit nomodeset — after
+            # Calamares writes to disk, the system boots with full GPU accel.
+            # UEFI GOP sets native resolution before the kernel, so the
+            # installer still displays at the monitor's native resolution.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 nomodeset splash plymouth.enable=1/' "$cfg" || true
+            # Cosmetic: replace entire menuentry titles with clean Lyrah OS names.
+            # The naive "s/Fedora/Lyrah OS/g" turns "Start Fedora-KDE-Desktop-Live-43-1.6"
+            # into "Start Lyrah OS-KDE-Desktop-Live-43-1.6" — ugly. Instead, replace
+            # the entire title strings with clean names.
+            # Order matters: specific patterns before generic to prevent early matching.
+            sudo sed -i -E "s/menuentry 'Start [^']*basic graphics[^']*'/menuentry 'Start Lyrah OS in basic graphics mode'/g" "$cfg" || true
+            sudo sed -i -E "s/menuentry 'Test this media[^']*'/menuentry 'Test this media \& start Lyrah OS'/g" "$cfg" || true
+            sudo sed -i -E "s/menuentry 'Start Fedora[^']*'/menuentry 'Start Lyrah OS'/g" "$cfg" || true
+            # Catch any remaining "Fedora" references (variables, comments, etc.)
             sudo sed -i "s/Fedora/Lyrah OS/g" "$cfg" || true
           done
 
@@ -896,52 +1230,178 @@ jobs:
           mkdir -p output
           ISO_NAME="Lyrah-OS-${{ steps.variant.outputs.version }}-${{ steps.variant.outputs.variant }}-x86_64.iso"
 
-          # Build xorriso arguments dynamically based on available boot files
+          # Create a hybrid ISO bootable from both CD-ROM and USB (dd/Etcher/Rufus).
+          #
+          # The "appended partition" method (used by Debian, Arch, Ubuntu)
+          # physically places the EFI boot image as a separate GPT partition
+          # AFTER the ISO 9660 data. This is critical for USB compatibility:
+          #
+          #   - The old approach embedded efiboot.img inside the ISO filesystem
+          #     and used -isohybrid-gpt-basdat to create a "virtual" GPT entry
+          #     pointing into the ISO data. Many UEFI firmwares and USB-writing
+          #     tools (Etcher, dd) cannot find this virtual partition — Etcher
+          #     shows "no map" and UEFI firmware drops to shell.
+          #
+          #   - The appended partition method creates a REAL, physically separate
+          #     GPT partition that every UEFI firmware can discover. After dd to
+          #     USB, the drive has: [MBR] [ISO9660 data] [EFI System Partition]
+          #     with proper MBR and GPT partition tables.
+          #
+          # Key xorriso flags:
+          #   -isohybrid-mbr      Embed MBR boot code (from isohdpfx.bin) so BIOS
+          #                       firmware can boot after raw dd write
+          #   -partition_offset 16 Shift ISO data by 16 sectors (32KB) to leave
+          #                       room for GPT header and partition entries
+          #   -append_partition 2  Append efiboot.img as GPT partition 2 with
+          #                       EFI System Partition type GUID
+          #   --interval:appended_partition_2  Tell El Torito to reference the
+          #                       appended partition for EFI boot catalog entry
+          #   -isohybrid-gpt-basdat  Create GPT entry for partition 1 (ISO data)
+
+          ISOHDPFX="/usr/lib/ISOLINUX/isohdpfx.bin"
+
+          # Search for efiboot.img at all common Fedora paths.
+          # Fedora 43+ may place it in different locations depending on
+          # whether the ISO is UEFI-only or dual-boot.
+          EFI_IMG=""
+          for efi_path in \
+            iso-build/images/efiboot.img \
+            iso-build/boot/images/efiboot.img \
+            iso-build/EFI/BOOT/efiboot.img \
+            iso-build/images/macboot.img \
+          ; do
+            if [ -f "$efi_path" ]; then
+              cp "$efi_path" efiboot.img
+              EFI_IMG="efiboot.img"
+              echo "Found EFI boot image at $efi_path ($(ls -lh efiboot.img | awk '{print $5}'))"
+              break
+            fi
+          done
+
+          # If no standalone efiboot.img, try to extract one from the EFI
+          # directory. Fedora 43 UEFI-only ISOs may not ship a separate
+          # efiboot.img file — instead the EFI binaries live directly in
+          # the ISO's /EFI/BOOT/ directory. In that case, create an
+          # efiboot.img (FAT12/16 image) from those EFI binaries.
+          if [ -z "$EFI_IMG" ] && [ -d iso-build/EFI ]; then
+            echo "No efiboot.img found — creating one from EFI directory..."
+            # Calculate size needed (EFI dir + padding)
+            EFI_SIZE_KB=$(du -skL iso-build/EFI | cut -f1)
+            # Add 512KB padding for FAT overhead, round up to nearest 1MB
+            IMG_SIZE_KB=$(( (EFI_SIZE_KB + 512 + 1023) / 1024 * 1024 ))
+            [ "$IMG_SIZE_KB" -lt 4096 ] && IMG_SIZE_KB=4096
+            echo "Creating ${IMG_SIZE_KB}KB FAT image for EFI boot..."
+            dd if=/dev/zero of=efiboot.img bs=1K count="$IMG_SIZE_KB" 2>/dev/null
+            mkfs.vfat efiboot.img
+            MOUNT_DIR=$(mktemp -d)
+            sudo mount -o loop efiboot.img "$MOUNT_DIR"
+            # Fedora's EFI directory often has symlinks where e.g.
+            # bootx64.efi -> shimx64.efi. The FAT filesystem is
+            # case-insensitive, so BOOTX64.EFI and bootx64.efi collide.
+            # Dereference symlinks (-L) and skip files that already exist
+            # on the case-insensitive FAT target (--no-clobber).
+            sudo cp -rL --no-clobber iso-build/EFI "$MOUNT_DIR/" 2>/dev/null || true
+            echo "EFI image contents:"
+            ls -laR "$MOUNT_DIR/EFI/" 2>/dev/null || true
+            sudo umount "$MOUNT_DIR"
+            rmdir "$MOUNT_DIR"
+            EFI_IMG="efiboot.img"
+            echo "Created efiboot.img ($(ls -lh efiboot.img | awk '{print $5}'))"
+          fi
+
+          if [ -z "$EFI_IMG" ]; then
+            echo "FATAL: No EFI boot image found and no EFI directory to create one from"
+            echo "Contents of iso-build/:"
+            find iso-build/ -maxdepth 3 -type f | head -50
+            exit 1
+          fi
+
           XORRISO_ARGS=(
             -o "output/$ISO_NAME"
             -V "LyrahOS"
             -J -joliet-long -r
+            -partition_offset 16
           )
 
-          # Check for BIOS boot (isolinux) — not present in newer UEFI-only Fedora ISOs
-          if [ -f iso-build/isolinux/isolinux.bin ]; then
-            echo "Found isolinux — enabling BIOS boot"
+          # BIOS + UEFI hybrid: isolinux available (older Fedora / dual-boot ISOs)
+          # -isohybrid-mbr embeds MBR boot code from isohdpfx.bin for BIOS USB boot.
+          # It REQUIRES an isolinux El Torito entry to patch — cannot be used alone.
+          if [ -f iso-build/isolinux/isolinux.bin ] && [ -f "$ISOHDPFX" ]; then
+            echo "Found isolinux — enabling BIOS + UEFI hybrid boot"
             XORRISO_ARGS+=(
+              -isohybrid-mbr "$ISOHDPFX"
               -b isolinux/isolinux.bin
               -c isolinux/boot.cat
               -no-emul-boot
               -boot-load-size 4
               -boot-info-table
+              -eltorito-alt-boot
             )
-            HAS_BIOS=true
           else
-            echo "No isolinux found — BIOS boot disabled"
-            HAS_BIOS=false
+            # UEFI-only hybrid: no isolinux (Fedora 43+ KDE)
+            # --mbr-force-bootable creates a minimal MBR with the bootable flag
+            # set, without needing isohdpfx.bin or isolinux. This gives USB
+            # tools (Etcher, Rufus) a valid MBR to recognize.
+            echo "No isolinux — enabling UEFI-only hybrid boot"
+            XORRISO_ARGS+=(--mbr-force-bootable)
           fi
 
-          # Check for UEFI boot
-          if [ -f iso-build/images/efiboot.img ]; then
-            echo "Found efiboot.img — enabling UEFI boot"
-            if [ "$HAS_BIOS" = "true" ]; then
-              XORRISO_ARGS+=(-eltorito-alt-boot)
-            fi
-            XORRISO_ARGS+=(
-              -e images/efiboot.img
-              -no-emul-boot
-              -isohybrid-gpt-basdat
-            )
-          else
-            echo "WARNING: No efiboot.img found — UEFI boot disabled"
-          fi
+          # Append EFI System Partition as a real GPT partition after the ISO data.
+          XORRISO_ARGS+=(
+            -e --interval:appended_partition_2:all::
+            -no-emul-boot
+            -isohybrid-gpt-basdat
+            -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B "$EFI_IMG"
+            -appended_part_as_gpt
+          )
 
           XORRISO_ARGS+=(iso-build/)
 
           echo "Running xorriso with args: ${XORRISO_ARGS[*]}"
           sudo xorriso -as mkisofs "${XORRISO_ARGS[@]}"
 
-          if [ "$HAS_BIOS" = "true" ]; then
-            sudo isohybrid --uefi "output/$ISO_NAME" || echo "isohybrid not available, skipping"
+          # === Partition table diagnostics ===
+          # These help verify the hybrid ISO is correct and diagnose boot issues.
+          echo ""
+          echo "=== ISO Partition Table Diagnostics ==="
+          ISO_PATH="output/$ISO_NAME"
+
+          echo "--- File identification ---"
+          file "$ISO_PATH"
+
+          echo "--- MBR partition table (fdisk) ---"
+          fdisk -l "$ISO_PATH" 2>&1 || true
+
+          echo "--- MBR boot signature ---"
+          MBR_SIG=$(xxd -s 510 -l 2 -p "$ISO_PATH")
+          if [ "$MBR_SIG" = "55aa" ]; then
+            echo "PASS: MBR signature 0x55AA present (BIOS bootable)"
+          else
+            echo "FAIL: MBR signature is 0x${MBR_SIG} (expected 55aa)"
           fi
+
+          echo "--- MBR partition type check ---"
+          # Byte 450 is the partition type of MBR entry 1 (0x00=empty, 0x17=hidden NTFS/ISOhybrid, 0xEF=EFI)
+          MBR_TYPE=$(xxd -s 450 -l 1 -p "$ISO_PATH")
+          echo "MBR partition 1 type: 0x${MBR_TYPE}"
+
+          echo "--- GPT header check ---"
+          # GPT signature "EFI PART" at LBA 1 (offset 512)
+          GPT_SIG=$(xxd -s 512 -l 8 -p "$ISO_PATH")
+          if [ "$GPT_SIG" = "4546492050415254" ]; then
+            echo "PASS: GPT header found (UEFI bootable)"
+          else
+            echo "INFO: No GPT header at LBA 1 (offset 512) — sig: $GPT_SIG"
+            # With -partition_offset 16, GPT may be at sector 1 relative to
+            # the partition offset. Check at 16*2048 + 512.
+            ALT_OFFSET=$((16 * 2048 + 512))
+            ALT_SIG=$(xxd -s $ALT_OFFSET -l 8 -p "$ISO_PATH" 2>/dev/null || echo "")
+            if [ "$ALT_SIG" = "4546492050415254" ]; then
+              echo "PASS: GPT header found at offset $ALT_OFFSET (with partition_offset)"
+            fi
+          fi
+
+          echo "=== End Diagnostics ==="
           ls -lh output/
 
       - name: Verify ISO was created
@@ -998,33 +1458,113 @@ jobs:
           pattern: lyrah-os-*
           merge-multiple: true
 
-      - name: Install QEMU
+      - name: Install QEMU and OVMF
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf
 
-      - name: Test ISO boot
+      # Test 1: CD-ROM boot (BIOS) — original test, verifies isolinux path
+      - name: Test BIOS CD-ROM boot
         run: |
           ISO_FILE=$(ls *.iso | head -1)
-          echo "Testing ISO: $ISO_FILE"
-          touch boot.log
+          echo "Testing BIOS CD-ROM boot: $ISO_FILE"
+          touch bios-cdrom.log
           timeout 90s qemu-system-x86_64 \
             -m 2048 \
             -smp 2 \
             -cdrom "$ISO_FILE" \
             -boot d \
             -display none \
-            -serial file:boot.log \
+            -serial file:bios-cdrom.log \
             2>&1 &
           QEMU_PID=$!
           sleep 60
           if ps -p $QEMU_PID > /dev/null 2>&1; then
-            echo "ISO boots successfully (QEMU still running after 60s)"
+            echo "PASS: BIOS CD-ROM boot — QEMU still running after 60s"
             kill $QEMU_PID 2>/dev/null || true
-            exit 0
           else
-            echo "QEMU exited early (may indicate boot failure)"
-            echo "Boot log:"
-            cat boot.log || echo "No log captured"
+            echo "WARN: BIOS CD-ROM boot — QEMU exited early"
+            cat bios-cdrom.log 2>/dev/null || true
+          fi
+
+      # Test 2: USB-style boot (BIOS) — simulates dd/Etcher write by
+      # booting the raw ISO as a hard drive. This is what fails when
+      # the hybrid MBR is missing or malformed.
+      - name: Test BIOS USB boot (raw drive)
+        run: |
+          ISO_FILE=$(ls *.iso | head -1)
+          echo "Testing BIOS USB boot (raw drive): $ISO_FILE"
+          touch bios-usb.log
+          timeout 90s qemu-system-x86_64 \
+            -m 2048 \
+            -smp 2 \
+            -drive file="$ISO_FILE",format=raw,if=virtio,readonly=on \
+            -display none \
+            -serial file:bios-usb.log \
+            2>&1 &
+          QEMU_PID=$!
+          sleep 60
+          if ps -p $QEMU_PID > /dev/null 2>&1; then
+            echo "PASS: BIOS USB boot — QEMU still running after 60s"
+            kill $QEMU_PID 2>/dev/null || true
+          else
+            echo "WARN: BIOS USB boot — QEMU exited early"
+            cat bios-usb.log 2>/dev/null || true
+          fi
+
+      # Test 3: UEFI boot — uses OVMF firmware to test the EFI boot path.
+      # This verifies that the appended EFI System Partition is correctly
+      # structured and GRUB can load from it.
+      - name: Test UEFI boot
+        run: |
+          ISO_FILE=$(ls *.iso | head -1)
+          echo "Testing UEFI boot: $ISO_FILE"
+
+          # Find OVMF firmware (path varies by distro/version)
+          OVMF=""
+          for path in /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/ovmf/OVMF.fd; do
+            if [ -f "$path" ]; then
+              OVMF="$path"
+              break
+            fi
+          done
+          if [ -z "$OVMF" ]; then
+            echo "SKIP: OVMF firmware not found"
             exit 0
+          fi
+          echo "Using OVMF: $OVMF"
+
+          # Create a writable copy of OVMF vars (QEMU requires rw access)
+          OVMF_VARS=""
+          for vpath in /usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd; do
+            if [ -f "$vpath" ]; then
+              cp "$vpath" /tmp/ovmf_vars.fd
+              OVMF_VARS=/tmp/ovmf_vars.fd
+              break
+            fi
+          done
+
+          touch uefi.log
+          QEMU_UEFI_ARGS=(
+            -m 2048 -smp 2
+            -drive if=pflash,format=raw,readonly=on,file="$OVMF"
+          )
+          if [ -n "$OVMF_VARS" ]; then
+            QEMU_UEFI_ARGS+=(-drive if=pflash,format=raw,file="$OVMF_VARS")
+          fi
+          QEMU_UEFI_ARGS+=(
+            -drive file="$ISO_FILE",format=raw,if=virtio,readonly=on
+            -display none
+            -serial file:uefi.log
+          )
+
+          timeout 90s qemu-system-x86_64 "${QEMU_UEFI_ARGS[@]}" 2>&1 &
+          QEMU_PID=$!
+          sleep 60
+          if ps -p $QEMU_PID > /dev/null 2>&1; then
+            echo "PASS: UEFI boot — QEMU still running after 60s"
+            kill $QEMU_PID 2>/dev/null || true
+          else
+            echo "WARN: UEFI boot — QEMU exited early"
+            cat uefi.log 2>/dev/null || true
           fi

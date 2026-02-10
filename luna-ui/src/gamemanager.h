@@ -20,6 +20,13 @@ public:
     Q_INVOKABLE QVariantList getRecentGames();
     Q_INVOKABLE QVariantList getFavorites();
     Q_INVOKABLE QVariantList search(const QString& query);
+    Q_INVOKABLE void executeCommand(const QString& program, const QStringList& args = {});
+    Q_INVOKABLE bool isSteamAvailable();
+    Q_INVOKABLE bool isSteamInstalled();
+    Q_INVOKABLE void launchSteam();
+    Q_INVOKABLE void launchSteamLogin();
+    Q_INVOKABLE void switchToDesktop();
+    Q_INVOKABLE int getGameCount();
 
 signals:
     void gamesUpdated();

@@ -1,6 +1,9 @@
 #!/bin/bash
 # Post-installation script for Lyrah OS
-set -e
+#
+# NOTE: We intentionally do NOT use "set -e" here. In a Calamares
+# chroot, commands can fail unexpectedly, causing silent script exits.
+# Each step handles its own errors so the remaining steps still run.
 
 echo "=== Lyrah OS Post-Installation ==="
 
@@ -41,6 +44,9 @@ systemctl enable sddm
 systemctl enable NetworkManager
 systemctl enable lyrah-crash-monitor
 systemctl enable lyrah-update.timer
+systemctl enable lyrah-boot-logger
+
+echo "Boot diagnostics logger enabled (logs saved to /var/log/lyrah-boot/)"
 
 # Create log directories
 mkdir -p /var/log/lyrah/{luna-mode,desktop-mode}/{sessions,crashes}

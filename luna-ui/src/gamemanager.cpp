@@ -6,6 +6,10 @@
 #include <QProcess>
 #include <QDebug>
 #include <QVariantMap>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
+#include <QCoreApplication>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -123,4 +127,52 @@ QVariantList GameManager::getFavorites() {
 
 QVariantList GameManager::search(const QString& query) {
     return gamesToVariantList(m_db->searchGames(query));
+}
+
+void GameManager::executeCommand(const QString& program, const QStringList& args) {
+    QProcess::startDetached(program, args);
+}
+
+bool GameManager::isSteamInstalled() {
+    // Check if steam binary exists
+    return !QStandardPaths::findExecutable("steam").isEmpty();
+}
+
+bool GameManager::isSteamAvailable() {
+    // Steam is "available" if the user has logged in (library data exists)
+    return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
+}
+
+void GameManager::launchSteam() {
+    QProcess::startDetached("steam", QStringList());
+}
+
+void GameManager::launchSteamLogin() {
+    // Signal luna-session to launch Steam directly as gamescope's child.
+    // We can't launch Steam from inside luna-ui because gamescope only
+    // manages windows from its direct child process tree. By exiting
+    // luna-ui and letting luna-session run "gamescope -- steam", Steam
+    // gets full window management (just like SteamOS does it).
+    // luna-session will restart luna-ui after Steam exits.
+    QFile signal("/tmp/luna-launch-steam");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
+
+    QCoreApplication::quit();
+}
+
+void GameManager::switchToDesktop() {
+    // Write a signal file that luna-session checks after gamescope exits.
+    // This tells the session script to exit immediately instead of retrying
+    // gamescope (which would restart Luna Mode instead of returning to SDDM).
+    // luna-session also handles killing kwin_wayland in the fallback case.
+    QFile signal("/tmp/luna-switch-to-desktop");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
+
+    QCoreApplication::quit();
+}
+
+int GameManager::getGameCount() {
+    return m_db->getAllGames().size();
 }
