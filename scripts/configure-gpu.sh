@@ -61,6 +61,20 @@ if [ "$DUAL_GPU" -gt 1 ]; then
         dnf copr enable -y asus-linux/supergfxctl 2>/dev/null || true
         dnf install -y supergfxctl || true
         systemctl enable supergfxd || true
+
+        # Blacklist nouveau on hybrid GPU systems. The integrated GPU
+        # (AMD/Intel) handles compositing; nouveau on modern NVIDIA GPUs
+        # causes DRM hangs that freeze the entire display (including VTs).
+        # Proprietary NVIDIA drivers (installed above) replace nouveau
+        # for gaming via PRIME offloading.
+        echo "Blacklisting nouveau (hybrid GPU: iGPU handles display)..."
+        cat > /etc/modprobe.d/lyrah-nouveau-blacklist.conf << 'MODEOF'
+# Lyrah OS: Blacklist nouveau on hybrid GPU systems.
+# The integrated GPU handles compositing; nouveau on modern NVIDIA GPUs
+# can cause DRM hangs. Use proprietary NVIDIA drivers for gaming.
+blacklist nouveau
+options nouveau modeset=0
+MODEOF
     fi
 fi
 
