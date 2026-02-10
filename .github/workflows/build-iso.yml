@@ -282,11 +282,6 @@ jobs:
                 glibc.i686 \
                 alsa-lib.i686 \
                 libXinerama.i686 \
-                akmod-nvidia \
-                xorg-x11-drv-nvidia \
-                xorg-x11-drv-nvidia-libs \
-                xorg-x11-drv-nvidia-libs.i686 \
-                nvidia-gpu-firmware \
                 switcheroo-control \
                 xdg-desktop-portal \
                 xdg-desktop-portal-kde \
@@ -415,6 +410,58 @@ jobs:
           df -h /
           echo "Root entries:"
           ls squashfs-root/ | head -20
+
+      # Install NVIDIA proprietary drivers into rootfs (phase 2.5).
+      # These MUST be installed AFTER phase 2 (kernel + kernel-devel) because
+      # akmod-nvidia → akmods → kernel-devel-uname-r dependency chain.
+      # Phase 1 excludes kernel-devel to avoid pulling in the full kernel
+      # tree, so NVIDIA packages can't resolve there.
+      - name: Install NVIDIA drivers into rootfs (phase 2.5)
+        run: |
+          set -euo pipefail
+          echo "Phase 2.5: Installing NVIDIA proprietary drivers..."
+
+          echo "=== Memory before phase 2.5 ==="
+          free -h
+          echo "==="
+
+          docker run --rm \
+            -v "$(pwd)/squashfs-root:/rootfs" \
+            fedora:${{ env.FEDORA_VERSION }} \
+            bash -c '
+              set -euo pipefail
+
+              # Enable RPM Fusion (needed for akmod-nvidia)
+              dnf install -y \
+                https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${{ env.FEDORA_VERSION }}.noarch.rpm \
+                https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${{ env.FEDORA_VERSION }}.noarch.rpm
+
+              echo "Installing NVIDIA driver packages..."
+              dnf install -y \
+                --installroot=/rootfs \
+                --use-host-config \
+                --releasever=${{ env.FEDORA_VERSION }} \
+                --setopt=install_weak_deps=False \
+                --setopt=max_parallel_downloads=2 \
+                akmod-nvidia \
+                xorg-x11-drv-nvidia \
+                xorg-x11-drv-nvidia-libs \
+                xorg-x11-drv-nvidia-libs.i686 \
+                nvidia-gpu-firmware
+
+              dnf clean all --installroot=/rootfs
+
+              # Verify akmod-nvidia was installed
+              if rpm --root=/rootfs -q akmod-nvidia &>/dev/null; then
+                echo "akmod-nvidia installed successfully"
+              else
+                echo "WARNING: akmod-nvidia not found in rootfs rpm db"
+              fi
+            '
+
+          echo "Phase 2.5 complete."
+          echo "Memory after phase 2.5:"
+          free -h
 
       # Install Calamares in its own container run (phase 3).
       # Previously Calamares was installed inside the phase 1 container,
