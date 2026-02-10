@@ -282,6 +282,12 @@ jobs:
                 glibc.i686 \
                 alsa-lib.i686 \
                 libXinerama.i686 \
+                akmod-nvidia \
+                xorg-x11-drv-nvidia \
+                xorg-x11-drv-nvidia-libs \
+                xorg-x11-drv-nvidia-libs.i686 \
+                nvidia-gpu-firmware \
+                switcheroo-control \
                 xdg-desktop-portal \
                 xdg-desktop-portal-kde \
                 flatpak \
@@ -305,7 +311,9 @@ jobs:
                 sudo \
                 bash \
                 glibc-langpack-en \
-                util-linux
+                util-linux \
+                gcc \
+                make
 
               dnf clean all --installroot=/rootfs
 
@@ -770,6 +778,30 @@ jobs:
           # mismatched initramfs that the bootloader never loads, and
           # kernel-install hooks from dnf may have already written conflicting
           # artifacts into /boot.
+
+          # Pre-compile NVIDIA kernel modules using akmods.
+          # akmod-nvidia was installed in phase 1 and kernel-devel in phase 2.
+          # Running akmods --force now means the NVIDIA driver works on first
+          # boot with zero internet required.
+          INSTALLED_KVER=$(ls /lib/modules/ | sort -V | tail -1)
+          if [ -n "$INSTALLED_KVER" ] && command -v akmods &>/dev/null; then
+            echo "Compiling NVIDIA kernel modules for $INSTALLED_KVER..."
+            akmods --force --kernels "$INSTALLED_KVER" 2>&1 || echo "WARN: akmods failed (non-fatal, will retry on first boot)"
+            # Rebuild module dependency database after akmods
+            depmod "$INSTALLED_KVER" 2>/dev/null || true
+          fi
+
+          # Blacklist nouveau — proprietary NVIDIA driver is pre-installed.
+          # nouveau on modern NVIDIA GPUs causes DRM hangs on hybrid systems.
+          cat > /etc/modprobe.d/lyrah-nouveau-blacklist.conf << 'MODEOF'
+# Lyrah OS: Blacklist nouveau — proprietary NVIDIA drivers are pre-installed.
+# nouveau on modern NVIDIA GPUs can cause DRM hangs on hybrid GPU systems.
+blacklist nouveau
+options nouveau modeset=0
+MODEOF
+
+          # Enable switcheroo-control for hybrid GPU systems
+          systemctl enable switcheroo-control 2>/dev/null || true
 
           # Enable SDDM — systemctl detects chroot and only creates symlinks.
           # Tolerate failure: installroot may not have full systemd paths yet.
