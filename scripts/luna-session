@@ -54,9 +54,20 @@ handle_signals() {
 # $COMPOSITOR is set after detection below.
 run_compositor() {
     if [ "$COMPOSITOR" = "gamescope" ]; then
-        gamescope -- "$@"
+        if [ "$1" = "steam" ]; then
+            # --steam: enables Steam window management integration
+            #   (focus handling for login dialog, overlay, multi-window)
+            # -gamepadui: Big Picture mode designed for gamescope/console
+            gamescope --fullscreen --steam -- steam -gamepadui
+        else
+            gamescope --fullscreen -- "$@"
+        fi
     else
-        QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
+        if [ "$1" = "steam" ]; then
+            QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- steam -gamepadui
+        else
+            QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
+        fi
     fi
 }
 
@@ -66,7 +77,7 @@ run_compositor() {
 COMPOSITOR="gamescope"
 
 echo "luna-session: testing gamescope DRM mode..."
-gamescope -- /usr/bin/luna-ui
+gamescope --fullscreen -- /usr/bin/luna-ui
 rc=$?
 
 # Check signals from the first run
@@ -83,7 +94,7 @@ elif [ $rc -ne 0 ]; then
     # gamescope failed — try one more time after a brief wait
     sleep 2
     echo "luna-session: gamescope retry..."
-    gamescope -- /usr/bin/luna-ui
+    gamescope --fullscreen -- /usr/bin/luna-ui
     rc=$?
     handle_signals
     if [ $? -eq 1 ]; then
