@@ -59,12 +59,17 @@ run_compositor() {
         # startup (bootstrap, update dialog, CEF login) needs a full
         # desktop compositor.
         #
-        # Log to /tmp/ (always writable) — NOT /var/log/ which requires
-        # root. A failed redirect in bash skips the entire command, so
-        # using a non-writable path would prevent kwin from launching.
-        STEAM_LOG="/tmp/lyrah-steam-login-debug.log"
+        # Log directly to $HOME (survives reboot — /tmp/ doesn't).
+        # Verify the file is writable before using it for redirects,
+        # because a failed bash redirect skips the entire command.
+        STEAM_LOG="$HOME/steam-login-debug.log"
+        touch "$STEAM_LOG" 2>/dev/null
+        if [ ! -w "$STEAM_LOG" ]; then
+            STEAM_LOG="/tmp/lyrah-steam-login-debug.log"
+            touch "$STEAM_LOG" 2>/dev/null
+        fi
 
-        # ── Diagnostic header ──
+        # ── Diagnostic header (written + synced BEFORE kwin starts) ──
         {
             echo "========================================="
             echo "LYRAH OS - STEAM LOGIN DIAGNOSTICS"
@@ -125,11 +130,12 @@ run_compositor() {
             ping -c1 -W2 store.steampowered.com >/dev/null 2>&1 && echo "  store.steampowered.com: REACHABLE" || echo "  store.steampowered.com: UNREACHABLE"
             echo ""
             echo "========================================="
-            echo "LAUNCHING: kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
+            echo "LAUNCHING: LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
             echo "Start time: $(date)"
             echo "========================================="
             echo ""
         } > "$STEAM_LOG" 2>/dev/null
+        sync 2>/dev/null  # flush to disk so log survives power-off
 
         echo "luna-session: launching Steam via kwin_wayland (log: $STEAM_LOG)..."
 
@@ -147,14 +153,18 @@ run_compositor() {
                     echo "Xwayland:"
                     ps aux 2>/dev/null | grep -i '[X]wayland' || echo "  (none)"
                 } >> "$STEAM_LOG" 2>/dev/null
+                sync 2>/dev/null  # flush each snapshot to disk
             done
         ) &
         MONITOR_PID=$!
 
         # ── Launch kwin_wayland with Steam ──
-        # Force software OpenGL for Steam — with nomodeset there's no
-        # GPU acceleration, and Steam's CEF browser needs this to render.
-        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
+        # LIBGL_ALWAYS_SOFTWARE=1: with nomodeset there's no GPU, Steam
+        # needs software OpenGL to render.
+        # The redirect is to a verified-writable file, but if it somehow
+        # fails, fall back to running without logging.
+        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1 || \
+        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam
         STEAM_EXIT=$?
 
         # Kill the background monitor
@@ -182,13 +192,9 @@ run_compositor() {
             fi
             echo ""
             echo "========================================="
-            echo "View this log from KDE: cat /tmp/lyrah-steam-login-debug.log"
+            echo "View this log from KDE: cat ~/steam-login-debug.log"
             echo "========================================="
         } >> "$STEAM_LOG" 2>/dev/null
-
-        # Copy to user-accessible locations for KDE Desktop
-        cp "$STEAM_LOG" "$HOME/Desktop/steam-login-debug.log" 2>/dev/null || \
-        cp "$STEAM_LOG" "$HOME/steam-login-debug.log" 2>/dev/null || true
 
         echo "luna-session: Steam exited ($STEAM_EXIT). Log saved to $STEAM_LOG"
     elif [ "$COMPOSITOR" = "gamescope" ]; then
