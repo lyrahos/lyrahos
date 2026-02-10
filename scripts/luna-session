@@ -53,23 +53,29 @@ handle_signals() {
 # ── Compositor wrapper: run a command with the active compositor ──
 # $COMPOSITOR is set after detection below.
 run_compositor() {
-    if [ "$COMPOSITOR" = "gamescope" ]; then
-        if [ "$1" = "steam" ]; then
-            # Do NOT use --steam here. That flag enables SteamOS-specific
-            # window atom filtering that hides windows without STEAM_GAME
-            # atoms — the standard Steam client's login dialog (CEF browser)
-            # doesn't set them, causing a black screen with only cursor.
-            # -bigpicture: fullscreen console-like UI after login
-            gamescope --fullscreen -- steam -bigpicture
-        else
-            gamescope --fullscreen -- "$@"
-        fi
+    if [ "$1" = "steam" ]; then
+        # Always use kwin_wayland for Steam login/setup, even when
+        # gamescope is the primary compositor. Reasons:
+        #
+        # 1. Steam's first-run bootstrap downloads ~350 MB of client
+        #    files, then shows an update dialog, THEN a CEF login
+        #    browser — multiple separate X11 windows. gamescope is
+        #    designed for a single fullscreen app and can't manage
+        #    this multi-window startup without SteamOS-specific
+        #    patches (the --steam flag).
+        #
+        # 2. Don't pass -bigpicture/-gamepadui: Steam can't enter
+        #    Big Picture Mode until its first-run setup completes.
+        #    Let it do the standard login flow first.
+        #
+        # After the user logs in and exits Steam, luna-session
+        # restarts luna-ui in the normal compositor (gamescope).
+        echo "luna-session: launching Steam via kwin_wayland for login..."
+        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam
+    elif [ "$COMPOSITOR" = "gamescope" ]; then
+        gamescope --fullscreen -- "$@"
     else
-        if [ "$1" = "steam" ]; then
-            QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- steam -bigpicture
-        else
-            QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
-        fi
+        QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
     fi
 }
 
