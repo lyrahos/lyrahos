@@ -793,12 +793,12 @@ jobs:
 
           # Blacklist nouveau — proprietary NVIDIA driver is pre-installed.
           # nouveau on modern NVIDIA GPUs causes DRM hangs on hybrid systems.
-          cat > /etc/modprobe.d/lyrah-nouveau-blacklist.conf << 'MODEOF'
-# Lyrah OS: Blacklist nouveau — proprietary NVIDIA drivers are pre-installed.
-# nouveau on modern NVIDIA GPUs can cause DRM hangs on hybrid GPU systems.
-blacklist nouveau
-options nouveau modeset=0
-MODEOF
+          printf '%s\n' \
+            '# Lyrah OS: Blacklist nouveau — proprietary NVIDIA drivers are pre-installed.' \
+            '# nouveau on modern NVIDIA GPUs can cause DRM hangs on hybrid GPU systems.' \
+            'blacklist nouveau' \
+            'options nouveau modeset=0' \
+            > /etc/modprobe.d/lyrah-nouveau-blacklist.conf
 
           # Enable switcheroo-control for hybrid GPU systems
           systemctl enable switcheroo-control 2>/dev/null || true
