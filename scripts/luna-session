@@ -138,6 +138,10 @@ run_compositor() {
         sync 2>/dev/null  # flush to disk so log survives power-off
 
         echo "luna-session: launching Steam via kwin_wayland (log: $STEAM_LOG)..."
+        echo "luna-session: NOTE - Steam first-run downloads ~350 MB and may take several minutes on software rendering."
+
+        # Brief pause to ensure the previous compositor fully released DRM
+        sleep 1
 
         # ── Background monitor: snapshot process state at intervals ──
         (
@@ -161,10 +165,8 @@ run_compositor() {
         # ── Launch kwin_wayland with Steam ──
         # LIBGL_ALWAYS_SOFTWARE=1: with nomodeset there's no GPU, Steam
         # needs software OpenGL to render.
-        # The redirect is to a verified-writable file, but if it somehow
-        # fails, fall back to running without logging.
-        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1 || \
-        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam
+        # The redirect target was already verified writable above.
+        LIBGL_ALWAYS_SOFTWARE=1 kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
         STEAM_EXIT=$?
 
         # Kill the background monitor
