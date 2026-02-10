@@ -55,16 +55,18 @@ handle_signals() {
 run_compositor() {
     if [ "$COMPOSITOR" = "gamescope" ]; then
         if [ "$1" = "steam" ]; then
-            # --steam: enables Steam window management integration
-            #   (focus handling for login dialog, overlay, multi-window)
-            # -gamepadui: Big Picture mode designed for gamescope/console
-            gamescope --fullscreen --steam -- steam -gamepadui
+            # Do NOT use --steam here. That flag enables SteamOS-specific
+            # window atom filtering that hides windows without STEAM_GAME
+            # atoms — the standard Steam client's login dialog (CEF browser)
+            # doesn't set them, causing a black screen with only cursor.
+            # -bigpicture: fullscreen console-like UI after login
+            gamescope --fullscreen -- steam -bigpicture
         else
             gamescope --fullscreen -- "$@"
         fi
     else
         if [ "$1" = "steam" ]; then
-            QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- steam -gamepadui
+            QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- steam -bigpicture
         else
             QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
         fi
