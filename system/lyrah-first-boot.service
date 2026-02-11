@@ -1,12 +1,14 @@
 [Unit]
 Description=Lyrah OS First Boot Setup
 ConditionPathExists=!/var/lib/lyrah/.first-boot-done
+# Don't run on the live session — only on installed systems
+ConditionPathExists=!/run/initramfs/live
 
 [Service]
 Type=oneshot
 ExecStart=/usr/share/lyrah/setup/first-boot.sh
 RemainAfterExit=yes
-TimeoutStartSec=600
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target

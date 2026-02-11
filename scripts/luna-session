@@ -14,6 +14,32 @@ export XDG_CURRENT_DESKTOP=gamescope
 PRIMARY_GPU=$(/usr/share/lyrah/setup/detect-primary-gpu.sh 2>/dev/null)
 if [ -n "$PRIMARY_GPU" ]; then
     export KWIN_DRM_DEVICES="$PRIMARY_GPU"
+
+    # On hybrid GPU systems the primary GPU might not drive the physical
+    # display (e.g. eDP wired through NVIDIA while we selected AMD iGPU).
+    # If simpledrm exists as a separate card, append it so kwin can render
+    # on the real GPU and output to the UEFI framebuffer.
+    _primary_card=$(basename "$PRIMARY_GPU")
+    for _card in /dev/dri/card*; do
+        [ "$(basename "$_card")" = "$_primary_card" ] && continue
+        _dl="/sys/class/drm/$(basename "$_card")/device/driver"
+        if [ -L "$_dl" ]; then
+            case "$(basename "$(readlink "$_dl")")" in
+                simple-framebuffer|simpledrm)
+                    export KWIN_DRM_DEVICES="${PRIMARY_GPU}:${_card}"
+                    break ;;
+            esac
+        fi
+    done
+fi
+
+# If no render nodes exist (simpledrm / nomodeset / VM), force
+# Mesa software rendering EARLY — before any compositor is launched.
+# Keep KWIN_DRM_DEVICES as-is: on hybrid GPU systems, unsetting it
+# causes kwin to discover secondary GPUs it can't access (Permission
+# denied), which cascades into total output failure.
+if ! ls /dev/dri/renderD* >/dev/null 2>&1; then
+    export LIBGL_ALWAYS_SOFTWARE=1
 fi
 
 # Wine/DXVK environment variables
@@ -27,10 +53,14 @@ SWITCH_SIGNAL="/tmp/luna-switch-to-desktop"
 STEAM_SIGNAL="/tmp/luna-launch-steam"
 rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL"
 
-# Log everything for diagnostics
-exec &> >(systemd-cat -t luna-session)
+# Log everything for diagnostics.
+# Primary: file log (always works).  Secondary: systemd journal.
+LUNA_LOG="/tmp/luna-session.log"
+exec &> >(tee "$LUNA_LOG" | systemd-cat -t luna-session 2>/dev/null)
 
 echo "luna-session: starting at $(date)"
+echo "luna-session: KWIN_DRM_DEVICES=${KWIN_DRM_DEVICES:-<unset>} LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-<unset>}"
+echo "luna-session: render nodes: $(ls /dev/dri/renderD* 2>/dev/null || echo 'NONE')"
 
 # ── Helper: check signal files after compositor exits ──
 handle_signals() {
@@ -53,8 +83,155 @@ handle_signals() {
 # ── Compositor wrapper: run a command with the active compositor ──
 # $COMPOSITOR is set after detection below.
 run_compositor() {
-    if [ "$COMPOSITOR" = "gamescope" ]; then
-        gamescope -- "$@"
+    if [ "$1" = "steam" ]; then
+        # Always use kwin_wayland for Steam login/setup, even when
+        # gamescope is the primary compositor. Steam's multi-window
+        # startup (bootstrap, update dialog, CEF login) needs a full
+        # desktop compositor.
+        #
+        # Log directly to $HOME (survives reboot — /tmp/ doesn't).
+        # Verify the file is writable before using it for redirects,
+        # because a failed bash redirect skips the entire command.
+        STEAM_LOG="$HOME/steam-login-debug.log"
+        touch "$STEAM_LOG" 2>/dev/null
+        if [ ! -w "$STEAM_LOG" ]; then
+            STEAM_LOG="/tmp/lyrah-steam-login-debug.log"
+            touch "$STEAM_LOG" 2>/dev/null
+        fi
+
+        # ── Diagnostic header (written + synced BEFORE kwin starts) ──
+        {
+            echo "========================================="
+            echo "LYRAH OS - STEAM LOGIN DIAGNOSTICS"
+            echo "Date: $(date)"
+            echo "========================================="
+            echo ""
+            echo "--- Environment ---"
+            echo "USER: $USER"
+            echo "HOME: $HOME"
+            echo "DISPLAY: ${DISPLAY:-<not set>}"
+            echo "WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-<not set>}"
+            echo "XDG_SESSION_TYPE: ${XDG_SESSION_TYPE:-<not set>}"
+            echo "XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-<not set>}"
+            echo "KWIN_DRM_DEVICES: ${KWIN_DRM_DEVICES:-<not set>}"
+            echo "COMPOSITOR (luna-session): $COMPOSITOR"
+            echo ""
+            echo "--- Steam binary ---"
+            STEAM_BIN=$(command -v steam 2>/dev/null || true)
+            echo "Path: ${STEAM_BIN:-NOT FOUND IN PATH}"
+            if [ -n "$STEAM_BIN" ]; then
+                echo "File type: $(file "$STEAM_BIN" 2>/dev/null || echo unknown)"
+                echo "First 3 lines:"
+                head -3 "$STEAM_BIN" 2>/dev/null | sed 's/^/  /'
+            fi
+            echo ""
+            echo "--- Steam data directories ---"
+            echo "~/.local/share/Steam: $([ -d "$HOME/.local/share/Steam" ] && echo "EXISTS ($(ls "$HOME/.local/share/Steam/" 2>/dev/null | wc -l) items)" || echo "DOES NOT EXIST")"
+            echo "~/.steam: $([ -d "$HOME/.steam" ] && echo "EXISTS" || echo "DOES NOT EXIST")"
+            if [ -d "$HOME/.local/share/Steam" ]; then
+                ls -la "$HOME/.local/share/Steam/" 2>/dev/null | head -20 | sed 's/^/  /'
+            fi
+            echo ""
+            echo "--- DRM devices ---"
+            ls -la /dev/dri/ 2>/dev/null || echo "  (no /dev/dri)"
+            for card in /dev/dri/card*; do
+                [ -e "$card" ] || continue
+                cardname=$(basename "$card")
+                drmdir="/sys/class/drm/$cardname/device/driver"
+                if [ -L "$drmdir" ]; then
+                    drv=$(basename "$(readlink "$drmdir")")
+                    echo "  $card -> driver: $drv"
+                else
+                    echo "  $card -> driver: unknown (simpledrm?)"
+                fi
+                for conn in /sys/class/drm/"$cardname"-*/status; do
+                    [ -f "$conn" ] || continue
+                    connname=$(basename "$(dirname "$conn")")
+                    echo "    $connname: $(cat "$conn" 2>/dev/null)"
+                done
+            done
+            echo ""
+            echo "--- Kernel command line ---"
+            cat /proc/cmdline 2>/dev/null || echo "  (unreadable)"
+            echo ""
+            echo "--- Network (Steam needs this for first-run download) ---"
+            echo "  Default route: $(ip route show default 2>/dev/null | head -1 || echo 'NONE')"
+            echo "  DNS resolv: $(head -1 /etc/resolv.conf 2>/dev/null || echo 'NONE')"
+            ping -c1 -W2 store.steampowered.com >/dev/null 2>&1 && echo "  store.steampowered.com: REACHABLE" || echo "  store.steampowered.com: UNREACHABLE"
+            echo ""
+            echo "========================================="
+            echo "LAUNCHING: kwin_wayland --no-lockscreen --no-global-shortcuts -- steam"
+            echo "Start time: $(date)"
+            echo "========================================="
+            echo ""
+        } > "$STEAM_LOG" 2>/dev/null
+        sync 2>/dev/null  # flush to disk so log survives power-off
+
+        echo "luna-session: launching Steam via kwin_wayland (log: $STEAM_LOG)..."
+        echo "luna-session: NOTE - Steam first-run downloads ~350 MB and may take several minutes on software rendering."
+
+        # Brief pause to ensure the previous compositor fully released DRM
+        sleep 1
+
+        # ── Background monitor: snapshot process state at intervals ──
+        (
+            for delay in 3 10 30 60; do
+                sleep "$delay"
+                {
+                    echo ""
+                    echo "--- Process snapshot (${delay}s after launch) ---"
+                    echo "Steam processes:"
+                    ps aux 2>/dev/null | grep -i '[s]team' || echo "  (none)"
+                    echo "kwin processes:"
+                    ps aux 2>/dev/null | grep -i '[k]win' || echo "  (none)"
+                    echo "Xwayland:"
+                    ps aux 2>/dev/null | grep -i '[X]wayland' || echo "  (none)"
+                } >> "$STEAM_LOG" 2>/dev/null
+                sync 2>/dev/null  # flush each snapshot to disk
+            done
+        ) &
+        MONITOR_PID=$!
+
+        # ── Launch kwin_wayland with Steam ──
+        # If LIBGL_ALWAYS_SOFTWARE=1 was exported earlier (no real GPU),
+        # it is inherited automatically.  Don't hardcode it — doing so
+        # forces software rendering even when a working GPU is present,
+        # which causes Steam to crash.
+        kwin_wayland --no-lockscreen --no-global-shortcuts -- steam >> "$STEAM_LOG" 2>&1
+        STEAM_EXIT=$?
+
+        # Kill the background monitor
+        kill "$MONITOR_PID" 2>/dev/null; wait "$MONITOR_PID" 2>/dev/null
+
+        # ── Post-mortem ──
+        {
+            echo ""
+            echo "========================================="
+            echo "STEAM SESSION ENDED"
+            echo "kwin_wayland exit code: $STEAM_EXIT"
+            echo "End time: $(date)"
+            echo "========================================="
+            echo ""
+            echo "--- Remaining Steam processes ---"
+            ps aux 2>/dev/null | grep -i '[s]team' || echo "  (none)"
+            echo ""
+            if [ -d "$HOME/.local/share/Steam/logs" ]; then
+                echo "--- Steam client logs (last 30 lines of bootstrap) ---"
+                tail -30 "$HOME/.local/share/Steam/logs/bootstrap_log.txt" 2>/dev/null | sed 's/^/  /' || echo "  (no bootstrap log)"
+            else
+                echo "--- Steam logs directory does not exist ---"
+                echo "  This means Steam never completed its first-run bootstrap."
+                echo "  Possible causes: no network, missing 32-bit libs, steam binary issue"
+            fi
+            echo ""
+            echo "========================================="
+            echo "View this log from KDE: cat ~/steam-login-debug.log"
+            echo "========================================="
+        } >> "$STEAM_LOG" 2>/dev/null
+
+        echo "luna-session: Steam exited ($STEAM_EXIT). Log saved to $STEAM_LOG"
+    elif [ "$COMPOSITOR" = "gamescope" ]; then
+        gamescope --fullscreen -- "$@"
     else
         QT_QPA_PLATFORM=wayland kwin_wayland --no-lockscreen --no-global-shortcuts -- "$@"
     fi
@@ -66,7 +243,7 @@ run_compositor() {
 COMPOSITOR="gamescope"
 
 echo "luna-session: testing gamescope DRM mode..."
-gamescope -- /usr/bin/luna-ui
+gamescope --fullscreen -- /usr/bin/luna-ui
 rc=$?
 
 # Check signals from the first run
@@ -83,7 +260,7 @@ elif [ $rc -ne 0 ]; then
     # gamescope failed — try one more time after a brief wait
     sleep 2
     echo "luna-session: gamescope retry..."
-    gamescope -- /usr/bin/luna-ui
+    gamescope --fullscreen -- /usr/bin/luna-ui
     rc=$?
     handle_signals
     if [ $? -eq 1 ]; then
@@ -97,6 +274,31 @@ elif [ $rc -ne 0 ]; then
         # (NOT nested inside gamescope) to avoid double compositing.
         echo "luna-session: gamescope DRM failed, using kwin_wayland"
         COMPOSITOR="kwin_wayland"
+
+        # Gamescope needs Vulkan — it can fail because:
+        #   a) No GPU at all (simpledrm/nomodeset) → need software rendering
+        #   b) Real GPU exists but Vulkan isn't available (missing mesa-vulkan-drivers)
+        #      → kwin_wayland can still use OpenGL on the real GPU
+        # Only force software rendering if the primary GPU is simpledrm.
+        if [ -z "$KWIN_DRM_DEVICES" ] || [ ! -e "$KWIN_DRM_DEVICES" ]; then
+            export LIBGL_ALWAYS_SOFTWARE=1
+            echo "luna-session: no primary GPU, enabling software rendering"
+        else
+            # Check if the selected card is simpledrm (UEFI framebuffer)
+            _cardname=$(basename "$KWIN_DRM_DEVICES")
+            _drvlink="/sys/class/drm/$_cardname/device/driver"
+            _drv=""
+            [ -L "$_drvlink" ] && _drv=$(basename "$(readlink "$_drvlink")")
+            case "$_drv" in
+                simple-framebuffer|simpledrm|"")
+                    export LIBGL_ALWAYS_SOFTWARE=1
+                    echo "luna-session: primary GPU is simpledrm, enabling software rendering"
+                    ;;
+                *)
+                    echo "luna-session: primary GPU is $_drv ($KWIN_DRM_DEVICES), using hardware rendering"
+                    ;;
+            esac
+        fi
     fi
 fi
 
