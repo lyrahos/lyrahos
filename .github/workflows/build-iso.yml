@@ -357,17 +357,15 @@ jobs:
           #   1. Boot infrastructure comes from the base Fedora ISO
           #   2. We regenerate initramfs later with dracut (in "Sync ISO boot kernel")
           #   3. We manually run depmod below (only essential operation)
-          ISO_KVER="${{ steps.extract-iso.outputs.iso_kver }}"
+          #
+          # Always install the LATEST kernel from repos (don't pin to ISO version).
+          # The base Fedora ISO may ship an older kernel (e.g. 6.17) while repos
+          # have moved on (e.g. 6.18). Pinning causes mismatches where kernel-devel
+          # or kernel-modules for the old version are no longer available.
+          # The "Sync ISO boot kernel" step later replaces the ISO's vmlinuz and
+          # initramfs with the installed version, so the boot kernel always matches.
           KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core kernel-devel"
-          if [ -n "$ISO_KVER" ]; then
-            # file reports: 6.x.y-z.fc43.x86_64 — strip arch suffix for dnf
-            KVER_DNF="${ISO_KVER%.x86_64}"
-            KVER_DNF="${KVER_DNF%.aarch64}"
-            echo "Pinning kernel to ISO version: $KVER_DNF"
-            KERNEL_PKGS="kernel-core-${KVER_DNF} kernel-modules-${KVER_DNF} kernel-modules-core-${KVER_DNF} kernel-devel-${KVER_DNF}"
-          else
-            echo "WARNING: ISO kernel version unknown — installing latest"
-          fi
+          echo "Installing latest kernel from repos (Sync step will update ISO boot files)"
 
           docker run --rm \
             -v "$(pwd)/squashfs-root:/rootfs" \
