@@ -93,6 +93,19 @@ LUNA_LOG="/tmp/luna-session.log"
 # Signal that gamescope started successfully and the inner script ran
 touch /tmp/luna-gamescope-ok
 
+# ── Diagnostics: log what gamescope's Xwayland is actually presenting ──
+{
+    echo "========================================="
+    echo "GAMESCOPE INNER DIAGNOSTICS"
+    echo "Date: $(date)"
+    echo "DISPLAY=$DISPLAY WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
+    echo "--- xdpyinfo (gamescope Xwayland resolution) ---"
+    xdpyinfo 2>/dev/null | grep -E 'dimensions|resolution' || echo "xdpyinfo not available"
+    echo "--- xrandr (gamescope output modes) ---"
+    xrandr 2>/dev/null || echo "xrandr not available"
+    echo "========================================="
+} >> "$LUNA_LOG" 2>/dev/null
+
 while true; do
     /usr/bin/luna-ui
 
@@ -165,23 +178,46 @@ chmod +x "$GAMESCOPE_INNER"
 # so gamescope renders at native resolution with no scaling.
 NATIVE_W=1920
 NATIVE_H=1080
+_RES_SOURCE="default (no DRM modes found)"
+echo "luna-session: scanning DRM modes files..."
 for _modes in /sys/class/drm/card*-*/modes; do
+    echo "luna-session:   checking $_modes ..."
     if [ -s "$_modes" ]; then
         _native=$(head -1 "$_modes")
+        echo "luna-session:   -> preferred mode: '${_native:-<empty>}'"
         if [ -n "$_native" ]; then
             NATIVE_W="${_native%%x*}"
             NATIVE_H="${_native##*x}"
+            _RES_SOURCE="$_modes"
             break
         fi
+    else
+        echo "luna-session:   -> file empty or missing"
     fi
 done
-echo "luna-session: detected native resolution ${NATIVE_W}x${NATIVE_H}"
+echo "luna-session: native resolution ${NATIVE_W}x${NATIVE_H} (source: $_RES_SOURCE)"
 
 # ── Gamescope mode (primary) ──
 # gamescope runs the inner script which manages both luna-ui and Steam.
 # This is how SteamOS works: Steam runs inside gamescope's Xwayland.
-echo "luna-session: starting gamescope..."
-gamescope -W "$NATIVE_W" -H "$NATIVE_H" -w "$NATIVE_W" -h "$NATIVE_H" --fullscreen -- "$GAMESCOPE_INNER"
+#
+# Flags:
+#   -W/-H  = internal Xwayland resolution (what apps see)
+#   -w/-h  = output resolution (what the display gets)
+#   --fullscreen           = take over the display
+#   --filter nearest       = pixel-perfect scaling, no bilinear blur
+#   --force-windows-fullscreen = prevent small windows (e.g. Steam login
+#                                dialog) from being upscaled with filtering
+GAMESCOPE_FLAGS=(
+    -W "$NATIVE_W" -H "$NATIVE_H"
+    -w "$NATIVE_W" -h "$NATIVE_H"
+    --fullscreen
+    --filter nearest
+    --force-windows-fullscreen
+)
+
+echo "luna-session: starting gamescope with: ${GAMESCOPE_FLAGS[*]}"
+gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope exited ($rc)"
 
@@ -200,7 +236,8 @@ echo "luna-session: gamescope failed, retrying..."
 sleep 2
 rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$GAMESCOPE_OK"
 
-gamescope -W "$NATIVE_W" -H "$NATIVE_H" -w "$NATIVE_W" -h "$NATIVE_H" --fullscreen -- "$GAMESCOPE_INNER"
+echo "luna-session: retrying gamescope with: ${GAMESCOPE_FLAGS[*]}"
+gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope retry exited ($rc)"
 
