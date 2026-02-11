@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QCoreApplication>
+#include <QNetworkInterface>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -175,4 +176,73 @@ void GameManager::switchToDesktop() {
 
 int GameManager::getGameCount() {
     return m_db->getAllGames().size();
+}
+
+bool GameManager::isNetworkAvailable() {
+    const auto interfaces = QNetworkInterface::allInterfaces();
+    for (const auto &iface : interfaces) {
+        if (iface.flags().testFlag(QNetworkInterface::IsUp) &&
+            iface.flags().testFlag(QNetworkInterface::IsRunning) &&
+            !iface.flags().testFlag(QNetworkInterface::IsLoopBack)) {
+            const auto entries = iface.addressEntries();
+            for (const auto &entry : entries) {
+                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol &&
+                    !entry.ip().isLoopback()) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+QVariantList GameManager::getWifiNetworks() {
+    QVariantList networks;
+    QProcess proc;
+    // Force a fresh scan, then list results
+    proc.start("nmcli", {"-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "yes"});
+    proc.waitForFinished(10000);
+
+    QString output = proc.readAllStandardOutput();
+    QSet<QString> seen;
+    for (const QString& line : output.split('\n')) {
+        if (line.trimmed().isEmpty()) continue;
+        // nmcli -t uses ':' as delimiter; SSID can't contain ':'
+        // but SECURITY can have multiple values like "WPA2 WPA3"
+        int first = line.indexOf(':');
+        int second = line.indexOf(':', first + 1);
+        if (first < 1 || second < 0) continue;
+
+        QString ssid = line.left(first);
+        QString signal = line.mid(first + 1, second - first - 1);
+        QString security = line.mid(second + 1);
+
+        if (ssid.isEmpty() || seen.contains(ssid)) continue;
+        seen.insert(ssid);
+
+        QVariantMap network;
+        network["ssid"] = ssid;
+        network["signal"] = signal.toInt();
+        network["security"] = security;
+        networks.append(network);
+    }
+    return networks;
+}
+
+void GameManager::connectToWifi(const QString& ssid, const QString& password) {
+    QProcess *proc = new QProcess(this);
+    QStringList args = {"device", "wifi", "connect", ssid};
+    if (!password.isEmpty()) {
+        args << "password" << password;
+    }
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        QString msg = success
+            ? "Connected"
+            : QString(proc->readAllStandardError()).trimmed();
+        emit wifiConnectResult(success, msg);
+        proc->deleteLater();
+    });
+    proc->start("nmcli", args);
 }

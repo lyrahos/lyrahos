@@ -27,12 +27,16 @@ public:
     Q_INVOKABLE void launchSteamLogin();
     Q_INVOKABLE void switchToDesktop();
     Q_INVOKABLE int getGameCount();
+    Q_INVOKABLE bool isNetworkAvailable();
+    Q_INVOKABLE QVariantList getWifiNetworks();
+    Q_INVOKABLE void connectToWifi(const QString& ssid, const QString& password);
 
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
+    void wifiConnectResult(bool success, const QString& message);
 
 private:
     Database *m_db;

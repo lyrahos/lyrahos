@@ -170,10 +170,410 @@ Rectangle {
             Item {
                 id: gameStoresTab
 
+                property bool hasNetwork: GameManager.isNetworkAvailable()
+                property bool showWifiPanel: false
+                property string wifiStatus: ""
+                property bool wifiConnecting: false
+
+                // Refresh network status when tab becomes visible
+                Timer {
+                    id: networkCheckTimer
+                    interval: 3000
+                    running: activeTab === 1
+                    repeat: true
+                    onTriggered: {
+                        gameStoresTab.hasNetwork = GameManager.isNetworkAvailable()
+                        if (gameStoresTab.hasNetwork)
+                            gameStoresTab.showWifiPanel = false
+                    }
+                }
+                Component.onCompleted: hasNetwork = GameManager.isNetworkAvailable()
+
+                Connections {
+                    target: GameManager
+                    function onWifiConnectResult(success, message) {
+                        gameStoresTab.wifiConnecting = false
+                        if (success) {
+                            gameStoresTab.wifiStatus = "Connected!"
+                            gameStoresTab.hasNetwork = GameManager.isNetworkAvailable()
+                        } else {
+                            gameStoresTab.wifiStatus = "Failed: " + message
+                        }
+                    }
+                }
+
+                // ─── Offline: initial message ───
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 16
+                    visible: !gameStoresTab.hasNetwork && !gameStoresTab.showWifiPanel
+
+                    Text {
+                        text: "No Internet Connection"
+                        font.pixelSize: ThemeManager.getFontSize("large")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "Please connect to Wi-Fi!"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "A network connection is required to log in and install games."
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: 220
+                        Layout.preferredHeight: 44
+                        radius: 8
+                        color: ThemeManager.getColor("primary")
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Connect to Wi-Fi"
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: "white"
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                gameStoresTab.wifiStatus = ""
+                                gameStoresTab.showWifiPanel = true
+                                wifiListModel.clear()
+                                var networks = GameManager.getWifiNetworks()
+                                for (var i = 0; i < networks.length; i++)
+                                    wifiListModel.append(networks[i])
+                            }
+                        }
+                    }
+                }
+
+                // ─── Offline: Wi-Fi network picker ───
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !gameStoresTab.hasNetwork && gameStoresTab.showWifiPanel
+                    color: "transparent"
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 12
+
+                        // Header row
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Rectangle {
+                                Layout.preferredWidth: 80
+                                Layout.preferredHeight: 40
+                                radius: 12
+                                color: ThemeManager.getColor("surface")
+                                border.color: backBtnArea.containsMouse
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: backBtnArea.containsMouse ? 2 : 0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "< Back"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: true
+                                    color: ThemeManager.getColor("textPrimary")
+                                }
+
+                                MouseArea {
+                                    id: backBtnArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        gameStoresTab.showWifiPanel = false
+                                        wifiPasswordField.text = ""
+                                        wifiSelectedSsid.text = ""
+                                    }
+                                }
+
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                            }
+
+                            Text {
+                                text: "Wi-Fi Networks"
+                                font.pixelSize: ThemeManager.getFontSize("large")
+                                font.family: ThemeManager.getFont("heading")
+                                font.bold: true
+                                color: ThemeManager.getColor("textPrimary")
+                                Layout.fillWidth: true
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: 100
+                                Layout.preferredHeight: 40
+                                radius: 12
+                                color: ThemeManager.getColor("surface")
+                                border.color: refreshBtnArea.containsMouse
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: refreshBtnArea.containsMouse ? 2 : 0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Refresh"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: true
+                                    color: ThemeManager.getColor("textPrimary")
+                                }
+
+                                MouseArea {
+                                    id: refreshBtnArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        wifiListModel.clear()
+                                        var networks = GameManager.getWifiNetworks()
+                                        for (var i = 0; i < networks.length; i++)
+                                            wifiListModel.append(networks[i])
+                                    }
+                                }
+
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                            }
+                        }
+
+                        // Status message
+                        Text {
+                            visible: gameStoresTab.wifiStatus !== ""
+                            text: gameStoresTab.wifiStatus
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: gameStoresTab.wifiStatus.startsWith("Failed")
+                                   ? "#ff6b6b" : ThemeManager.getColor("accent")
+                        }
+
+                        // Network list
+                        ListView {
+                            id: wifiListView
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            spacing: 6
+                            model: ListModel { id: wifiListModel }
+
+                            delegate: Rectangle {
+                                width: wifiListView.width
+                                height: 60
+                                radius: 12
+                                color: wifiItemArea.containsMouse
+                                       ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                                 ThemeManager.getColor("primary").g,
+                                                 ThemeManager.getColor("primary").b, 0.2)
+                                       : ThemeManager.getColor("surface")
+                                border.color: wifiItemArea.containsMouse
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: wifiItemArea.containsMouse ? 2 : 0
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 20
+                                    anchors.rightMargin: 20
+                                    spacing: 16
+
+                                    // Signal strength indicator
+                                    Text {
+                                        text: model.signal > 70 ? "|||" :
+                                              model.signal > 40 ? "|| " : "|  "
+                                        font.pixelSize: 16
+                                        font.family: "monospace"
+                                        font.bold: true
+                                        color: model.signal > 70
+                                               ? ThemeManager.getColor("accent")
+                                               : model.signal > 40
+                                                 ? ThemeManager.getColor("secondary")
+                                                 : ThemeManager.getColor("textSecondary")
+                                    }
+
+                                    Text {
+                                        text: model.ssid
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: ThemeManager.getColor("textPrimary")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Text {
+                                        visible: model.security !== "" && model.security !== "--"
+                                        text: model.security
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: wifiItemArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        wifiSelectedSsid.text = model.ssid
+                                        wifiPasswordField.text = ""
+                                        gameStoresTab.wifiStatus = ""
+                                        if (model.security === "" || model.security === "--") {
+                                            gameStoresTab.wifiConnecting = true
+                                            gameStoresTab.wifiStatus = "Connecting..."
+                                            GameManager.connectToWifi(model.ssid, "")
+                                        } else {
+                                            wifiPasswordField.forceActiveFocus()
+                                        }
+                                    }
+                                }
+
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                            }
+                        }
+
+                        // Password input bar (visible when a secured network is selected)
+                        Rectangle {
+                            visible: wifiSelectedSsid.text !== ""
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 56
+                            radius: 12
+                            color: ThemeManager.getColor("surface")
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 10
+
+                                Text {
+                                    text: wifiSelectedSsid.text
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: true
+                                    color: ThemeManager.getColor("textPrimary")
+                                    Layout.preferredWidth: 160
+                                    elide: Text.ElideRight
+                                }
+
+                                // Hidden text to store the selected SSID
+                                Text {
+                                    id: wifiSelectedSsid
+                                    visible: false
+                                    text: ""
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    radius: 8
+                                    color: ThemeManager.getColor("hover")
+                                    border.color: wifiPasswordField.activeFocus
+                                                  ? ThemeManager.getColor("focus")
+                                                  : "transparent"
+                                    border.width: wifiPasswordField.activeFocus ? 2 : 0
+
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                    TextInput {
+                                        id: wifiPasswordField
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textPrimary")
+                                        echoMode: TextInput.Password
+                                        clip: true
+                                        onAccepted: {
+                                            if (text.length > 0 && !gameStoresTab.wifiConnecting) {
+                                                gameStoresTab.wifiConnecting = true
+                                                gameStoresTab.wifiStatus = "Connecting..."
+                                                GameManager.connectToWifi(wifiSelectedSsid.text, text)
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        verticalAlignment: Text.AlignVCenter
+                                        visible: wifiPasswordField.text === "" && !wifiPasswordField.activeFocus
+                                        text: "Enter password..."
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.preferredWidth: connectBtnLabel.width + 32
+                                    Layout.fillHeight: true
+                                    radius: 8
+                                    color: gameStoresTab.wifiConnecting
+                                           ? ThemeManager.getColor("textSecondary")
+                                           : ThemeManager.getColor("primary")
+                                    border.color: connectBtnArea.containsMouse && !gameStoresTab.wifiConnecting
+                                                  ? ThemeManager.getColor("focus") : "transparent"
+                                    border.width: connectBtnArea.containsMouse && !gameStoresTab.wifiConnecting ? 2 : 0
+
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                    Text {
+                                        id: connectBtnLabel
+                                        anchors.centerIn: parent
+                                        text: gameStoresTab.wifiConnecting ? "Connecting..." : "Connect"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: "white"
+                                    }
+
+                                    MouseArea {
+                                        id: connectBtnArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (wifiPasswordField.text.length > 0
+                                                    && !gameStoresTab.wifiConnecting) {
+                                                gameStoresTab.wifiConnecting = true
+                                                gameStoresTab.wifiStatus = "Connecting..."
+                                                GameManager.connectToWifi(
+                                                    wifiSelectedSsid.text,
+                                                    wifiPasswordField.text)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ─── Online: store cards ───
                 Flickable {
                     anchors.fill: parent
                     contentHeight: storesColumn.height
                     clip: true
+                    visible: gameStoresTab.hasNetwork
 
                     ColumnLayout {
                         id: storesColumn
