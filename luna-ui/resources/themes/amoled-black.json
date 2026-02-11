@@ -1,16 +1,16 @@
 {
   "name": "AMOLED Black",
-  "version": "1.0",
-  "description": "Pure black theme for OLED displays",
+  "version": "1.1",
+  "description": "Pure black theme for OLED displays — Lyrah purple accents",
   "colors": {
     "background": "#000000",
     "surface": "#0a0a0a",
-    "primary": "#3b82f6",
-    "secondary": "#6366f1",
+    "primary": "#7c3aed",
+    "secondary": "#3b82f6",
     "accent": "#22d3ee",
     "textPrimary": "#ffffff",
     "textSecondary": "#6b7280",
-    "focus": "#3b82f6",
+    "focus": "#a78bfa",
     "hover": "#111111",
     "cardBackground": "#0a0a0a"
   },
