@@ -1,17 +1,17 @@
 {
   "name": "Nebula Dark",
-  "version": "1.0",
-  "description": "Default dark space theme - optimized for gaming sessions",
+  "version": "1.1",
+  "description": "Default Lyrah OS theme — matches SDDM and installer styling",
   "colors": {
     "background": "#0f1419",
     "surface": "#1a1f2e",
-    "primary": "#3b82f6",
-    "secondary": "#8b5cf6",
+    "primary": "#7c3aed",
+    "secondary": "#3b82f6",
     "accent": "#06b6d4",
     "textPrimary": "#ffffff",
     "textSecondary": "#9ca3af",
-    "focus": "#06b6d4",
-    "hover": "#334155",
+    "focus": "#a78bfa",
+    "hover": "#1f2937",
     "cardBackground": "#1e293b"
   },
   "layout": {

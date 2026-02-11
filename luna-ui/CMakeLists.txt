@@ -6,7 +6,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Sql)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Sql Network)
 find_package(SDL2 REQUIRED)
 
 # FIX #45: Register QML files with qt_add_qml_module
@@ -44,6 +44,7 @@ target_link_libraries(luna-ui PRIVATE
     Qt6::Gui
     Qt6::Quick
     Qt6::Sql
+    Qt6::Network
     SDL2::SDL2
 )
 

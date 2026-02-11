@@ -93,6 +93,19 @@ LUNA_LOG="/tmp/luna-session.log"
 # Signal that gamescope started successfully and the inner script ran
 touch /tmp/luna-gamescope-ok
 
+# ── Diagnostics: log what gamescope's Xwayland is actually presenting ──
+{
+    echo "========================================="
+    echo "GAMESCOPE INNER DIAGNOSTICS"
+    echo "Date: $(date)"
+    echo "DISPLAY=$DISPLAY WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-<unset>}"
+    echo "--- xdpyinfo (gamescope Xwayland resolution) ---"
+    xdpyinfo 2>/dev/null | grep -E 'dimensions|resolution' || echo "xdpyinfo not available"
+    echo "--- xrandr (gamescope output modes) ---"
+    xrandr 2>/dev/null || echo "xrandr not available"
+    echo "========================================="
+} >> "$LUNA_LOG" 2>/dev/null
+
 while true; do
     /usr/bin/luna-ui
 
@@ -113,9 +126,42 @@ while true; do
             echo "========================================="
         } > "$STEAM_LOG" 2>/dev/null
 
-        echo "luna-inner: launching Steam inside gamescope at $(date)" >> "$LUNA_LOG"
-        steam >> "$STEAM_LOG" 2>&1
-        echo "luna-inner: Steam exited ($?) at $(date)" >> "$LUNA_LOG"
+        # Track the library file to detect when login completes.
+        # luna-ui only sends us here when libraryfolders.vdf is missing
+        # (the "Log In" button), so once it appears, login succeeded.
+        STEAM_LIB="$HOME/.local/share/Steam/steamapps/libraryfolders.vdf"
+        STEAM_LIB_MTIME=""
+        [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
+
+        echo "luna-inner: launching Steam for login at $(date)" >> "$LUNA_LOG"
+        # Use -gamepadui (Steam Deck UI) so the login screen renders at
+        # the full gamescope Xwayland resolution instead of opening a small
+        # dialog window that gets upscaled with bilinear blur.
+        steam -gamepadui >> "$STEAM_LOG" 2>&1 &
+        STEAM_PID=$!
+
+        # Wait for login: libraryfolders.vdf appears or is updated,
+        # then shut Steam down and return to luna-ui.
+        while kill -0 "$STEAM_PID" 2>/dev/null; do
+            if [ -f "$STEAM_LIB" ]; then
+                NOW_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
+                if [ -z "$STEAM_LIB_MTIME" ] || [ "$NOW_MTIME" != "$STEAM_LIB_MTIME" ]; then
+                    echo "luna-inner: Steam login detected, shutting down Steam" >> "$LUNA_LOG"
+                    sleep 5
+                    steam -shutdown >> "$STEAM_LOG" 2>&1
+                    # Wait up to 10s for graceful exit
+                    for _i in $(seq 1 10); do
+                        kill -0 "$STEAM_PID" 2>/dev/null || break
+                        sleep 1
+                    done
+                    kill -0 "$STEAM_PID" 2>/dev/null && kill "$STEAM_PID" 2>/dev/null
+                    break
+                fi
+            fi
+            sleep 2
+        done
+        wait "$STEAM_PID" 2>/dev/null
+        echo "luna-inner: Steam exited at $(date)" >> "$LUNA_LOG"
 
         # Loop back to luna-ui after Steam exits
         continue
@@ -127,11 +173,54 @@ done
 INNER_EOF
 chmod +x "$GAMESCOPE_INNER"
 
+# ── Detect native display resolution ──
+# Without explicit resolution flags, gamescope may render at a mismatched
+# internal resolution and upscale to fill the display, causing fuzziness.
+# Read the preferred mode from DRM (first line of the first connected output's
+# modes file) and pass it as both internal (-W/-H) and output (-w/-h) resolution
+# so gamescope renders at native resolution with no scaling.
+NATIVE_W=1920
+NATIVE_H=1080
+_RES_SOURCE="default (no DRM modes found)"
+echo "luna-session: scanning DRM modes files..."
+for _modes in /sys/class/drm/card*-*/modes; do
+    echo "luna-session:   checking $_modes ..."
+    if [ -s "$_modes" ]; then
+        _native=$(head -1 "$_modes")
+        echo "luna-session:   -> preferred mode: '${_native:-<empty>}'"
+        if [ -n "$_native" ]; then
+            NATIVE_W="${_native%%x*}"
+            NATIVE_H="${_native##*x}"
+            _RES_SOURCE="$_modes"
+            break
+        fi
+    else
+        echo "luna-session:   -> file empty or missing"
+    fi
+done
+echo "luna-session: native resolution ${NATIVE_W}x${NATIVE_H} (source: $_RES_SOURCE)"
+
 # ── Gamescope mode (primary) ──
 # gamescope runs the inner script which manages both luna-ui and Steam.
 # This is how SteamOS works: Steam runs inside gamescope's Xwayland.
-echo "luna-session: starting gamescope..."
-gamescope --fullscreen -- "$GAMESCOPE_INNER"
+#
+# Flags:
+#   -W/-H  = internal Xwayland resolution (what apps see)
+#   -w/-h  = output resolution (what the display gets)
+#   --fullscreen           = take over the display
+#   --filter nearest       = pixel-perfect scaling, no bilinear blur
+#   --force-windows-fullscreen = prevent small windows (e.g. Steam login
+#                                dialog) from being upscaled with filtering
+GAMESCOPE_FLAGS=(
+    -W "$NATIVE_W" -H "$NATIVE_H"
+    -w "$NATIVE_W" -h "$NATIVE_H"
+    --fullscreen
+    --filter nearest
+    --force-windows-fullscreen
+)
+
+echo "luna-session: starting gamescope with: ${GAMESCOPE_FLAGS[*]}"
+gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope exited ($rc)"
 
@@ -150,7 +239,8 @@ echo "luna-session: gamescope failed, retrying..."
 sleep 2
 rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$GAMESCOPE_OK"
 
-gamescope --fullscreen -- "$GAMESCOPE_INNER"
+echo "luna-session: retrying gamescope with: ${GAMESCOPE_FLAGS[*]}"
+gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope retry exited ($rc)"
 
