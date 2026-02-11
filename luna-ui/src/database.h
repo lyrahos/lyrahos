@@ -42,6 +42,7 @@ public:
 
     // Game CRUD
     int addGame(const Game& game);
+    int upsertGame(const Game& game);
     bool updateGame(const Game& game);
     bool removeGame(int gameId);
     Game getGameById(int gameId);
@@ -51,6 +52,8 @@ public:
     QVector<Game> getRecentlyPlayed(int limit = 10);
     QVector<Game> searchGames(const QString& query);
     QVector<Game> getGamesByStore(const QString& store);
+    void updateGameTitle(const QString& storeSource, const QString& appId, const QString& title);
+    void setGameInstalled(const QString& storeSource, const QString& appId, bool installed);
 
     // Session tracking
     int startGameSession(int gameId);

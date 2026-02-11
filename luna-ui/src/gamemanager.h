@@ -5,8 +5,13 @@
 #include <QVector>
 #include <QTimer>
 #include <QVariantList>
+#include <QSet>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include "database.h"
 #include "storebackend.h"
+
+class SteamBackend;
 
 class GameManager : public QObject {
     Q_OBJECT
@@ -31,22 +36,35 @@ public:
     Q_INVOKABLE QVariantList getWifiNetworks();
     Q_INVOKABLE void connectToWifi(const QString& ssid, const QString& password);
 
+    // Game install / download progress
+    Q_INVOKABLE void installGame(int gameId);
+    Q_INVOKABLE QVariantMap getActiveDownloads();
+
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
     void wifiConnectResult(bool success, const QString& message);
+    void downloadFinished(int gameId);
 
 private:
     Database *m_db;
     QVector<StoreBackend*> m_backends;
+    SteamBackend *m_steamBackend = nullptr;
     int m_activeSessionId = -1;
     int m_activeGameId = -1;
     QTimer *m_processMonitor;
+    QTimer *m_downloadMonitor;
+    QNetworkAccessManager *m_network;
+
+    // gameId → appId for games being downloaded
+    QHash<int, QString> m_downloadingGames;
 
     void registerBackends();
     void monitorGameProcess();
+    void monitorDownloads();
+    void resolveGameNames();
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
 };

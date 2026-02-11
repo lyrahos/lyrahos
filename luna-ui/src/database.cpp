@@ -61,6 +61,10 @@ void Database::createTables() {
     query.exec("CREATE VIRTUAL TABLE IF NOT EXISTS games_fts USING fts5("
                "title, tags, metadata, content='games', content_rowid='id')");
 
+    // Prevent duplicate games from the same store
+    query.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_games_store_appid "
+               "ON games(store_source, app_id)");
+
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
     query.exec("CREATE TRIGGER games_fts_insert AFTER INSERT ON games BEGIN "
@@ -111,6 +115,61 @@ int Database::addGame(const Game& game) {
     return -1;
 }
 
+int Database::upsertGame(const Game& game) {
+    // Check if game already exists by store + appId
+    QSqlQuery check;
+    check.prepare("SELECT id, title FROM games WHERE store_source = ? AND app_id = ?");
+    check.addBindValue(game.storeSource);
+    check.addBindValue(game.appId);
+
+    if (check.exec() && check.next()) {
+        int existingId = check.value("id").toInt();
+        QString existingTitle = check.value("title").toString();
+
+        // Update install state, paths, and cover art — preserve user fields
+        QSqlQuery update;
+        update.prepare("UPDATE games SET is_installed = ?, install_path = ?, "
+                       "launch_command = ?, cover_art_url = COALESCE(NULLIF(?, ''), cover_art_url) "
+                       "WHERE id = ?");
+        update.addBindValue(game.isInstalled);
+        update.addBindValue(game.installPath);
+        update.addBindValue(game.launchCommand);
+        update.addBindValue(game.coverArtUrl);
+        update.addBindValue(existingId);
+        update.exec();
+
+        // Only overwrite title if the new one is a real name (not empty/placeholder)
+        if (!game.title.isEmpty() &&
+            (existingTitle.isEmpty() || existingTitle.startsWith("Steam App "))) {
+            QSqlQuery titleUpdate;
+            titleUpdate.prepare("UPDATE games SET title = ? WHERE id = ?");
+            titleUpdate.addBindValue(game.title);
+            titleUpdate.addBindValue(existingId);
+            titleUpdate.exec();
+        }
+        return existingId;
+    }
+    return addGame(game);
+}
+
+void Database::updateGameTitle(const QString& storeSource, const QString& appId, const QString& title) {
+    QSqlQuery query;
+    query.prepare("UPDATE games SET title = ? WHERE store_source = ? AND app_id = ?");
+    query.addBindValue(title);
+    query.addBindValue(storeSource);
+    query.addBindValue(appId);
+    query.exec();
+}
+
+void Database::setGameInstalled(const QString& storeSource, const QString& appId, bool installed) {
+    QSqlQuery query;
+    query.prepare("UPDATE games SET is_installed = ? WHERE store_source = ? AND app_id = ?");
+    query.addBindValue(installed);
+    query.addBindValue(storeSource);
+    query.addBindValue(appId);
+    query.exec();
+}
+
 // FIX #11: Implement all declared methods that were missing
 
 bool Database::updateGame(const Game& game) {
@@ -157,7 +216,7 @@ Game Database::getGameById(int gameId) {
 }
 
 QVector<Game> Database::getAllGames() {
-    QSqlQuery query("SELECT * FROM games WHERE is_hidden = 0 AND is_installed = 1 ORDER BY title ASC");
+    QSqlQuery query("SELECT * FROM games WHERE is_hidden = 0 AND title != '' ORDER BY is_installed DESC, title ASC");
     QVector<Game> games;
     while (query.next()) {
         games.append(gameFromQuery(query));

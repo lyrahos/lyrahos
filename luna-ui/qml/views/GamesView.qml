@@ -8,6 +8,7 @@ Rectangle {
     color: "transparent"
 
     property int activeTab: 0   // 0 = My Games, 1 = Game Stores
+    property var activeDownloads: ({})  // gameId → progress (0-1)
 
     ColumnLayout {
         anchors.fill: parent
@@ -153,10 +154,20 @@ Rectangle {
                         gameTitle: model.title
                         coverArt: model.coverArtUrl || ""
                         isFavorite: model.isFavorite || false
+                        isInstalled: model.isInstalled !== undefined ? model.isInstalled : true
+                        downloadProgress: gamesRoot.activeDownloads[model.id] || 0
                         gameId: model.id
 
                         onPlayClicked: function(id) {
                             GameManager.launchGame(id)
+                        }
+                        onInstallClicked: function(id) {
+                            GameManager.installGame(id)
+                            // Seed progress so the UI switches to download state
+                            var dl = gamesRoot.activeDownloads
+                            dl[id] = 0.01
+                            gamesRoot.activeDownloads = dl
+                            downloadPollTimer.start()
                         }
                     }
 
@@ -743,6 +754,32 @@ Rectangle {
     Connections {
         target: GameManager
         function onGamesUpdated() { refreshGames() }
+        function onDownloadFinished(gameId) {
+            var dl = gamesRoot.activeDownloads
+            delete dl[gameId]
+            gamesRoot.activeDownloads = dl
+            refreshGames()
+        }
+    }
+
+    // Poll download progress while installs are active
+    Timer {
+        id: downloadPollTimer
+        interval: 2000
+        repeat: true
+        running: false
+        onTriggered: {
+            var info = GameManager.getActiveDownloads()
+            if (Object.keys(info).length === 0) {
+                downloadPollTimer.stop()
+                gamesRoot.activeDownloads = {}
+                return
+            }
+            // Merge server progress into our map
+            var dl = {}
+            for (var key in info) dl[key] = info[key]
+            gamesRoot.activeDownloads = dl
+        }
     }
 
     function refreshGames() {

@@ -11,6 +11,10 @@
 #include <QStandardPaths>
 #include <QCoreApplication>
 #include <QNetworkInterface>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QNetworkRequest>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -18,10 +22,16 @@ GameManager::GameManager(Database *db, QObject *parent)
 
     m_processMonitor = new QTimer(this);
     connect(m_processMonitor, &QTimer::timeout, this, &GameManager::monitorGameProcess);
+
+    m_downloadMonitor = new QTimer(this);
+    connect(m_downloadMonitor, &QTimer::timeout, this, &GameManager::monitorDownloads);
+
+    m_network = new QNetworkAccessManager(this);
 }
 
 void GameManager::registerBackends() {
-    m_backends.append(new SteamBackend());
+    m_steamBackend = new SteamBackend();
+    m_backends.append(m_steamBackend);
     m_backends.append(new HeroicBackend());
     m_backends.append(new LutrisBackend());
     m_backends.append(new CustomBackend());
@@ -30,17 +40,26 @@ void GameManager::registerBackends() {
 void GameManager::scanAllStores() {
     int totalFound = 0;
     for (StoreBackend* backend : m_backends) {
-        if (backend->isAvailable()) {
-            qDebug() << "Scanning" << backend->name() << "library...";
-            QVector<Game> games = backend->scanLibrary();
-            for (const Game& game : games) {
-                m_db->addGame(game);
-                totalFound++;
-            }
+        if (!backend->isAvailable()) continue;
+
+        qDebug() << "Scanning" << backend->name() << "library...";
+
+        QVector<Game> games;
+        if (backend == m_steamBackend)
+            games = m_steamBackend->scanOwnedGames();
+        else
+            games = backend->scanLibrary();
+
+        for (const Game& game : games) {
+            m_db->upsertGame(game);
+            totalFound++;
         }
     }
     emit scanComplete(totalFound);
     emit gamesUpdated();
+
+    // Asynchronously resolve names for uninstalled Steam games
+    resolveGameNames();
 }
 
 void GameManager::launchGame(int gameId) {
@@ -245,4 +264,109 @@ void GameManager::connectToWifi(const QString& ssid, const QString& password) {
         proc->deleteLater();
     });
     proc->start("nmcli", args);
+}
+
+void GameManager::installGame(int gameId) {
+    Game game = m_db->getGameById(gameId);
+    if (game.storeSource != "steam" || game.appId.isEmpty()) return;
+
+    m_steamBackend->installGame(game.appId);
+    m_downloadingGames[gameId] = game.appId;
+
+    // Start polling for download progress
+    if (!m_downloadMonitor->isActive())
+        m_downloadMonitor->start(2000);
+}
+
+QVariantMap GameManager::getActiveDownloads() {
+    QVariantMap result;
+    for (auto it = m_downloadingGames.constBegin();
+         it != m_downloadingGames.constEnd(); ++it) {
+        QVariantMap info = m_steamBackend->checkDownloadProgress(it.value());
+        result[QString::number(it.key())] = info.value("progress", 0.0);
+    }
+    return result;
+}
+
+void GameManager::monitorDownloads() {
+    QList<int> finished;
+
+    for (auto it = m_downloadingGames.constBegin();
+         it != m_downloadingGames.constEnd(); ++it) {
+        QVariantMap info = m_steamBackend->checkDownloadProgress(it.value());
+
+        if (info["installed"].toBool()) {
+            m_db->setGameInstalled("steam", it.value(), true);
+            finished.append(it.key());
+            emit downloadFinished(it.key());
+        }
+    }
+
+    for (int id : finished)
+        m_downloadingGames.remove(id);
+
+    if (m_downloadingGames.isEmpty()) {
+        m_downloadMonitor->stop();
+        emit gamesUpdated();
+    }
+}
+
+void GameManager::resolveGameNames() {
+    // Query directly for Steam games with empty titles — getAllGames()
+    // filters these out since they aren't ready to display yet.
+    QSqlQuery check(m_db->db());
+    check.exec("SELECT COUNT(*) FROM games WHERE store_source = 'steam' AND title = ''");
+    if (!check.next() || check.value(0).toInt() == 0) return;
+
+    // Fetch the complete Steam app list (free, no API key needed).
+    // This returns all ~150K apps with {appid, name} pairs.
+    QNetworkRequest request(QUrl(
+        "https://api.steampowered.com/ISteamApps/GetAppList/v2/"));
+    QNetworkReply *reply = m_network->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        if (reply->error() != QNetworkReply::NoError) {
+            qWarning() << "Failed to fetch Steam app list:"
+                       << reply->errorString();
+            reply->deleteLater();
+            return;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        QJsonArray apps = doc["applist"]["apps"].toArray();
+
+        // Build appId → name lookup
+        QHash<QString, QString> nameMap;
+        nameMap.reserve(apps.size());
+        for (const QJsonValue& app : apps) {
+            QJsonObject obj = app.toObject();
+            nameMap[QString::number(obj["appid"].toInt())] =
+                obj["name"].toString();
+        }
+
+        // Find games with empty titles directly from DB
+        QSqlQuery query(m_db->db());
+        query.exec("SELECT id, app_id FROM games "
+                    "WHERE store_source = 'steam' AND title = ''");
+
+        bool changed = false;
+        while (query.next()) {
+            int id = query.value("id").toInt();
+            QString appId = query.value("app_id").toString();
+            QString name = nameMap.value(appId);
+
+            if (name.isEmpty() || SteamBackend::isToolApp(name)) {
+                m_db->removeGame(id);
+                changed = true;
+            } else {
+                m_db->updateGameTitle("steam", appId, name);
+                changed = true;
+            }
+        }
+
+        if (changed)
+            emit gamesUpdated();
+
+        reply->deleteLater();
+    });
 }
