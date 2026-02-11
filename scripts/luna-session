@@ -146,8 +146,37 @@ while true; do
             if [ -f "$STEAM_LIB" ]; then
                 NOW_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
                 if [ -z "$STEAM_LIB_MTIME" ] || [ "$NOW_MTIME" != "$STEAM_LIB_MTIME" ]; then
-                    echo "luna-inner: Steam login detected, shutting down Steam" >> "$LUNA_LOG"
-                    sleep 5
+                    echo "luna-inner: Steam login detected, waiting for library sync..." >> "$LUNA_LOG"
+
+                    # Give Steam time to sync library data and download
+                    # cover art to librarycache.  We watch the directory
+                    # and wait until new files stop appearing (stable for
+                    # 10s) or a max timeout of 90s is reached.
+                    CACHE_DIR="$HOME/.local/share/Steam/appcache/librarycache"
+                    _sync_start=$(date +%s)
+                    _last_count=0
+                    _stable_secs=0
+                    while kill -0 "$STEAM_PID" 2>/dev/null; do
+                        _elapsed=$(( $(date +%s) - _sync_start ))
+                        [ "$_elapsed" -ge 90 ] && break
+
+                        if [ -d "$CACHE_DIR" ]; then
+                            _cur_count=$(ls "$CACHE_DIR"/*_library_600x900.jpg 2>/dev/null | wc -l)
+                        else
+                            _cur_count=0
+                        fi
+
+                        if [ "$_cur_count" -gt 0 ] && [ "$_cur_count" = "$_last_count" ]; then
+                            _stable_secs=$(( _stable_secs + 3 ))
+                            [ "$_stable_secs" -ge 10 ] && break
+                        else
+                            _stable_secs=0
+                        fi
+                        _last_count=$_cur_count
+                        sleep 3
+                    done
+                    echo "luna-inner: library sync done ($_last_count covers), shutting down Steam" >> "$LUNA_LOG"
+
                     steam -shutdown >> "$STEAM_LOG" 2>&1
                     # Wait up to 10s for graceful exit
                     for _i in $(seq 1 10); do
