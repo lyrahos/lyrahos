@@ -1,16 +1,16 @@
 {
   "name": "Space Purple",
-  "version": "1.0",
-  "description": "Deep purple cosmic theme",
+  "version": "1.1",
+  "description": "Deep cosmic purple — immersive and saturated",
   "colors": {
     "background": "#0a0a1a",
     "surface": "#1a1a2e",
     "primary": "#8b5cf6",
-    "secondary": "#a855f7",
+    "secondary": "#6d28d9",
     "accent": "#c084fc",
     "textPrimary": "#ffffff",
     "textSecondary": "#9ca3af",
-    "focus": "#a855f7",
+    "focus": "#c084fc",
     "hover": "#2a1a4e",
     "cardBackground": "#1a1a2e"
   },
