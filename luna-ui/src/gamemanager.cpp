@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QCoreApplication>
+#include <QNetworkInterface>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -175,4 +176,22 @@ void GameManager::switchToDesktop() {
 
 int GameManager::getGameCount() {
     return m_db->getAllGames().size();
+}
+
+bool GameManager::isNetworkAvailable() {
+    const auto interfaces = QNetworkInterface::allInterfaces();
+    for (const auto &iface : interfaces) {
+        if (iface.flags().testFlag(QNetworkInterface::IsUp) &&
+            iface.flags().testFlag(QNetworkInterface::IsRunning) &&
+            !iface.flags().testFlag(QNetworkInterface::IsLoopBack)) {
+            const auto entries = iface.addressEntries();
+            for (const auto &entry : entries) {
+                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol &&
+                    !entry.ip().isLoopback()) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }

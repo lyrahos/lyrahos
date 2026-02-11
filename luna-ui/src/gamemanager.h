@@ -27,6 +27,7 @@ public:
     Q_INVOKABLE void launchSteamLogin();
     Q_INVOKABLE void switchToDesktop();
     Q_INVOKABLE int getGameCount();
+    Q_INVOKABLE bool isNetworkAvailable();
 
 signals:
     void gamesUpdated();

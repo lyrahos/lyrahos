@@ -170,10 +170,56 @@ Rectangle {
             Item {
                 id: gameStoresTab
 
+                property bool hasNetwork: GameManager.isNetworkAvailable()
+
+                // Refresh network status when tab becomes visible
+                Timer {
+                    id: networkCheckTimer
+                    interval: 3000
+                    running: activeTab === 1
+                    repeat: true
+                    onTriggered: gameStoresTab.hasNetwork = GameManager.isNetworkAvailable()
+                }
+                Component.onCompleted: hasNetwork = GameManager.isNetworkAvailable()
+
+                // ─── Offline state ───
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 16
+                    visible: !gameStoresTab.hasNetwork
+
+                    Text {
+                        text: "No Internet Connection"
+                        font.pixelSize: ThemeManager.getFontSize("large")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "Please connect to Wi-Fi!"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "A network connection is required to log in and install games."
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+
+                // ─── Online: store cards ───
                 Flickable {
                     anchors.fill: parent
                     contentHeight: storesColumn.height
                     clip: true
+                    visible: gameStoresTab.hasNetwork
 
                     ColumnLayout {
                         id: storesColumn
