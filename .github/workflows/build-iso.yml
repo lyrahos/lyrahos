@@ -283,6 +283,7 @@ jobs:
                 alsa-lib.i686 \
                 libXinerama.i686 \
                 switcheroo-control \
+                xorg-x11-server-Xwayland \
                 xdg-desktop-portal \
                 xdg-desktop-portal-kde \
                 flatpak \
