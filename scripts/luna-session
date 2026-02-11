@@ -134,7 +134,10 @@ while true; do
         [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
 
         echo "luna-inner: launching Steam for login at $(date)" >> "$LUNA_LOG"
-        steam >> "$STEAM_LOG" 2>&1 &
+        # Use -gamepadui (Steam Deck UI) so the login screen renders at
+        # the full gamescope Xwayland resolution instead of opening a small
+        # dialog window that gets upscaled with bilinear blur.
+        steam -gamepadui >> "$STEAM_LOG" 2>&1 &
         STEAM_PID=$!
 
         # Wait for login: libraryfolders.vdf appears or is updated,
