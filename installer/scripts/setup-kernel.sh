@@ -129,10 +129,11 @@ else
     # plymouth.enable=1 instead for Lyrah branding.
     #
     # CRITICAL boot parameters:
-    #   selinux=0         - Disable SELinux (filesystem has no labels from ISO build)
-    #   nouveau.modeset=0 - Prevent nouveau DRM hangs on hybrid GPU laptops
-    #   nomodeset         - Safe first boot (software rendering); first-boot.sh
-    #                       removes this after GPU drivers are properly configured
+    #   selinux=0             - Disable SELinux (filesystem has no labels from ISO build)
+    #   nouveau.modeset=0     - Prevent nouveau DRM hangs on hybrid GPU laptops
+    #   nvidia-drm.modeset=1  - Enable NVIDIA DRM/KMS so nvidia-drm creates /dev/dri/ nodes
+    #   nomodeset             - Safe first boot (software rendering); first-boot.sh
+    #                           removes this after GPU drivers are properly configured
     #
     # TEMPORARILY using minimal boot params to diagnose crash - once working,
     # can re-enable quiet/splash/plymouth for polished boot experience
@@ -141,13 +142,13 @@ title $PRETTY_NAME ($KVER)
 version $KVER
 linux /boot/vmlinuz-$KVER
 initrd /boot/initramfs-$KVER.img
-options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 nouveau.modeset=0 nomodeset systemd.log_level=info
+options root=UUID=@@ROOT_UUID@@ $ROOTFLAGS_OPT ro selinux=0 nouveau.modeset=0 nvidia-drm.modeset=1 nomodeset systemd.log_level=info
 grub_users \$grub_users
 grub_arg --unrestricted
 grub_class lyrah
 EOF
     echo "Created BLS entry: $BLS_FILE"
-    echo "  Boot options: ro selinux=0 nouveau.modeset=0 nomodeset systemd.log_level=info (verbose for debugging)"
+    echo "  Boot options: ro selinux=0 nouveau.modeset=0 nvidia-drm.modeset=1 nomodeset systemd.log_level=info (verbose for debugging)"
 
     # Create a DEBUG boot entry that shows all boot messages
     # This helps diagnose boot failures when the normal entry fails silently
