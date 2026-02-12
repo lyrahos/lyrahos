@@ -420,14 +420,15 @@ void GameManager::installGame(int gameId) {
         << QString("steam://install/%1").arg(game.appId));
 
     // Auto-accept the install confirmation dialog. Poll for the Steam dialog
-    // window on the real display using xdotool search, then send Enter to
-    // dismiss it. This works whether Steam was already running or just started.
+    // window on the real display using xdotool search, then Tab to the
+    // Install button and press Enter. Steam's dialog opens with focus on the
+    // drive/location picker, so we need to Tab past it to reach the button.
     QString acceptScript =
         "for i in $(seq 1 30); do "
         "  WID=$(xdotool search --name 'Install' 2>/dev/null | head -1); "
         "  if [ -n \"$WID\" ]; then "
         "    sleep 1; "
-        "    xdotool key --window \"$WID\" Return; "
+        "    xdotool key --window \"$WID\" Tab Tab Tab Return; "
         "    break; "
         "  fi; "
         "  sleep 1; "
