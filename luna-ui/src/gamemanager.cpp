@@ -416,10 +416,18 @@ void GameManager::installGame(int gameId) {
     // confirmation dialog doesn't appear inside gamescope and steal focus.
     // If a background Steam is already running (from a prior download),
     // the new steam process just relays the URL to it via IPC and exits.
+    //
+    // As a fallback, xdotool sends Enter keypresses on the virtual display
+    // after Steam boots to auto-accept any confirmation dialogs that would
+    // otherwise block the download from starting.
+    QString script = QString(
+        "steam -silent -nochatui -nofriendsui 'steam://install/%1' & "
+        "STEAM_PID=$!; "
+        "for i in 20 5 5 5; do sleep $i; xdotool key Return 2>/dev/null; done & "
+        "wait $STEAM_PID"
+    ).arg(game.appId);
     QProcess::startDetached("xvfb-run", QStringList()
-        << "-a"  // auto-pick a free display number
-        << "steam" << "-silent" << "-nochatui" << "-nofriendsui"
-        << "steam://install/" + game.appId);
+        << "-a" << "--" << "sh" << "-c" << script);
 
     // Start polling .acf manifests for download progress
     if (!m_downloadMonitor->isActive()) {
