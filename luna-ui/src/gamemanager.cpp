@@ -412,22 +412,28 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Run Steam on a hidden virtual display (xvfb-run) so its install
-    // confirmation dialog doesn't appear inside gamescope and steal focus.
-    // If a background Steam is already running (from a prior download),
-    // the new steam process just relays the URL to it via IPC and exits.
-    //
-    // As a fallback, xdotool sends Enter keypresses on the virtual display
-    // after Steam boots to auto-accept any confirmation dialogs that would
-    // otherwise block the download from starting.
-    QString script = QString(
-        "steam -silent -nochatui -nofriendsui 'steam://install/%1' & "
-        "STEAM_PID=$!; "
-        "for i in 20 5 5 5; do sleep $i; xdotool key Return 2>/dev/null; done & "
-        "wait $STEAM_PID"
-    ).arg(game.appId);
-    QProcess::startDetached("xvfb-run", QStringList()
-        << "-a" << "--" << "sh" << "-c" << script);
+    // Trigger Steam's install dialog. If Steam is already running (which it
+    // normally is after login), the new process relays the URL via IPC to
+    // the existing instance and exits — the dialog appears on the real display.
+    QProcess::startDetached("steam", QStringList()
+        << "-silent" << "-nochatui" << "-nofriendsui"
+        << QString("steam://install/%1").arg(game.appId));
+
+    // Auto-accept the install confirmation dialog. Poll for the Steam dialog
+    // window on the real display using xdotool search, then Tab to the
+    // Install button and press Enter. Steam's dialog opens with focus on the
+    // drive/location picker, so we need to Tab past it to reach the button.
+    QString acceptScript =
+        "for i in $(seq 1 30); do "
+        "  WID=$(xdotool search --name 'Install' 2>/dev/null | head -1); "
+        "  if [ -n \"$WID\" ]; then "
+        "    sleep 1; "
+        "    xdotool key --window \"$WID\" Tab Tab Tab Return; "
+        "    break; "
+        "  fi; "
+        "  sleep 1; "
+        "done";
+    QProcess::startDetached("sh", QStringList() << "-c" << acceptScript);
 
     // Start polling .acf manifests for download progress
     if (!m_downloadMonitor->isActive()) {
@@ -529,7 +535,7 @@ void GameManager::checkDownloadProgress() {
 
     if (m_activeDownloads.isEmpty()) {
         m_downloadMonitor->stop();
-        // Shut down the background Steam instance that was running on xvfb
+        // Shut down the background Steam instance used for downloading
         QProcess::startDetached("steam", QStringList() << "-shutdown");
         qDebug() << "All downloads finished, shutting down background Steam";
     }
