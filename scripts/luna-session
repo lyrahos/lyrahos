@@ -148,11 +148,38 @@ while true; do
                 if [ -z "$STEAM_LIB_MTIME" ] || [ "$NOW_MTIME" != "$STEAM_LIB_MTIME" ]; then
                     echo "luna-inner: Steam login detected, waiting for library sync..." >> "$LUNA_LOG"
 
+                    # ── Diagnostic dump: what does Steam's local data look like? ──
+                    STEAM_BASE="$HOME/.local/share/Steam"
+                    CACHE_DIR="$STEAM_BASE/appcache/librarycache"
+                    {
+                        echo "========= STEAM SYNC DIAGNOSTICS $(date) ========="
+                        echo "--- libraryfolders.vdf ---"
+                        cat "$STEAM_LIB" 2>/dev/null | head -40
+                        echo ""
+                        echo "--- steamapps/ appmanifest files ---"
+                        ls -la "$STEAM_BASE/steamapps/appmanifest_"*.acf 2>/dev/null || echo "(none)"
+                        echo ""
+                        echo "--- appcache/librarycache/ (first 30 files) ---"
+                        ls "$CACHE_DIR"/ 2>/dev/null | head -30 || echo "(dir missing)"
+                        echo ""
+                        echo "--- librarycache *_library_600x900.jpg count ---"
+                        ls "$CACHE_DIR"/*_library_600x900.jpg 2>/dev/null | wc -l
+                        echo ""
+                        echo "--- appcache/ top-level contents ---"
+                        ls -la "$STEAM_BASE/appcache/" 2>/dev/null | head -20
+                        echo ""
+                        echo "--- config/loginusers.vdf ---"
+                        cat "$STEAM_BASE/config/loginusers.vdf" 2>/dev/null | head -20
+                        echo ""
+                        echo "--- userdata/ subdirs ---"
+                        ls -la "$STEAM_BASE/userdata/" 2>/dev/null
+                        echo "========= END DIAGNOSTICS ========="
+                    } >> "$LUNA_LOG" 2>&1
+
                     # Give Steam time to sync library data and download
                     # cover art to librarycache.  We watch the directory
                     # and wait until new files stop appearing (stable for
                     # 10s) or a max timeout of 90s is reached.
-                    CACHE_DIR="$HOME/.local/share/Steam/appcache/librarycache"
                     _sync_start=$(date +%s)
                     _last_count=0
                     _stable_secs=0
@@ -166,6 +193,16 @@ while true; do
                             _cur_count=0
                         fi
 
+                        # Log progress every ~15 seconds so we can see what happens
+                        if [ $(( _elapsed % 15 )) -lt 3 ]; then
+                            echo "luna-inner: sync +${_elapsed}s — covers=$_cur_count stable=${_stable_secs}s" >> "$LUNA_LOG"
+                            # Also check if other image types exist
+                            if [ -d "$CACHE_DIR" ]; then
+                                _any_files=$(ls "$CACHE_DIR"/ 2>/dev/null | wc -l)
+                                echo "luna-inner:   total librarycache files=$_any_files" >> "$LUNA_LOG"
+                            fi
+                        fi
+
                         if [ "$_cur_count" -gt 0 ] && [ "$_cur_count" = "$_last_count" ]; then
                             _stable_secs=$(( _stable_secs + 3 ))
                             [ "$_stable_secs" -ge 10 ] && break
@@ -175,7 +212,21 @@ while true; do
                         _last_count=$_cur_count
                         sleep 3
                     done
-                    echo "luna-inner: library sync done ($_last_count covers), shutting down Steam" >> "$LUNA_LOG"
+                    echo "luna-inner: library sync done ($_last_count covers after ${_elapsed}s), shutting down Steam" >> "$LUNA_LOG"
+
+                    # Final diagnostic dump after sync wait
+                    {
+                        echo "========= POST-SYNC DIAGNOSTICS $(date) ========="
+                        echo "--- librarycache *_library_600x900.jpg count ---"
+                        ls "$CACHE_DIR"/*_library_600x900.jpg 2>/dev/null | wc -l
+                        echo "--- librarycache total file count ---"
+                        ls "$CACHE_DIR"/ 2>/dev/null | wc -l
+                        echo "--- librarycache sample files (first 20) ---"
+                        ls "$CACHE_DIR"/ 2>/dev/null | head -20
+                        echo "--- steamapps/ appmanifest files ---"
+                        ls -la "$STEAM_BASE/steamapps/appmanifest_"*.acf 2>/dev/null || echo "(none)"
+                        echo "========= END POST-SYNC ========="
+                    } >> "$LUNA_LOG" 2>&1
 
                     steam -shutdown >> "$STEAM_LOG" 2>&1
                     # Wait up to 10s for graceful exit
