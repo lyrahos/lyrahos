@@ -49,7 +49,7 @@ QString ArtworkManager::getCoverArt(int gameId, const QString& url) {
 void ArtworkManager::downloadArtwork(int gameId, const QString& url) {
     m_pending.insert(gameId);
 
-    QNetworkRequest req(QUrl(url));
+    QNetworkRequest req{QUrl(url)};
     req.setTransferTimeout(10000); // 10s timeout
     QNetworkReply *reply = m_nam->get(req);
 
