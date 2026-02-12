@@ -761,12 +761,44 @@ Rectangle {
                                 Text {
                                     text: GameManager.hasSteamApiKey()
                                           ? "API key is configured. Click below to fetch all your owned games."
-                                          : "Enter your Steam API key to import ALL owned games (including uninstalled).\nGet your key at: steamcommunity.com/dev/apikey"
+                                          : "To import ALL owned games (including uninstalled), you need a free Steam API key.\nClick the button below to open the key page in Steam's browser, then paste it here."
                                     font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textSecondary")
                                     wrapMode: Text.WordWrap
                                     Layout.fillWidth: true
+                                }
+
+                                // "Get API Key" button — opens Steam's built-in browser
+                                Rectangle {
+                                    visible: !GameManager.hasSteamApiKey()
+                                    Layout.preferredWidth: getKeyLabel.width + 32
+                                    Layout.preferredHeight: 40
+                                    radius: 8
+                                    color: "#1b2838"
+                                    border.color: getKeyArea.containsMouse
+                                                  ? ThemeManager.getColor("focus") : "transparent"
+                                    border.width: getKeyArea.containsMouse ? 2 : 0
+
+                                    Text {
+                                        id: getKeyLabel
+                                        anchors.centerIn: parent
+                                        text: "Get API Key (opens Steam browser)"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: "#66c0f4"
+                                    }
+
+                                    MouseArea {
+                                        id: getKeyArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: GameManager.openSteamApiKeyPage()
+                                    }
+
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
                                 }
 
                                 // API key input row (hidden if key already saved)

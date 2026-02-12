@@ -39,6 +39,7 @@ public:
     Q_INVOKABLE bool hasSteamApiKey();
     Q_INVOKABLE QString getDetectedSteamId();
     Q_INVOKABLE void fetchSteamOwnedGames();
+    Q_INVOKABLE void openSteamApiKeyPage();
 
 signals:
     void gamesUpdated();

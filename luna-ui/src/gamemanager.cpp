@@ -356,3 +356,10 @@ void GameManager::fetchSteamOwnedGames() {
         emit gamesUpdated();
     });
 }
+
+void GameManager::openSteamApiKeyPage() {
+    // Open the Steam API key registration page in Steam's built-in browser.
+    // steam://openurl/ tells the Steam client to open the URL in its overlay browser,
+    // which works inside gamescope without needing a desktop browser.
+    QProcess::startDetached("steam", QStringList() << "steam://openurl/https://steamcommunity.com/dev/apikey");
+}
