@@ -20,6 +20,41 @@ Rectangle {
     signal playClicked(int id)
     signal favoriteClicked(int id)
 
+    // Resolve cover art through ArtworkManager (handles caching + async download)
+    property string resolvedArt: {
+        if (!coverArt || coverArt.length === 0) return ""
+        var cached = ArtworkManager.getCoverArt(gameId, coverArt)
+        return cached || ""
+    }
+
+    // When ArtworkManager finishes downloading, update the source
+    Connections {
+        target: ArtworkManager
+        function onArtworkReady(readyGameId, localPath) {
+            if (readyGameId === gameId) {
+                coverImage.source = "file://" + localPath
+            }
+        }
+    }
+
+    // Retry timer — if image fails, retry a few times with backoff
+    Timer {
+        id: retryTimer
+        property int attempt: 0
+        interval: 3000
+        onTriggered: {
+            if (attempt < 3 && coverImage.status === Image.Error) {
+                // Force QML Image to re-request by toggling source
+                var src = coverImage.source
+                coverImage.source = ""
+                coverImage.source = src
+                attempt++
+                interval = interval * 2
+                start()
+            }
+        }
+    }
+
     // Rounded cover art using clip instead of Qt5Compat.GraphicalEffects
     Rectangle {
         id: coverContainer
@@ -32,10 +67,29 @@ Rectangle {
         Image {
             id: coverImage
             anchors.fill: parent
-            source: coverArt || ""
+            source: {
+                if (resolvedArt.length > 0) {
+                    // Local paths need file:// prefix, URLs stay as-is
+                    if (resolvedArt.startsWith("/"))
+                        return "file://" + resolvedArt
+                    return resolvedArt
+                }
+                // Fall back to direct URL (QML can load http:// natively)
+                if (coverArt && coverArt.length > 0)
+                    return coverArt
+                return ""
+            }
             fillMode: Image.PreserveAspectCrop
             visible: status === Image.Ready
             opacity: isInstalled ? 1.0 : (downloadProgress >= 0 ? 0.7 : 0.5)
+            asynchronous: true
+            cache: true
+
+            onStatusChanged: {
+                if (status === Image.Error && retryTimer.attempt < 3) {
+                    retryTimer.start()
+                }
+            }
         }
 
         // Placeholder if no art loaded
