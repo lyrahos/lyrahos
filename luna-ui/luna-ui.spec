@@ -11,6 +11,7 @@ Source0:        https://github.com/lyrah-os/lyrah-os/archive/v%{version}/%{name}
 BuildRequires:  cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel SDL2-devel sqlite-devel
 Requires:       qt6-qtbase qt6-qtdeclarative SDL2 sqlite
 Requires:       google-noto-sans-fonts
+Requires:       xorg-x11-server-Xvfb
 
 %description
 Custom store-agnostic gaming frontend for Lyrah OS Luna Mode.

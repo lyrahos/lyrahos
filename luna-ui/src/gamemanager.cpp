@@ -412,12 +412,13 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Launch Steam silently and tell it to install this app.
-    // -silent: suppress the main Steam window
-    // -nochatui -nofriendsui: skip chat/friends windows
-    // Steam will run headlessly and begin downloading.
-    QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nochatui" << "-nofriendsui"
+    // Run Steam on a hidden virtual display (xvfb-run) so its install
+    // confirmation dialog doesn't appear inside gamescope and steal focus.
+    // If a background Steam is already running (from a prior download),
+    // the new steam process just relays the URL to it via IPC and exits.
+    QProcess::startDetached("xvfb-run", QStringList()
+        << "-a"  // auto-pick a free display number
+        << "steam" << "-silent" << "-nochatui" << "-nofriendsui"
         << "steam://install/" + game.appId);
 
     // Start polling .acf manifests for download progress
@@ -520,5 +521,8 @@ void GameManager::checkDownloadProgress() {
 
     if (m_activeDownloads.isEmpty()) {
         m_downloadMonitor->stop();
+        // Shut down the background Steam instance that was running on xvfb
+        QProcess::startDetached("steam", QStringList() << "-shutdown");
+        qDebug() << "All downloads finished, shutting down background Steam";
     }
 }
