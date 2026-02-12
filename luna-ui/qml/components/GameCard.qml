@@ -15,6 +15,7 @@ Rectangle {
     property bool isFavorite: false
     property bool isInstalled: true
     property int gameId: -1
+    property double downloadProgress: -1.0  // -1 = not downloading, 0..1 = progress
 
     signal playClicked(int id)
     signal favoriteClicked(int id)
@@ -34,7 +35,7 @@ Rectangle {
             source: coverArt || ""
             fillMode: Image.PreserveAspectCrop
             visible: status === Image.Ready
-            opacity: isInstalled ? 1.0 : 0.5
+            opacity: isInstalled ? 1.0 : (downloadProgress >= 0 ? 0.7 : 0.5)
         }
 
         // Placeholder if no art loaded
@@ -42,7 +43,7 @@ Rectangle {
             visible: coverImage.status !== Image.Ready
             anchors.fill: parent
             color: ThemeManager.getColor("surface")
-            opacity: isInstalled ? 1.0 : 0.5
+            opacity: isInstalled ? 1.0 : (downloadProgress >= 0 ? 0.7 : 0.5)
 
             Text {
                 anchors.centerIn: parent
@@ -50,6 +51,29 @@ Rectangle {
                 font.pixelSize: 48
                 font.bold: true
                 color: ThemeManager.getColor("primary")
+            }
+        }
+
+        // Download progress bar overlay
+        Rectangle {
+            id: downloadOverlay
+            visible: downloadProgress >= 0
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 6
+            color: Qt.rgba(0, 0, 0, 0.5)
+            radius: 3
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: parent.width * Math.max(0, downloadProgress)
+                radius: 3
+                color: ThemeManager.getColor("accent")
+
+                Behavior on width { NumberAnimation { duration: 300 } }
             }
         }
     }
@@ -80,10 +104,17 @@ Rectangle {
             Text {
                 visible: !isInstalled
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Not Installed"
+                text: {
+                    if (downloadProgress >= 0) {
+                        return "Downloading " + Math.round(downloadProgress * 100) + "%"
+                    }
+                    return "Not Installed"
+                }
                 font.pixelSize: 10
                 font.family: ThemeManager.getFont("body")
-                color: ThemeManager.getColor("textSecondary")
+                color: downloadProgress >= 0
+                       ? ThemeManager.getColor("accent")
+                       : ThemeManager.getColor("textSecondary")
                 horizontalAlignment: Text.AlignHCenter
             }
         }

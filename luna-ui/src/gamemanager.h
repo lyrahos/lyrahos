@@ -3,10 +3,12 @@
 
 #include <QObject>
 #include <QVector>
+#include <QHash>
 #include <QTimer>
 #include <QVariantList>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QFileSystemWatcher>
 #include "database.h"
 #include "storebackend.h"
 
@@ -41,6 +43,11 @@ public:
     Q_INVOKABLE void fetchSteamOwnedGames();
     Q_INVOKABLE void openSteamApiKeyPage();
 
+    // Steam game download management
+    Q_INVOKABLE void installGame(int gameId);
+    Q_INVOKABLE bool isDownloading(const QString& appId);
+    Q_INVOKABLE double getDownloadProgress(const QString& appId);
+
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId);
@@ -49,6 +56,9 @@ signals:
     void wifiConnectResult(bool success, const QString& message);
     void steamOwnedGamesFetched(int gamesFound);
     void steamOwnedGamesFetchError(const QString& error);
+    void downloadStarted(QString appId, int gameId);
+    void downloadProgressChanged(QString appId, double progress);
+    void downloadComplete(QString appId, int gameId);
 
 private:
     Database *m_db;
@@ -58,11 +68,18 @@ private:
     QTimer *m_processMonitor;
     QNetworkAccessManager *m_networkManager;
 
+    // Download tracking: appId → gameId
+    QHash<QString, int> m_activeDownloads;
+    QTimer *m_downloadMonitor;
+    QFileSystemWatcher *m_acfWatcher;
+
     void registerBackends();
     void monitorGameProcess();
+    void checkDownloadProgress();
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
     QString steamApiKeyPath() const;
+    QStringList getSteamAppsDirs() const;
 };
 
 #endif

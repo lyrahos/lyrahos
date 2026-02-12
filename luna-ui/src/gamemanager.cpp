@@ -12,6 +12,9 @@
 #include <QCoreApplication>
 #include <QNetworkInterface>
 #include <QUrlQuery>
+#include <QFileSystemWatcher>
+#include <QTextStream>
+#include <QRegularExpression>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -21,6 +24,20 @@ GameManager::GameManager(Database *db, QObject *parent)
     connect(m_processMonitor, &QTimer::timeout, this, &GameManager::monitorGameProcess);
 
     m_networkManager = new QNetworkAccessManager(this);
+
+    // Download progress monitor — polls .acf manifests every 2s
+    m_downloadMonitor = new QTimer(this);
+    connect(m_downloadMonitor, &QTimer::timeout, this, &GameManager::checkDownloadProgress);
+
+    m_acfWatcher = new QFileSystemWatcher(this);
+    // Watch steamapps dirs so we detect new .acf files appearing
+    for (const QString& dir : getSteamAppsDirs()) {
+        m_acfWatcher->addPath(dir);
+    }
+    connect(m_acfWatcher, &QFileSystemWatcher::directoryChanged, this, [this]() {
+        // A new file appeared in steamapps — check progress immediately
+        checkDownloadProgress();
+    });
 }
 
 void GameManager::registerBackends() {
@@ -54,9 +71,9 @@ void GameManager::scanAllStores() {
 void GameManager::launchGame(int gameId) {
     Game game = m_db->getGameById(gameId);
 
-    // If game is not installed, launch the install command instead
+    // If game is not installed, trigger a silent download instead of opening Steam UI
     if (!game.isInstalled) {
-        QProcess::startDetached("steam", QStringList() << "steam://install/" + game.appId);
+        installGame(gameId);
         return;
     }
 
@@ -362,4 +379,146 @@ void GameManager::openSteamApiKeyPage() {
     // steam://openurl/ tells the Steam client to open the URL in its overlay browser,
     // which works inside gamescope without needing a desktop browser.
     QProcess::startDetached("steam", QStringList() << "steam://openurl/https://steamcommunity.com/dev/apikey");
+}
+
+// ── Steam game download management ──
+
+QStringList GameManager::getSteamAppsDirs() const {
+    QStringList dirs;
+    QString vdfPath = QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf";
+    QFile file(vdfPath);
+    if (!file.open(QIODevice::ReadOnly)) return dirs;
+
+    QTextStream in(&file);
+    QString content = in.readAll();
+    QRegularExpression pathRe("\"path\"\\s+\"([^\"]+)\"");
+    auto matches = pathRe.globalMatch(content);
+    while (matches.hasNext()) {
+        auto match = matches.next();
+        QString steamapps = match.captured(1) + "/steamapps";
+        if (QDir(steamapps).exists())
+            dirs.append(steamapps);
+    }
+    return dirs;
+}
+
+void GameManager::installGame(int gameId) {
+    Game game = m_db->getGameById(gameId);
+    if (game.storeSource != "steam" || game.appId.isEmpty()) return;
+
+    // Already downloading?
+    if (m_activeDownloads.contains(game.appId)) return;
+
+    m_activeDownloads.insert(game.appId, gameId);
+    emit downloadStarted(game.appId, gameId);
+
+    // Launch Steam silently and tell it to install this app.
+    // -silent: suppress the main Steam window
+    // -nochatui -nofriendsui: skip chat/friends windows
+    // Steam will run headlessly and begin downloading.
+    QProcess::startDetached("steam", QStringList()
+        << "-silent" << "-nochatui" << "-nofriendsui"
+        << "steam://install/" + game.appId);
+
+    // Start polling .acf manifests for download progress
+    if (!m_downloadMonitor->isActive()) {
+        m_downloadMonitor->start(2000);
+    }
+
+    qDebug() << "Started silent download for" << game.title << "(appId:" << game.appId << ")";
+}
+
+bool GameManager::isDownloading(const QString& appId) {
+    return m_activeDownloads.contains(appId);
+}
+
+double GameManager::getDownloadProgress(const QString& appId) {
+    if (!m_activeDownloads.contains(appId)) return -1.0;
+
+    // Search all steamapps dirs for the appmanifest
+    for (const QString& dir : getSteamAppsDirs()) {
+        QString manifestPath = dir + "/appmanifest_" + appId + ".acf";
+        QFile file(manifestPath);
+        if (!file.open(QIODevice::ReadOnly)) continue;
+
+        QTextStream in(&file);
+        QString content = in.readAll();
+
+        QRegularExpression dlRe("\"BytesDownloaded\"\\s+\"(\\d+)\"");
+        QRegularExpression totalRe("\"BytesToDownload\"\\s+\"(\\d+)\"");
+        auto dlMatch = dlRe.match(content);
+        auto totalMatch = totalRe.match(content);
+
+        if (dlMatch.hasMatch() && totalMatch.hasMatch()) {
+            qint64 downloaded = dlMatch.captured(1).toLongLong();
+            qint64 total = totalMatch.captured(1).toLongLong();
+            if (total > 0) {
+                return static_cast<double>(downloaded) / static_cast<double>(total);
+            }
+        }
+        // Manifest exists but no progress fields yet — download queued
+        return 0.0;
+    }
+    // No manifest yet — Steam is still starting up
+    return 0.0;
+}
+
+void GameManager::checkDownloadProgress() {
+    if (m_activeDownloads.isEmpty()) {
+        m_downloadMonitor->stop();
+        return;
+    }
+
+    QStringList dirs = getSteamAppsDirs();
+    QList<QString> completed;
+
+    for (auto it = m_activeDownloads.constBegin(); it != m_activeDownloads.constEnd(); ++it) {
+        const QString& appId = it.key();
+        int gameId = it.value();
+
+        double progress = getDownloadProgress(appId);
+        emit downloadProgressChanged(appId, progress);
+
+        // Check if fully installed: StateFlags == 4 means fully installed
+        for (const QString& dir : dirs) {
+            QString manifestPath = dir + "/appmanifest_" + appId + ".acf";
+            QFile file(manifestPath);
+            if (!file.open(QIODevice::ReadOnly)) continue;
+
+            QTextStream in(&file);
+            QString content = in.readAll();
+
+            QRegularExpression stateRe("\"StateFlags\"\\s+\"(\\d+)\"");
+            auto stateMatch = stateRe.match(content);
+            if (stateMatch.hasMatch()) {
+                int stateFlags = stateMatch.captured(1).toInt();
+                // StateFlags 4 = fully installed
+                if (stateFlags == 4) {
+                    completed.append(appId);
+
+                    // Update the database
+                    Game game = m_db->getGameById(gameId);
+                    game.isInstalled = true;
+                    game.launchCommand = "steam steam://rungameid/" + appId;
+                    m_db->updateGame(game);
+
+                    emit downloadComplete(appId, gameId);
+                    qDebug() << "Download complete:" << game.title;
+                }
+            }
+            break; // only check first matching dir
+        }
+    }
+
+    for (const QString& appId : completed) {
+        m_activeDownloads.remove(appId);
+    }
+
+    if (!completed.isEmpty()) {
+        emit gamesUpdated();
+    }
+
+    if (m_activeDownloads.isEmpty()) {
+        m_downloadMonitor->stop();
+    }
 }
