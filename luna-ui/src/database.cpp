@@ -48,6 +48,10 @@ void Database::createTables() {
                "metadata TEXT"
                ")");
 
+    // Unique index on store_source + app_id to prevent duplicate entries
+    query.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_games_store_app "
+               "ON games(store_source, app_id)");
+
     query.exec("CREATE TABLE IF NOT EXISTS game_sessions ("
                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                "game_id INTEGER NOT NULL,"
@@ -156,8 +160,40 @@ Game Database::getGameById(int gameId) {
     return Game{}; // Return empty game if not found
 }
 
+Game Database::getGameByStoreAndAppId(const QString& storeSource, const QString& appId) {
+    QSqlQuery query;
+    query.prepare("SELECT * FROM games WHERE store_source = ? AND app_id = ?");
+    query.addBindValue(storeSource);
+    query.addBindValue(appId);
+    if (query.exec() && query.next()) {
+        return gameFromQuery(query);
+    }
+    return Game{};
+}
+
+int Database::addOrUpdateGame(const Game& game) {
+    Game existing = getGameByStoreAndAppId(game.storeSource, game.appId);
+    if (existing.id > 0) {
+        // Update existing game, but preserve user data (favorites, hidden, last_played)
+        Game updated = game;
+        updated.id = existing.id;
+        updated.isFavorite = existing.isFavorite;
+        updated.isHidden = existing.isHidden;
+        if (existing.lastPlayed > 0) {
+            updated.lastPlayed = existing.lastPlayed;
+        }
+        if (existing.playTimeHours > game.playTimeHours) {
+            updated.playTimeHours = existing.playTimeHours;
+        }
+        updateGame(updated);
+        return existing.id;
+    }
+    return addGame(game);
+}
+
 QVector<Game> Database::getAllGames() {
-    QSqlQuery query("SELECT * FROM games WHERE is_hidden = 0 AND is_installed = 1 ORDER BY title ASC");
+    // Show all owned games: installed first, then uninstalled, alphabetical within each group
+    QSqlQuery query("SELECT * FROM games WHERE is_hidden = 0 ORDER BY is_installed DESC, title ASC");
     QVector<Game> games;
     while (query.next()) {
         games.append(gameFromQuery(query));

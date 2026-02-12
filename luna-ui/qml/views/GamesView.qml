@@ -153,6 +153,7 @@ Rectangle {
                         gameTitle: model.title
                         coverArt: model.coverArtUrl || ""
                         isFavorite: model.isFavorite || false
+                        isInstalled: model.isInstalled !== undefined ? model.isInstalled : true
                         gameId: model.id
 
                         onPlayClicked: function(id) {
@@ -174,6 +175,8 @@ Rectangle {
                 property bool showWifiPanel: false
                 property string wifiStatus: ""
                 property bool wifiConnecting: false
+                property string steamFetchStatus: ""
+                property bool steamFetching: false
 
                 // Refresh network status when tab becomes visible
                 Timer {
@@ -199,6 +202,15 @@ Rectangle {
                         } else {
                             gameStoresTab.wifiStatus = "Failed: " + message
                         }
+                    }
+                    function onSteamOwnedGamesFetched(gamesFound) {
+                        gameStoresTab.steamFetching = false
+                        gameStoresTab.steamFetchStatus = "Found " + gamesFound + " owned games!"
+                        refreshGames()
+                    }
+                    function onSteamOwnedGamesFetchError(error) {
+                        gameStoresTab.steamFetching = false
+                        gameStoresTab.steamFetchStatus = "Error: " + error
                     }
                 }
 
@@ -708,6 +720,248 @@ Rectangle {
                             }
 
                             Behavior on border.color { ColorAnimation { duration: 150 } }
+                        }
+
+                        // ─── Steam API Key Setup (visible when Steam is logged in) ───
+                        Rectangle {
+                            visible: GameManager.isSteamAvailable()
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: apiKeyColumn.height + 40
+                            radius: 12
+                            color: ThemeManager.getColor("surface")
+
+                            ColumnLayout {
+                                id: apiKeyColumn
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 20
+                                spacing: 10
+
+                                Text {
+                                    text: "Steam Game Library Sync"
+                                    font.pixelSize: ThemeManager.getFontSize("medium")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: true
+                                    color: ThemeManager.getColor("textPrimary")
+                                }
+
+                                Text {
+                                    text: {
+                                        var steamId = GameManager.getDetectedSteamId()
+                                        if (steamId)
+                                            return "Steam ID detected: " + steamId
+                                        return "Steam ID: not detected — log in to Steam first"
+                                    }
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("accent")
+                                }
+
+                                Text {
+                                    text: GameManager.hasSteamApiKey()
+                                          ? "API key is configured. Click below to fetch all your owned games."
+                                          : "To import ALL owned games (including uninstalled), you need a free Steam API key.\nClick the button below to open the key page in Steam's browser, then paste it here."
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("textSecondary")
+                                    wrapMode: Text.WordWrap
+                                    Layout.fillWidth: true
+                                }
+
+                                // "Get API Key" button — opens Steam's built-in browser
+                                Rectangle {
+                                    visible: !GameManager.hasSteamApiKey()
+                                    Layout.preferredWidth: getKeyLabel.width + 32
+                                    Layout.preferredHeight: 40
+                                    radius: 8
+                                    color: "#1b2838"
+                                    border.color: getKeyArea.containsMouse
+                                                  ? ThemeManager.getColor("focus") : "transparent"
+                                    border.width: getKeyArea.containsMouse ? 2 : 0
+
+                                    Text {
+                                        id: getKeyLabel
+                                        anchors.centerIn: parent
+                                        text: "Get API Key (opens Steam browser)"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: "#66c0f4"
+                                    }
+
+                                    MouseArea {
+                                        id: getKeyArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: GameManager.openSteamApiKeyPage()
+                                    }
+
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                                }
+
+                                // API key input row (hidden if key already saved)
+                                Rectangle {
+                                    visible: !GameManager.hasSteamApiKey()
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 44
+                                    radius: 8
+                                    color: ThemeManager.getColor("hover")
+                                    border.color: steamApiKeyInput.activeFocus
+                                                  ? ThemeManager.getColor("focus") : "transparent"
+                                    border.width: steamApiKeyInput.activeFocus ? 2 : 0
+
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                                    TextInput {
+                                        id: steamApiKeyInput
+                                        anchors.fill: parent
+                                        anchors.margins: 12
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textPrimary")
+                                        clip: true
+                                        onAccepted: {
+                                            if (text.length > 0) {
+                                                GameManager.setSteamApiKey(text)
+                                                text = ""
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.fill: parent
+                                        anchors.margins: 12
+                                        verticalAlignment: Text.AlignVCenter
+                                        visible: steamApiKeyInput.text === "" && !steamApiKeyInput.activeFocus
+                                        text: "Paste your Steam API key here..."
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                    }
+                                }
+
+                                // Buttons row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    // Save key button (when no key)
+                                    Rectangle {
+                                        visible: !GameManager.hasSteamApiKey()
+                                        Layout.preferredWidth: saveKeyLabel.width + 32
+                                        Layout.preferredHeight: 40
+                                        radius: 8
+                                        color: ThemeManager.getColor("primary")
+
+                                        Text {
+                                            id: saveKeyLabel
+                                            anchors.centerIn: parent
+                                            text: "Save Key"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: "white"
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (steamApiKeyInput.text.length > 0) {
+                                                    GameManager.setSteamApiKey(steamApiKeyInput.text)
+                                                    steamApiKeyInput.text = ""
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Fetch all games button (when key is saved)
+                                    Rectangle {
+                                        visible: GameManager.hasSteamApiKey()
+                                        Layout.preferredWidth: fetchGamesLabel.width + 32
+                                        Layout.preferredHeight: 40
+                                        radius: 8
+                                        color: gameStoresTab.steamFetching
+                                               ? ThemeManager.getColor("textSecondary")
+                                               : "#1b2838"
+
+                                        Text {
+                                            id: fetchGamesLabel
+                                            anchors.centerIn: parent
+                                            text: gameStoresTab.steamFetching
+                                                  ? "Fetching..."
+                                                  : "Fetch All Owned Games"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: "white"
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: gameStoresTab.steamFetching
+                                                         ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (!gameStoresTab.steamFetching) {
+                                                    gameStoresTab.steamFetching = true
+                                                    gameStoresTab.steamFetchStatus = "Fetching owned games from Steam..."
+                                                    GameManager.fetchSteamOwnedGames()
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Clear key button (when key is saved)
+                                    Rectangle {
+                                        visible: GameManager.hasSteamApiKey()
+                                        Layout.preferredWidth: clearKeyLabel.width + 32
+                                        Layout.preferredHeight: 40
+                                        radius: 8
+                                        color: ThemeManager.getColor("surface")
+                                        border.color: clearKeyArea.containsMouse
+                                                      ? ThemeManager.getColor("focus") : Qt.rgba(1,1,1,0.15)
+                                        border.width: 1
+
+                                        Text {
+                                            id: clearKeyLabel
+                                            anchors.centerIn: parent
+                                            text: "Change Key"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        MouseArea {
+                                            id: clearKeyArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                GameManager.setSteamApiKey("")
+                                            }
+                                        }
+
+                                        Behavior on border.color { ColorAnimation { duration: 150 } }
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+                                }
+
+                                // Status text
+                                Text {
+                                    visible: gameStoresTab.steamFetchStatus !== ""
+                                    text: gameStoresTab.steamFetchStatus
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: gameStoresTab.steamFetchStatus.startsWith("Error")
+                                           ? "#ff6b6b" : ThemeManager.getColor("accent")
+                                    wrapMode: Text.WordWrap
+                                    Layout.fillWidth: true
+                                }
+                            }
                         }
 
                         // ─── More stores coming soon ───

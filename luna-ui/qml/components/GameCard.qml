@@ -13,6 +13,7 @@ Rectangle {
     property string gameTitle: ""
     property string coverArt: ""
     property bool isFavorite: false
+    property bool isInstalled: true
     property int gameId: -1
 
     signal playClicked(int id)
@@ -33,6 +34,7 @@ Rectangle {
             source: coverArt || ""
             fillMode: Image.PreserveAspectCrop
             visible: status === Image.Ready
+            opacity: isInstalled ? 1.0 : 0.5
         }
 
         // Placeholder if no art loaded
@@ -40,6 +42,7 @@ Rectangle {
             visible: coverImage.status !== Image.Ready
             anchors.fill: parent
             color: ThemeManager.getColor("surface")
+            opacity: isInstalled ? 1.0 : 0.5
 
             Text {
                 anchors.centerIn: parent
@@ -55,19 +58,34 @@ Rectangle {
     Rectangle {
         anchors.bottom: parent.bottom
         width: parent.width
-        height: 48
+        height: isInstalled ? 48 : 64
         radius: 8
         color: Qt.rgba(0, 0, 0, 0.7)
 
-        Text {
+        Column {
             anchors.centerIn: parent
-            text: gameTitle
-            font.pixelSize: 12
-            font.family: ThemeManager.getFont("body")
-            color: ThemeManager.getColor("textPrimary")
-            elide: Text.ElideRight
-            width: parent.width - 16
-            horizontalAlignment: Text.AlignHCenter
+            spacing: 2
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: gameTitle
+                font.pixelSize: 12
+                font.family: ThemeManager.getFont("body")
+                color: ThemeManager.getColor("textPrimary")
+                elide: Text.ElideRight
+                width: card.width - 16
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Text {
+                visible: !isInstalled
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Not Installed"
+                font.pixelSize: 10
+                font.family: ThemeManager.getFont("body")
+                color: ThemeManager.getColor("textSecondary")
+                horizontalAlignment: Text.AlignHCenter
+            }
         }
     }
 

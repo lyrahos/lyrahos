@@ -11,6 +11,7 @@
 #include <QStandardPaths>
 #include <QCoreApplication>
 #include <QNetworkInterface>
+#include <QUrlQuery>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -18,6 +19,8 @@ GameManager::GameManager(Database *db, QObject *parent)
 
     m_processMonitor = new QTimer(this);
     connect(m_processMonitor, &QTimer::timeout, this, &GameManager::monitorGameProcess);
+
+    m_networkManager = new QNetworkAccessManager(this);
 }
 
 void GameManager::registerBackends() {
@@ -34,17 +37,28 @@ void GameManager::scanAllStores() {
             qDebug() << "Scanning" << backend->name() << "library...";
             QVector<Game> games = backend->scanLibrary();
             for (const Game& game : games) {
-                m_db->addGame(game);
+                m_db->addOrUpdateGame(game);
                 totalFound++;
             }
         }
     }
     emit scanComplete(totalFound);
     emit gamesUpdated();
+
+    // If Steam API key is configured, also fetch all owned games
+    if (hasSteamApiKey() && isSteamAvailable()) {
+        fetchSteamOwnedGames();
+    }
 }
 
 void GameManager::launchGame(int gameId) {
     Game game = m_db->getGameById(gameId);
+
+    // If game is not installed, launch the install command instead
+    if (!game.isInstalled) {
+        QProcess::startDetached("steam", QStringList() << "steam://install/" + game.appId);
+        return;
+    }
 
     // Start session tracking
     m_activeSessionId = m_db->startGameSession(gameId);
@@ -245,4 +259,107 @@ void GameManager::connectToWifi(const QString& ssid, const QString& password) {
         proc->deleteLater();
     });
     proc->start("nmcli", args);
+}
+
+// ── Steam API key management ──
+
+QString GameManager::steamApiKeyPath() const {
+    return QDir::homePath() + "/.config/luna-ui/steam-api-key";
+}
+
+QString GameManager::getSteamApiKey() {
+    QFile file(steamApiKeyPath());
+    if (!file.open(QIODevice::ReadOnly)) return QString();
+    return QString(file.readAll()).trimmed();
+}
+
+void GameManager::setSteamApiKey(const QString& key) {
+    QString configDir = QDir::homePath() + "/.config/luna-ui";
+    QDir().mkpath(configDir);
+    QFile file(steamApiKeyPath());
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        file.write(key.trimmed().toUtf8());
+    }
+}
+
+bool GameManager::hasSteamApiKey() {
+    return !getSteamApiKey().isEmpty();
+}
+
+QString GameManager::getDetectedSteamId() {
+    for (StoreBackend* backend : m_backends) {
+        if (backend->name() == "steam") {
+            SteamBackend* steam = static_cast<SteamBackend*>(backend);
+            return steam->getLoggedInSteamId();
+        }
+    }
+    return QString();
+}
+
+void GameManager::fetchSteamOwnedGames() {
+    QString apiKey = getSteamApiKey();
+    QString steamId = getDetectedSteamId();
+
+    if (apiKey.isEmpty()) {
+        emit steamOwnedGamesFetchError("No Steam API key configured");
+        return;
+    }
+    if (steamId.isEmpty()) {
+        emit steamOwnedGamesFetchError("Could not detect Steam ID — please log in to Steam first");
+        return;
+    }
+
+    QUrl url("https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/");
+    QUrlQuery params;
+    params.addQueryItem("key", apiKey);
+    params.addQueryItem("steamid", steamId);
+    params.addQueryItem("include_appinfo", "1");
+    params.addQueryItem("include_played_free_games", "1");
+    params.addQueryItem("format", "json");
+    url.setQuery(params);
+
+    QNetworkRequest request(url);
+    QNetworkReply *reply = m_networkManager->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            emit steamOwnedGamesFetchError(reply->errorString());
+            return;
+        }
+
+        QByteArray data = reply->readAll();
+
+        // Find the Steam backend to parse the response
+        SteamBackend* steam = nullptr;
+        for (StoreBackend* backend : m_backends) {
+            if (backend->name() == "steam") {
+                steam = static_cast<SteamBackend*>(backend);
+                break;
+            }
+        }
+        if (!steam) {
+            emit steamOwnedGamesFetchError("Steam backend not found");
+            return;
+        }
+
+        QVector<Game> games = steam->parseOwnedGamesResponse(data);
+        int count = 0;
+        for (const Game& game : games) {
+            m_db->addOrUpdateGame(game);
+            count++;
+        }
+
+        qDebug() << "Fetched" << count << "owned Steam games via API";
+        emit steamOwnedGamesFetched(count);
+        emit gamesUpdated();
+    });
+}
+
+void GameManager::openSteamApiKeyPage() {
+    // Open the Steam API key registration page in Steam's built-in browser.
+    // steam://openurl/ tells the Steam client to open the URL in its overlay browser,
+    // which works inside gamescope without needing a desktop browser.
+    QProcess::startDetached("steam", QStringList() << "steam://openurl/https://steamcommunity.com/dev/apikey");
 }

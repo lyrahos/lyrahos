@@ -42,9 +42,11 @@ public:
 
     // Game CRUD
     int addGame(const Game& game);
+    int addOrUpdateGame(const Game& game);
     bool updateGame(const Game& game);
     bool removeGame(int gameId);
     Game getGameById(int gameId);
+    Game getGameByStoreAndAppId(const QString& storeSource, const QString& appId);
     QVector<Game> getAllGames();
     QVector<Game> getInstalledGames();
     QVector<Game> getFavoriteGames();

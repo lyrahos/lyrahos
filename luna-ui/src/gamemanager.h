@@ -5,6 +5,8 @@
 #include <QVector>
 #include <QTimer>
 #include <QVariantList>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include "database.h"
 #include "storebackend.h"
 
@@ -31,12 +33,22 @@ public:
     Q_INVOKABLE QVariantList getWifiNetworks();
     Q_INVOKABLE void connectToWifi(const QString& ssid, const QString& password);
 
+    // Steam API key & owned games
+    Q_INVOKABLE QString getSteamApiKey();
+    Q_INVOKABLE void setSteamApiKey(const QString& key);
+    Q_INVOKABLE bool hasSteamApiKey();
+    Q_INVOKABLE QString getDetectedSteamId();
+    Q_INVOKABLE void fetchSteamOwnedGames();
+    Q_INVOKABLE void openSteamApiKeyPage();
+
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
     void wifiConnectResult(bool success, const QString& message);
+    void steamOwnedGamesFetched(int gamesFound);
+    void steamOwnedGamesFetchError(const QString& error);
 
 private:
     Database *m_db;
@@ -44,11 +56,13 @@ private:
     int m_activeSessionId = -1;
     int m_activeGameId = -1;
     QTimer *m_processMonitor;
+    QNetworkAccessManager *m_networkManager;
 
     void registerBackends();
     void monitorGameProcess();
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
+    QString steamApiKeyPath() const;
 };
 
 #endif
