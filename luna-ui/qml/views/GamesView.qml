@@ -155,6 +155,7 @@ Rectangle {
                         isFavorite: model.isFavorite || false
                         isInstalled: model.isInstalled !== undefined ? model.isInstalled : true
                         gameId: model.id
+                        downloadProgress: model.downloadProgress !== undefined ? model.downloadProgress : -1.0
 
                         onPlayClicked: function(id) {
                             GameManager.launchGame(id)
@@ -997,12 +998,46 @@ Rectangle {
     Connections {
         target: GameManager
         function onGamesUpdated() { refreshGames() }
+
+        function onDownloadStarted(appId, gameId) {
+            // Find the game in the model and set its progress to 0
+            for (var i = 0; i < gamesModel.count; i++) {
+                if (gamesModel.get(i).id === gameId) {
+                    gamesModel.setProperty(i, "downloadProgress", 0.0)
+                    break
+                }
+            }
+        }
+
+        function onDownloadProgressChanged(appId, progress) {
+            // Update progress for the matching game
+            for (var i = 0; i < gamesModel.count; i++) {
+                if (gamesModel.get(i).appId === appId) {
+                    gamesModel.setProperty(i, "downloadProgress", progress)
+                    break
+                }
+            }
+        }
+
+        function onDownloadComplete(appId, gameId) {
+            // Mark as installed and clear download progress
+            for (var i = 0; i < gamesModel.count; i++) {
+                if (gamesModel.get(i).id === gameId) {
+                    gamesModel.setProperty(i, "isInstalled", true)
+                    gamesModel.setProperty(i, "downloadProgress", -1.0)
+                    break
+                }
+            }
+        }
     }
 
     function refreshGames() {
         gamesModel.clear()
         var games = GameManager.getGames()
         for (var i = 0; i < games.length; i++) {
+            games[i].downloadProgress = GameManager.isDownloading(games[i].appId)
+                ? GameManager.getDownloadProgress(games[i].appId)
+                : -1.0
             gamesModel.append(games[i])
         }
     }
