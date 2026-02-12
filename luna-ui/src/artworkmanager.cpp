@@ -2,9 +2,13 @@
 #include <QDir>
 #include <QFile>
 #include <QDebug>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 
 ArtworkManager::ArtworkManager(QObject *parent) : QObject(parent) {
-    m_cache.setMaxCost(200); // Cache up to 200 entries
+    m_cache.setMaxCost(200);
+    m_nam = new QNetworkAccessManager(this);
 }
 
 QString ArtworkManager::cacheDir() {
@@ -14,38 +18,60 @@ QString ArtworkManager::cacheDir() {
 }
 
 QString ArtworkManager::getCoverArt(int gameId, const QString& url) {
-    // Check memory cache first
+    if (url.isEmpty()) return QString();
+
+    // Memory cache hit
     if (m_cache.contains(gameId)) {
         return *m_cache.object(gameId);
     }
 
-    // Check disk cache
+    // Disk cache hit
     QString cachedPath = cacheDir() + "/" + QString::number(gameId) + "-cover.jpg";
     if (QFile::exists(cachedPath)) {
         m_cache.insert(gameId, new QString(cachedPath));
         return cachedPath;
     }
 
-    // If URL is a local file, use it directly
+    // Local file (e.g. Steam library cache)
     if (QFile::exists(url)) {
         m_cache.insert(gameId, new QString(url));
         return url;
     }
 
-    // TODO: Implement async download from SteamGridDB/IGDB APIs
-    // For now, return empty string (placeholder will be shown)
+    // Remote URL — kick off async download, return empty for now
+    if (url.startsWith("http") && !m_pending.contains(gameId)) {
+        downloadArtwork(gameId, url);
+    }
+
     return QString();
 }
 
-void ArtworkManager::prefetchArtwork(int gameId, const QString& url) {
-    // TODO: Queue async download for pre-fetching
-    Q_UNUSED(gameId);
-    Q_UNUSED(url);
-}
-
 void ArtworkManager::downloadArtwork(int gameId, const QString& url) {
-    // TODO: Implement HTTP download to disk cache
-    // Use QNetworkAccessManager for async downloads
-    Q_UNUSED(gameId);
-    Q_UNUSED(url);
+    m_pending.insert(gameId);
+
+    QNetworkRequest req(QUrl(url));
+    req.setTransferTimeout(10000); // 10s timeout
+    QNetworkReply *reply = m_nam->get(req);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, gameId]() {
+        reply->deleteLater();
+        m_pending.remove(gameId);
+
+        if (reply->error() != QNetworkReply::NoError) {
+            qDebug() << "Artwork download failed for game" << gameId << reply->errorString();
+            return;
+        }
+
+        QByteArray data = reply->readAll();
+        if (data.isEmpty()) return;
+
+        QString path = cacheDir() + "/" + QString::number(gameId) + "-cover.jpg";
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(data);
+            file.close();
+            m_cache.insert(gameId, new QString(path));
+            emit artworkReady(gameId, path);
+        }
+    });
 }
