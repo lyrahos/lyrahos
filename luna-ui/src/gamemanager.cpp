@@ -25,7 +25,8 @@ GameManager::GameManager(Database *db, QObject *parent)
 
     m_networkManager = new QNetworkAccessManager(this);
 
-    // Download progress monitor — polls .acf manifests every 2s
+    // Download progress monitor — polls .acf manifests every 2s as backup
+    // to steamcmd stdout parsing
     m_downloadMonitor = new QTimer(this);
     connect(m_downloadMonitor, &QTimer::timeout, this, &GameManager::checkDownloadProgress);
 
@@ -381,7 +382,7 @@ void GameManager::openSteamApiKeyPage() {
     QProcess::startDetached("steam", QStringList() << "steam://openurl/https://steamcommunity.com/dev/apikey");
 }
 
-// ── Steam game download management ──
+// ── SteamCMD-based game download management ──
 
 QStringList GameManager::getSteamAppsDirs() const {
     QStringList dirs;
@@ -402,6 +403,44 @@ QStringList GameManager::getSteamAppsDirs() const {
     return dirs;
 }
 
+bool GameManager::isSteamCmdAvailable() {
+    return !QStandardPaths::findExecutable("steamcmd").isEmpty();
+}
+
+QString GameManager::getSteamUsername() {
+    // Parse the AccountName from loginusers.vdf for the most-recent user
+    QString loginUsersPath = QDir::homePath() + "/.local/share/Steam/config/loginusers.vdf";
+    QFile file(loginUsersPath);
+    if (!file.open(QIODevice::ReadOnly)) return QString();
+
+    QTextStream in(&file);
+    QString content = in.readAll();
+
+    // Parse user blocks: "76561198..." { "AccountName" "user" "MostRecent" "1" }
+    QRegularExpression userBlockRe(
+        "\"(7656119\\d{10})\"\\s*\\{([^}]+)\\}");
+    auto matches = userBlockRe.globalMatch(content);
+
+    QString fallbackName;
+    while (matches.hasNext()) {
+        auto match = matches.next();
+        QString block = match.captured(2);
+
+        QRegularExpression nameRe("\"AccountName\"\\s+\"([^\"]+)\"");
+        auto nameMatch = nameRe.match(block);
+        QString accountName = nameMatch.hasMatch() ? nameMatch.captured(1) : QString();
+
+        if (fallbackName.isEmpty() && !accountName.isEmpty()) {
+            fallbackName = accountName;
+        }
+
+        if (block.contains("\"MostRecent\"") && block.contains("\"1\"")) {
+            return accountName;
+        }
+    }
+    return fallbackName;
+}
+
 void GameManager::installGame(int gameId) {
     Game game = m_db->getGameById(gameId);
     if (game.storeSource != "steam" || game.appId.isEmpty()) return;
@@ -409,56 +448,187 @@ void GameManager::installGame(int gameId) {
     // Already downloading?
     if (m_activeDownloads.contains(game.appId)) return;
 
+    // Check steamcmd availability
+    QString steamcmdBin = QStandardPaths::findExecutable("steamcmd");
+    if (steamcmdBin.isEmpty()) {
+        emit installError(game.appId, "steamcmd is not installed. Please install it to download games.");
+        return;
+    }
+
+    // Get Steam username for login
+    QString username = getSteamUsername();
+    if (username.isEmpty()) {
+        emit installError(game.appId, "No Steam account detected. Please log in to Steam first.");
+        return;
+    }
+
+    // Get the primary Steam library path for installation
+    QStringList steamAppsDirs = getSteamAppsDirs();
+    QString primarySteamApps = steamAppsDirs.isEmpty()
+        ? QDir::homePath() + "/.local/share/Steam/steamapps"
+        : steamAppsDirs.first();
+
     m_activeDownloads.insert(game.appId, gameId);
+    m_downloadProgressCache.insert(game.appId, 0.0);
     emit downloadStarted(game.appId, gameId);
 
-    // Auto-accept Steam's install dialog by briefly minimizing both Luna UI
-    // and Steam's main window so only the dialog is visible. When Steam is
-    // already running, its modal dialog opens behind Luna UI and the main
-    // Steam window appears "grayed out". We minimize Luna UI (found via
-    // PID) and every other Steam window (found via --class steam), leaving
-    // only the dialog on screen. After Tab*4 + Enter to accept, Luna UI
-    // is restored. The Steam main window stays minimized — it's just the
-    // background download manager.
-    //
-    // A lockfile serializes concurrent install requests so rapid clicks
-    // don't race over dialog interactions.
-    qint64 lunaUiPid = QCoreApplication::applicationPid();
-    QString acceptScript = QString(
-        "("
-        "  flock -x 9 || exit 1; "
-        "  LUNA_WID=$(xdotool search --pid %2 2>/dev/null | head -1); "
-        "  EXISTING=$(xdotool search --name 'Install' 2>/dev/null | tr '\\n' ' '); "
-        "  xdg-open 'steam://install/%1'; "
-        "  for i in $(seq 1 40); do "
-        "    for WID in $(xdotool search --name 'Install' 2>/dev/null); do "
-        "      echo \"$EXISTING\" | grep -qw \"$WID\" && continue; "
-        "      [ -n \"$LUNA_WID\" ] && xdotool windowminimize --sync \"$LUNA_WID\" 2>/dev/null; "
-        "      for SWID in $(xdotool search --class steam 2>/dev/null); do "
-        "        [ \"$SWID\" = \"$WID\" ] && continue; "
-        "        xdotool windowminimize \"$SWID\" 2>/dev/null; "
-        "      done; "
-        "      xdotool windowactivate --sync \"$WID\"; "
-        "      xdotool windowfocus --sync \"$WID\"; "
-        "      xdotool windowraise \"$WID\"; "
-        "      sleep 1; "
-        "      xdotool key --window \"$WID\" Tab Tab Tab Tab Return; "
-        "      sleep 0.5; "
-        "      [ -n \"$LUNA_WID\" ] && xdotool windowactivate \"$LUNA_WID\" 2>/dev/null; "
-        "      exit 0; "
-        "    done; "
-        "    sleep 1; "
-        "  done; "
-        ") 9>/tmp/luna-steam-install.lock"
-    ).arg(game.appId).arg(lunaUiPid);
-    QProcess::startDetached("sh", QStringList() << "-c" << acceptScript);
+    // Build steamcmd arguments:
+    // steamcmd runs headlessly — no GUI dialogs, no window management needed.
+    // +@sSteamCmdForcePlatformType linux  → ensure Linux depots
+    // +force_install_dir <path>           → install into Steam's library
+    // +login <user>                       → use cached credentials
+    // +app_update <appid> validate        → download & verify game files
+    // +quit                               → exit when done
+    QProcess *proc = new QProcess(this);
+    QStringList args;
+    args << "+@sSteamCmdForcePlatformType" << "linux"
+         << "+force_install_dir" << primarySteamApps + "/common"
+         << "+login" << username
+         << "+app_update" << game.appId << "validate"
+         << "+quit";
 
-    // Start polling .acf manifests for download progress
+    // Parse steamcmd stdout for download progress and credential prompts
+    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc, appId = game.appId]() {
+        handleSteamCmdOutput(appId, proc);
+    });
+
+    // Also capture stderr (steamcmd sometimes writes progress there)
+    connect(proc, &QProcess::readyReadStandardError, this, [this, proc, appId = game.appId]() {
+        QString errOutput = QString::fromUtf8(proc->readAllStandardError());
+        qDebug() << "[steamcmd stderr]" << appId << ":" << errOutput.trimmed();
+    });
+
+    // Handle process completion
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc, appId = game.appId, gameId, primarySteamApps](int exitCode, QProcess::ExitStatus status) {
+        proc->deleteLater();
+        m_steamCmdProcesses.remove(appId);
+        m_downloadProgressCache.remove(appId);
+
+        if (exitCode == 0 && status == QProcess::NormalExit) {
+            qDebug() << "SteamCMD finished successfully for appId:" << appId;
+
+            // Update the database: mark as installed
+            Game game = m_db->getGameById(gameId);
+            game.isInstalled = true;
+            game.launchCommand = "steam steam://rungameid/" + appId;
+
+            // Try to find the install path from the manifest
+            QString manifestPath = primarySteamApps + "/appmanifest_" + appId + ".acf";
+            QFile manifest(manifestPath);
+            if (manifest.open(QIODevice::ReadOnly)) {
+                QTextStream in(&manifest);
+                QString content = in.readAll();
+                QRegularExpression installDirRe("\"installdir\"\\s+\"([^\"]+)\"");
+                auto match = installDirRe.match(content);
+                if (match.hasMatch()) {
+                    game.installPath = primarySteamApps + "/common/" + match.captured(1);
+                }
+            }
+
+            m_db->updateGame(game);
+            m_activeDownloads.remove(appId);
+            emit downloadComplete(appId, gameId);
+            emit gamesUpdated();
+            qDebug() << "Download complete:" << game.title;
+        } else {
+            qDebug() << "SteamCMD failed for appId:" << appId
+                     << "exit code:" << exitCode << "status:" << status;
+            m_activeDownloads.remove(appId);
+            emit installError(appId, "Installation failed (steamcmd exit code " + QString::number(exitCode) + ")");
+            // Emit progress -1 to clear the UI progress bar
+            emit downloadProgressChanged(appId, -1.0);
+        }
+
+        // Stop polling if no more active downloads
+        if (m_activeDownloads.isEmpty()) {
+            m_downloadMonitor->stop();
+        }
+    });
+
+    m_steamCmdProcesses.insert(game.appId, proc);
+    proc->start(steamcmdBin, args);
+
+    // Start ACF polling as a backup progress source
     if (!m_downloadMonitor->isActive()) {
         m_downloadMonitor->start(2000);
     }
 
-    qDebug() << "Started silent download for" << game.title << "(appId:" << game.appId << ")";
+    qDebug() << "Started steamcmd download for" << game.title << "(appId:" << game.appId << ")";
+}
+
+void GameManager::handleSteamCmdOutput(const QString& appId, QProcess *proc) {
+    QString output = QString::fromUtf8(proc->readAllStandardOutput());
+
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (trimmed.isEmpty()) continue;
+
+        qDebug() << "[steamcmd]" << appId << ":" << trimmed;
+
+        // Detect credential prompts — steamcmd needs interactive login
+        // "password:" or "Steam Guard code:" or "Two-factor code:"
+        if (trimmed.contains("password:", Qt::CaseInsensitive)) {
+            emit steamCmdCredentialNeeded(appId, "password");
+            continue;
+        }
+        if (trimmed.contains("Steam Guard", Qt::CaseInsensitive) ||
+            trimmed.contains("Two-factor", Qt::CaseInsensitive)) {
+            emit steamCmdCredentialNeeded(appId, "steamguard");
+            continue;
+        }
+
+        // Parse download progress lines:
+        // " Update state (0x61) downloading, progress: 45.23 (1234567890 / 2734567890)"
+        // " Update state (0x5) verifying install, progress: 98.23 (...)"
+        QRegularExpression progressRe("progress:\\s+(\\d+\\.?\\d*)\\s+\\((\\d+)\\s*/\\s*(\\d+)\\)");
+        auto match = progressRe.match(trimmed);
+        if (match.hasMatch()) {
+            double pct = match.captured(1).toDouble() / 100.0;
+            // Clamp to 0.0 - 1.0
+            pct = qBound(0.0, pct, 1.0);
+            m_downloadProgressCache.insert(appId, pct);
+            emit downloadProgressChanged(appId, pct);
+            continue;
+        }
+
+        // Detect success
+        if (trimmed.contains("fully installed", Qt::CaseInsensitive)) {
+            m_downloadProgressCache.insert(appId, 1.0);
+            emit downloadProgressChanged(appId, 1.0);
+        }
+
+        // Detect errors
+        if (trimmed.startsWith("ERROR!", Qt::CaseInsensitive) ||
+            trimmed.contains("FAILED", Qt::CaseInsensitive)) {
+            emit installError(appId, trimmed);
+        }
+    }
+}
+
+void GameManager::provideSteamCmdCredential(const QString& appId, const QString& credential) {
+    if (!m_steamCmdProcesses.contains(appId)) return;
+    QProcess *proc = m_steamCmdProcesses.value(appId);
+    if (proc && proc->state() == QProcess::Running) {
+        proc->write((credential + "\n").toUtf8());
+    }
+}
+
+void GameManager::cancelDownload(const QString& appId) {
+    if (m_steamCmdProcesses.contains(appId)) {
+        QProcess *proc = m_steamCmdProcesses.value(appId);
+        if (proc && proc->state() == QProcess::Running) {
+            proc->terminate();
+            // Give it a moment, then force-kill if needed
+            if (!proc->waitForFinished(3000)) {
+                proc->kill();
+            }
+        }
+    }
+    m_activeDownloads.remove(appId);
+    m_downloadProgressCache.remove(appId);
+    emit downloadProgressChanged(appId, -1.0);
+    qDebug() << "Cancelled download for appId:" << appId;
 }
 
 bool GameManager::isDownloading(const QString& appId) {
@@ -468,7 +638,12 @@ bool GameManager::isDownloading(const QString& appId) {
 double GameManager::getDownloadProgress(const QString& appId) {
     if (!m_activeDownloads.contains(appId)) return -1.0;
 
-    // Search all steamapps dirs for the appmanifest
+    // First check the steamcmd stdout progress cache
+    if (m_downloadProgressCache.contains(appId) && m_downloadProgressCache.value(appId) > 0.0) {
+        return m_downloadProgressCache.value(appId);
+    }
+
+    // Fall back to reading .acf manifest files
     for (const QString& dir : getSteamAppsDirs()) {
         QString manifestPath = dir + "/appmanifest_" + appId + ".acf";
         QFile file(manifestPath);
@@ -492,7 +667,7 @@ double GameManager::getDownloadProgress(const QString& appId) {
         // Manifest exists but no progress fields yet — download queued
         return 0.0;
     }
-    // No manifest yet — Steam is still starting up
+    // No manifest yet — steamcmd is still starting up
     return 0.0;
 }
 
@@ -509,8 +684,13 @@ void GameManager::checkDownloadProgress() {
         const QString& appId = it.key();
         int gameId = it.value();
 
-        double progress = getDownloadProgress(appId);
-        emit downloadProgressChanged(appId, progress);
+        // Only use ACF polling if we don't have steamcmd stdout progress
+        if (!m_downloadProgressCache.contains(appId) || m_downloadProgressCache.value(appId) <= 0.0) {
+            double progress = getDownloadProgress(appId);
+            if (progress > 0.0) {
+                emit downloadProgressChanged(appId, progress);
+            }
+        }
 
         // Check if fully installed: StateFlags == 4 means fully installed
         for (const QString& dir : dirs) {
@@ -527,16 +707,20 @@ void GameManager::checkDownloadProgress() {
                 int stateFlags = stateMatch.captured(1).toInt();
                 // StateFlags 4 = fully installed
                 if (stateFlags == 4) {
-                    completed.append(appId);
+                    // Only mark complete if steamcmd process has also finished
+                    // (avoids race between ACF watcher and process exit handler)
+                    if (!m_steamCmdProcesses.contains(appId)) {
+                        completed.append(appId);
 
-                    // Update the database
-                    Game game = m_db->getGameById(gameId);
-                    game.isInstalled = true;
-                    game.launchCommand = "steam steam://rungameid/" + appId;
-                    m_db->updateGame(game);
-
-                    emit downloadComplete(appId, gameId);
-                    qDebug() << "Download complete:" << game.title;
+                        Game game = m_db->getGameById(gameId);
+                        if (!game.isInstalled) {
+                            game.isInstalled = true;
+                            game.launchCommand = "steam steam://rungameid/" + appId;
+                            m_db->updateGame(game);
+                            emit downloadComplete(appId, gameId);
+                            qDebug() << "ACF watcher: download complete:" << game.title;
+                        }
+                    }
                 }
             }
             break; // only check first matching dir
@@ -545,6 +729,7 @@ void GameManager::checkDownloadProgress() {
 
     for (const QString& appId : completed) {
         m_activeDownloads.remove(appId);
+        m_downloadProgressCache.remove(appId);
     }
 
     if (!completed.isEmpty()) {
@@ -553,8 +738,5 @@ void GameManager::checkDownloadProgress() {
 
     if (m_activeDownloads.isEmpty()) {
         m_downloadMonitor->stop();
-        // Shut down the background Steam instance used for downloading
-        QProcess::startDetached("steam", QStringList() << "-shutdown");
-        qDebug() << "All downloads finished, shutting down background Steam";
     }
 }

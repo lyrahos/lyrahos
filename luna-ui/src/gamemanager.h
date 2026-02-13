@@ -9,6 +9,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QFileSystemWatcher>
+#include <QProcess>
 #include "database.h"
 #include "storebackend.h"
 
@@ -43,10 +44,16 @@ public:
     Q_INVOKABLE void fetchSteamOwnedGames();
     Q_INVOKABLE void openSteamApiKeyPage();
 
-    // Steam game download management
+    // SteamCMD-based game installation
     Q_INVOKABLE void installGame(int gameId);
     Q_INVOKABLE bool isDownloading(const QString& appId);
     Q_INVOKABLE double getDownloadProgress(const QString& appId);
+    Q_INVOKABLE void cancelDownload(const QString& appId);
+    Q_INVOKABLE bool isSteamCmdAvailable();
+    Q_INVOKABLE QString getSteamUsername();
+
+    // SteamCMD credential input (for interactive login)
+    Q_INVOKABLE void provideSteamCmdCredential(const QString& appId, const QString& credential);
 
 signals:
     void gamesUpdated();
@@ -59,6 +66,8 @@ signals:
     void downloadStarted(QString appId, int gameId);
     void downloadProgressChanged(QString appId, double progress);
     void downloadComplete(QString appId, int gameId);
+    void installError(QString appId, QString error);
+    void steamCmdCredentialNeeded(QString appId, QString promptType);
 
 private:
     Database *m_db;
@@ -70,12 +79,17 @@ private:
 
     // Download tracking: appId → gameId
     QHash<QString, int> m_activeDownloads;
+    // SteamCMD processes: appId → QProcess*
+    QHash<QString, QProcess*> m_steamCmdProcesses;
+    // Download progress cache: appId → progress (0.0-1.0)
+    QHash<QString, double> m_downloadProgressCache;
     QTimer *m_downloadMonitor;
     QFileSystemWatcher *m_acfWatcher;
 
     void registerBackends();
     void monitorGameProcess();
     void checkDownloadProgress();
+    void handleSteamCmdOutput(const QString& appId, QProcess *proc);
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
     QString steamApiKeyPath() const;
