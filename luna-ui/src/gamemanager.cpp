@@ -412,27 +412,40 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Auto-accept the install confirmation dialog. We snapshot existing
-    // "Install" windows first, then trigger the steam://install URL, and
-    // finally poll for a NEW dialog window that wasn't there before. This
-    // avoids interacting with stale dialogs from previous install requests.
-    // Steam's dialog opens with focus on the drive/location picker, so we
-    // Tab past it to reach the Install button and press Enter.
+    // Restart Steam before opening the install dialog. When Steam is already
+    // running, its install dialog opens as a modal child window that gets
+    // stuck behind the Luna UI (appears "grayed out" and unresponsive).
+    // Starting Steam fresh ensures the dialog is a proper top-level window
+    // that xdotool can find and auto-accept. Steam automatically resumes
+    // any in-progress downloads after restart, so no progress is lost.
+    //
+    // A lockfile serializes concurrent install requests so multiple clicks
+    // don't race over Steam's lifecycle.
     QString acceptScript = QString(
-        "EXISTING=$(xdotool search --name 'Install' 2>/dev/null | tr '\\n' ' '); "
-        "xdg-open 'steam://install/%1'; "
-        "for i in $(seq 1 30); do "
-        "  for WID in $(xdotool search --name 'Install' 2>/dev/null); do "
-        "    echo \"$EXISTING\" | grep -qw \"$WID\" && continue; "
-        "    xdotool windowactivate --sync \"$WID\"; "
-        "    xdotool windowfocus --sync \"$WID\"; "
-        "    xdotool windowraise \"$WID\"; "
+        "("
+        "  flock -x 9 || exit 1; "
+        "  if pgrep -x steam >/dev/null 2>&1; then "
+        "    steam -shutdown 2>/dev/null; "
+        "    for i in $(seq 1 20); do "
+        "      pgrep -x steam >/dev/null 2>&1 || break; "
+        "      sleep 0.5; "
+        "    done; "
+        "  fi; "
+        "  EXISTING=$(xdotool search --name 'Install' 2>/dev/null | tr '\\n' ' '); "
+        "  steam steam://install/%1 & "
+        "  for i in $(seq 1 40); do "
+        "    for WID in $(xdotool search --name 'Install' 2>/dev/null); do "
+        "      echo \"$EXISTING\" | grep -qw \"$WID\" && continue; "
+        "      xdotool windowactivate --sync \"$WID\"; "
+        "      xdotool windowfocus --sync \"$WID\"; "
+        "      xdotool windowraise \"$WID\"; "
+        "      sleep 1; "
+        "      xdotool key --window \"$WID\" Tab Tab Tab Tab Return; "
+        "      exit 0; "
+        "    done; "
         "    sleep 1; "
-        "    xdotool key --window \"$WID\" Tab Tab Tab Tab Return; "
-        "    exit 0; "
         "  done; "
-        "  sleep 1; "
-        "done"
+        ") 9>/tmp/luna-steam-install.lock"
     ).arg(game.appId);
     QProcess::startDetached("sh", QStringList() << "-c" << acceptScript);
 
