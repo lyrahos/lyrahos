@@ -412,12 +412,14 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Auto-accept Steam's install dialog by briefly minimizing Luna UI so
-    // the dialog can receive focus. When Steam is already running, its
-    // modal dialog opens behind Luna UI (the user sees Steam "grayed out"
-    // because the dialog is hidden). We find Luna UI's window via PID,
-    // minimize it so xdotool can activate the dialog, press Tab*4 + Enter
-    // to accept, then restore Luna UI — takes ~2 s with no Steam restart.
+    // Auto-accept Steam's install dialog by briefly minimizing both Luna UI
+    // and Steam's main window so only the dialog is visible. When Steam is
+    // already running, its modal dialog opens behind Luna UI and the main
+    // Steam window appears "grayed out". We minimize Luna UI (found via
+    // PID) and every other Steam window (found via --class steam), leaving
+    // only the dialog on screen. After Tab*4 + Enter to accept, Luna UI
+    // is restored. The Steam main window stays minimized — it's just the
+    // background download manager.
     //
     // A lockfile serializes concurrent install requests so rapid clicks
     // don't race over dialog interactions.
@@ -432,6 +434,10 @@ void GameManager::installGame(int gameId) {
         "    for WID in $(xdotool search --name 'Install' 2>/dev/null); do "
         "      echo \"$EXISTING\" | grep -qw \"$WID\" && continue; "
         "      [ -n \"$LUNA_WID\" ] && xdotool windowminimize --sync \"$LUNA_WID\" 2>/dev/null; "
+        "      for SWID in $(xdotool search --class steam 2>/dev/null); do "
+        "        [ \"$SWID\" = \"$WID\" ] && continue; "
+        "        xdotool windowminimize \"$SWID\" 2>/dev/null; "
+        "      done; "
         "      xdotool windowactivate --sync \"$WID\"; "
         "      xdotool windowfocus --sync \"$WID\"; "
         "      xdotool windowraise \"$WID\"; "
