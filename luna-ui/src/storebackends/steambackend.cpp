@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QSet>
+#include <QDebug>
 
 bool SteamBackend::isAvailable() const {
     return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
@@ -88,6 +89,10 @@ Game SteamBackend::parseAppManifest(const QString& manifestPath) {
     QString gridPath = QDir::homePath() + "/.local/share/Steam/appcache/librarycache/" + game.appId + "_library_600x900.jpg";
     if (QFile::exists(gridPath)) {
         game.coverArtUrl = gridPath;
+        qDebug() << "[steam-artwork] installed" << game.appId << game.title << "-> local cache:" << gridPath;
+    } else {
+        game.coverArtUrl = "https://steamcdn-a.akamaihd.net/steam/apps/" + game.appId + "/library_600x900_2x.jpg";
+        qDebug() << "[steam-artwork] installed" << game.appId << game.title << "-> local cache MISSING, using CDN:" << game.coverArtUrl;
     }
 
     return game;
@@ -192,10 +197,12 @@ QVector<Game> SteamBackend::parseOwnedGamesResponse(const QByteArray& jsonData) 
             game.appId + "_library_600x900.jpg";
         if (QFile::exists(localGrid)) {
             game.coverArtUrl = localGrid;
+            qDebug() << "[steam-artwork] api" << game.appId << game.title << "-> local cache:" << localGrid;
         } else {
             game.coverArtUrl =
                 "https://steamcdn-a.akamaihd.net/steam/apps/" +
                 game.appId + "/library_600x900_2x.jpg";
+            qDebug() << "[steam-artwork] api" << game.appId << game.title << "-> CDN fallback:" << game.coverArtUrl;
         }
 
         if (!game.title.isEmpty()) {

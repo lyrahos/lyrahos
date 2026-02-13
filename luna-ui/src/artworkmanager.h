@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QCache>
 #include <QSet>
+#include <QFile>
 
 class QNetworkAccessManager;
 
@@ -21,8 +22,10 @@ private:
     QNetworkAccessManager *m_nam;
     QCache<int, QString> m_cache;
     QSet<int> m_pending;  // downloads in flight
+    QFile m_logFile;
     QString cacheDir();
     void downloadArtwork(int gameId, const QString& url);
+    void log(const QString& msg);
 };
 
 #endif

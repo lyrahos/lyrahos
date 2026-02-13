@@ -412,27 +412,28 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Trigger Steam's install dialog via xdg-open. Steam is already running
-    // (launched by luna-session during login), so this simply sends the URL
-    // to the existing instance via IPC. Using xdg-open avoids spawning a
-    // second Steam process that would appear as a grayed-out window.
-    QProcess::startDetached("xdg-open", QStringList()
-        << QString("steam://install/%1").arg(game.appId));
-
-    // Auto-accept the install confirmation dialog. Poll for the Steam dialog
-    // window on the real display using xdotool search, then Tab to the
-    // Install button and press Enter. Steam's dialog opens with focus on the
-    // drive/location picker, so we need to Tab past it to reach the button.
-    QString acceptScript =
+    // Auto-accept the install confirmation dialog. We snapshot existing
+    // "Install" windows first, then trigger the steam://install URL, and
+    // finally poll for a NEW dialog window that wasn't there before. This
+    // avoids interacting with stale dialogs from previous install requests.
+    // Steam's dialog opens with focus on the drive/location picker, so we
+    // Tab past it to reach the Install button and press Enter.
+    QString acceptScript = QString(
+        "EXISTING=$(xdotool search --name 'Install' 2>/dev/null | tr '\\n' ' '); "
+        "xdg-open 'steam://install/%1'; "
         "for i in $(seq 1 30); do "
-        "  WID=$(xdotool search --name 'Install' 2>/dev/null | head -1); "
-        "  if [ -n \"$WID\" ]; then "
+        "  for WID in $(xdotool search --name 'Install' 2>/dev/null); do "
+        "    echo \"$EXISTING\" | grep -qw \"$WID\" && continue; "
+        "    xdotool windowactivate --sync \"$WID\"; "
+        "    xdotool windowfocus --sync \"$WID\"; "
+        "    xdotool windowraise \"$WID\"; "
         "    sleep 1; "
         "    xdotool key --window \"$WID\" Tab Tab Tab Tab Return; "
-        "    break; "
-        "  fi; "
+        "    exit 0; "
+        "  done; "
         "  sleep 1; "
-        "done";
+        "done"
+    ).arg(game.appId);
     QProcess::startDetached("sh", QStringList() << "-c" << acceptScript);
 
     // Start polling .acf manifests for download progress
