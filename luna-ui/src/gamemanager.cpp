@@ -412,11 +412,11 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Trigger Steam's install dialog. If Steam is already running (which it
-    // normally is after login), the new process relays the URL via IPC to
-    // the existing instance and exits — the dialog appears on the real display.
-    QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nochatui" << "-nofriendsui"
+    // Trigger Steam's install dialog via xdg-open. Steam is already running
+    // (launched by luna-session during login), so this simply sends the URL
+    // to the existing instance via IPC. Using xdg-open avoids spawning a
+    // second Steam process that would appear as a grayed-out window.
+    QProcess::startDetached("xdg-open", QStringList()
         << QString("steam://install/%1").arg(game.appId));
 
     // Auto-accept the install confirmation dialog. Poll for the Steam dialog
@@ -428,7 +428,7 @@ void GameManager::installGame(int gameId) {
         "  WID=$(xdotool search --name 'Install' 2>/dev/null | head -1); "
         "  if [ -n \"$WID\" ]; then "
         "    sleep 1; "
-        "    xdotool key --window \"$WID\" Tab Tab Tab Return; "
+        "    xdotool key --window \"$WID\" Tab Tab Tab Tab Return; "
         "    break; "
         "  fi; "
         "  sleep 1; "
