@@ -15,10 +15,13 @@ Rectangle {
     property bool isFavorite: false
     property bool isInstalled: true
     property int gameId: -1
+    property string appId: ""
     property double downloadProgress: -1.0  // -1 = not downloading, 0..1 = progress
+    property string installError: ""        // non-empty = error during install
 
     signal playClicked(int id)
     signal favoriteClicked(int id)
+    signal cancelClicked(string appId)
 
     // Resolve cover art through ArtworkManager (handles caching + async download)
     property string resolvedArt: {
@@ -159,16 +162,21 @@ Rectangle {
                 visible: !isInstalled
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: {
-                    if (downloadProgress >= 0) {
-                        return "Downloading " + Math.round(downloadProgress * 100) + "%"
-                    }
-                    return "Not Installed"
+                    if (installError.length > 0)
+                        return "Error"
+                    if (downloadProgress >= 0)
+                        return "Installing " + Math.round(downloadProgress * 100) + "%"
+                    return "Install"
                 }
                 font.pixelSize: 10
                 font.family: ThemeManager.getFont("body")
-                color: downloadProgress >= 0
-                       ? ThemeManager.getColor("accent")
-                       : ThemeManager.getColor("textSecondary")
+                color: {
+                    if (installError.length > 0)
+                        return "#ff6b6b"
+                    if (downloadProgress >= 0)
+                        return ThemeManager.getColor("accent")
+                    return ThemeManager.getColor("primary")
+                }
                 horizontalAlignment: Text.AlignHCenter
             }
         }
@@ -194,6 +202,14 @@ Rectangle {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: playClicked(gameId)
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: function(mouse) {
+            if (mouse.button === Qt.RightButton && downloadProgress >= 0) {
+                // Right-click on an active download → cancel
+                cancelClicked(appId)
+            } else {
+                playClicked(gameId)
+            }
+        }
     }
 }

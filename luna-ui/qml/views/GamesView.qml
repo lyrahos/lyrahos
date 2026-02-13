@@ -155,10 +155,15 @@ Rectangle {
                         isFavorite: model.isFavorite || false
                         isInstalled: model.isInstalled !== undefined ? model.isInstalled : true
                         gameId: model.id
+                        appId: model.appId || ""
                         downloadProgress: model.downloadProgress !== undefined ? model.downloadProgress : -1.0
+                        installError: model.installError !== undefined ? model.installError : ""
 
                         onPlayClicked: function(id) {
                             GameManager.launchGame(id)
+                        }
+                        onCancelClicked: function(appId) {
+                            GameManager.cancelDownload(appId)
                         }
                     }
 
@@ -723,6 +728,51 @@ Rectangle {
                             Behavior on border.color { ColorAnimation { duration: 150 } }
                         }
 
+                        // ─── SteamCMD Status ───
+                        Rectangle {
+                            visible: GameManager.isSteamAvailable()
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 56
+                            radius: 12
+                            color: ThemeManager.getColor("surface")
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 20
+                                anchors.rightMargin: 20
+                                spacing: 12
+
+                                Rectangle {
+                                    Layout.preferredWidth: 10
+                                    Layout.preferredHeight: 10
+                                    radius: 5
+                                    color: GameManager.isSteamCmdAvailable()
+                                           ? ThemeManager.getColor("accent") : "#ff6b6b"
+                                }
+
+                                Text {
+                                    text: GameManager.isSteamCmdAvailable()
+                                          ? "SteamCMD ready — games install in the background"
+                                          : "SteamCMD not found — install steamcmd to enable background downloads"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("textSecondary")
+                                    Layout.fillWidth: true
+                                }
+
+                                Text {
+                                    visible: GameManager.isSteamCmdAvailable()
+                                    text: {
+                                        var user = GameManager.getSteamUsername()
+                                        return user ? "Account: " + user : ""
+                                    }
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("accent")
+                                }
+                            }
+                        }
+
                         // ─── Steam API Key Setup (visible when Steam is logged in) ───
                         Rectangle {
                             visible: GameManager.isSteamAvailable()
@@ -995,6 +1045,163 @@ Rectangle {
     // Component.onCompleted fires and picks up newly imported games.
     Component.onCompleted: refreshGames()
 
+    // ── SteamCMD credential prompt dialog ──
+    Rectangle {
+        id: credentialDialog
+        visible: false
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.7)
+        z: 100
+
+        property string pendingAppId: ""
+        property string promptType: ""  // "password" or "steamguard"
+
+        MouseArea { anchors.fill: parent; onClicked: {} } // block clicks behind
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 420
+            height: credDialogCol.height + 48
+            radius: 16
+            color: ThemeManager.getColor("surface")
+
+            ColumnLayout {
+                id: credDialogCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 24
+                spacing: 12
+
+                Text {
+                    text: credentialDialog.promptType === "password"
+                          ? "Steam Password Required"
+                          : "Steam Guard Code Required"
+                    font.pixelSize: ThemeManager.getFontSize("large")
+                    font.family: ThemeManager.getFont("heading")
+                    font.bold: true
+                    color: ThemeManager.getColor("textPrimary")
+                }
+
+                Text {
+                    text: credentialDialog.promptType === "password"
+                          ? "SteamCMD needs your password for first-time login.\nCredentials are cached after the first successful login."
+                          : "Enter the Steam Guard code sent to your email or authenticator app."
+                    font.pixelSize: ThemeManager.getFontSize("small")
+                    font.family: ThemeManager.getFont("body")
+                    color: ThemeManager.getColor("textSecondary")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 44
+                    radius: 8
+                    color: ThemeManager.getColor("hover")
+                    border.color: credInput.activeFocus
+                                  ? ThemeManager.getColor("focus") : "transparent"
+                    border.width: credInput.activeFocus ? 2 : 0
+
+                    TextInput {
+                        id: credInput
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        verticalAlignment: TextInput.AlignVCenter
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textPrimary")
+                        echoMode: credentialDialog.promptType === "password"
+                                  ? TextInput.Password : TextInput.Normal
+                        clip: true
+                        onAccepted: {
+                            if (text.length > 0) {
+                                GameManager.provideSteamCmdCredential(
+                                    credentialDialog.pendingAppId, text)
+                                text = ""
+                                credentialDialog.visible = false
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        verticalAlignment: Text.AlignVCenter
+                        visible: credInput.text === "" && !credInput.activeFocus
+                        text: credentialDialog.promptType === "password"
+                              ? "Enter password..." : "Enter code..."
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+                }
+
+                RowLayout {
+                    spacing: 10
+
+                    Rectangle {
+                        Layout.preferredWidth: submitCredLabel.width + 32
+                        Layout.preferredHeight: 40
+                        radius: 8
+                        color: ThemeManager.getColor("primary")
+
+                        Text {
+                            id: submitCredLabel
+                            anchors.centerIn: parent
+                            text: "Submit"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: "white"
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (credInput.text.length > 0) {
+                                    GameManager.provideSteamCmdCredential(
+                                        credentialDialog.pendingAppId, credInput.text)
+                                    credInput.text = ""
+                                    credentialDialog.visible = false
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: cancelCredLabel.width + 32
+                        Layout.preferredHeight: 40
+                        radius: 8
+                        color: ThemeManager.getColor("surface")
+                        border.color: Qt.rgba(1, 1, 1, 0.15)
+                        border.width: 1
+
+                        Text {
+                            id: cancelCredLabel
+                            anchors.centerIn: parent
+                            text: "Cancel"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                credInput.text = ""
+                                GameManager.cancelDownload(credentialDialog.pendingAppId)
+                                credentialDialog.visible = false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Connections {
         target: GameManager
         function onGamesUpdated() { refreshGames() }
@@ -1004,6 +1211,7 @@ Rectangle {
             for (var i = 0; i < gamesModel.count; i++) {
                 if (gamesModel.get(i).id === gameId) {
                     gamesModel.setProperty(i, "downloadProgress", 0.0)
+                    gamesModel.setProperty(i, "installError", "")
                     break
                 }
             }
@@ -1014,6 +1222,9 @@ Rectangle {
             for (var i = 0; i < gamesModel.count; i++) {
                 if (gamesModel.get(i).appId === appId) {
                     gamesModel.setProperty(i, "downloadProgress", progress)
+                    if (progress < 0) {
+                        gamesModel.setProperty(i, "installError", "")
+                    }
                     break
                 }
             }
@@ -1025,9 +1236,28 @@ Rectangle {
                 if (gamesModel.get(i).id === gameId) {
                     gamesModel.setProperty(i, "isInstalled", true)
                     gamesModel.setProperty(i, "downloadProgress", -1.0)
+                    gamesModel.setProperty(i, "installError", "")
                     break
                 }
             }
+        }
+
+        function onInstallError(appId, error) {
+            // Show error on the matching game card
+            for (var i = 0; i < gamesModel.count; i++) {
+                if (gamesModel.get(i).appId === appId) {
+                    gamesModel.setProperty(i, "installError", error)
+                    gamesModel.setProperty(i, "downloadProgress", -1.0)
+                    break
+                }
+            }
+        }
+
+        function onSteamCmdCredentialNeeded(appId, promptType) {
+            credentialDialog.pendingAppId = appId
+            credentialDialog.promptType = promptType
+            credentialDialog.visible = true
+            credInput.forceActiveFocus()
         }
     }
 
@@ -1038,6 +1268,7 @@ Rectangle {
             games[i].downloadProgress = GameManager.isDownloading(games[i].appId)
                 ? GameManager.getDownloadProgress(games[i].appId)
                 : -1.0
+            games[i].installError = ""
             gamesModel.append(games[i])
         }
     }
