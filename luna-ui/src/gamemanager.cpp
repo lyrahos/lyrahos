@@ -412,41 +412,39 @@ void GameManager::installGame(int gameId) {
     m_activeDownloads.insert(game.appId, gameId);
     emit downloadStarted(game.appId, gameId);
 
-    // Restart Steam before opening the install dialog. When Steam is already
-    // running, its install dialog opens as a modal child window that gets
-    // stuck behind the Luna UI (appears "grayed out" and unresponsive).
-    // Starting Steam fresh ensures the dialog is a proper top-level window
-    // that xdotool can find and auto-accept. Steam automatically resumes
-    // any in-progress downloads after restart, so no progress is lost.
+    // Auto-accept Steam's install dialog by briefly minimizing Luna UI so
+    // the dialog can receive focus. When Steam is already running, its
+    // modal dialog opens behind Luna UI (the user sees Steam "grayed out"
+    // because the dialog is hidden). We find Luna UI's window via PID,
+    // minimize it so xdotool can activate the dialog, press Tab*4 + Enter
+    // to accept, then restore Luna UI — takes ~2 s with no Steam restart.
     //
-    // A lockfile serializes concurrent install requests so multiple clicks
-    // don't race over Steam's lifecycle.
+    // A lockfile serializes concurrent install requests so rapid clicks
+    // don't race over dialog interactions.
+    qint64 lunaUiPid = QCoreApplication::applicationPid();
     QString acceptScript = QString(
         "("
         "  flock -x 9 || exit 1; "
-        "  if pgrep -x steam >/dev/null 2>&1; then "
-        "    steam -shutdown 2>/dev/null; "
-        "    for i in $(seq 1 20); do "
-        "      pgrep -x steam >/dev/null 2>&1 || break; "
-        "      sleep 0.5; "
-        "    done; "
-        "  fi; "
+        "  LUNA_WID=$(xdotool search --pid %2 2>/dev/null | head -1); "
         "  EXISTING=$(xdotool search --name 'Install' 2>/dev/null | tr '\\n' ' '); "
-        "  steam steam://install/%1 & "
+        "  xdg-open 'steam://install/%1'; "
         "  for i in $(seq 1 40); do "
         "    for WID in $(xdotool search --name 'Install' 2>/dev/null); do "
         "      echo \"$EXISTING\" | grep -qw \"$WID\" && continue; "
+        "      [ -n \"$LUNA_WID\" ] && xdotool windowminimize --sync \"$LUNA_WID\" 2>/dev/null; "
         "      xdotool windowactivate --sync \"$WID\"; "
         "      xdotool windowfocus --sync \"$WID\"; "
         "      xdotool windowraise \"$WID\"; "
         "      sleep 1; "
         "      xdotool key --window \"$WID\" Tab Tab Tab Tab Return; "
+        "      sleep 0.5; "
+        "      [ -n \"$LUNA_WID\" ] && xdotool windowactivate \"$LUNA_WID\" 2>/dev/null; "
         "      exit 0; "
         "    done; "
         "    sleep 1; "
         "  done; "
         ") 9>/tmp/luna-steam-install.lock"
-    ).arg(game.appId);
+    ).arg(game.appId).arg(lunaUiPid);
     QProcess::startDetached("sh", QStringList() << "-c" << acceptScript);
 
     // Start polling .acf manifests for download progress
