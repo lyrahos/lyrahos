@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
 // Full-screen modal wizard for first-time Steam setup.
 // Step 1: Intro explaining the multi-login process
@@ -38,8 +39,10 @@ Rectangle {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
-            // Found the key — close the browser
-            GameManager.closeApiKeyBrowser()
+            // Raise Luna UI above the browser so the confirmation popup
+            // is visible. The browser stays open until the user confirms.
+            wizard.Window.window.raise()
+            wizard.Window.window.requestActivate()
         }
 
         function onApiKeyScrapeError(error) {
@@ -607,6 +610,7 @@ Rectangle {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
+                                        GameManager.closeApiKeyBrowser()
                                         GameManager.setSteamApiKey(wizard.detectedApiKey)
                                         wizard.currentStep = 3
                                     }
