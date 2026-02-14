@@ -57,6 +57,7 @@ public:
 
     // Steam Setup Wizard — guided first-time setup
     Q_INVOKABLE void openApiKeyInBrowser();
+    Q_INVOKABLE void closeApiKeyBrowser();
     Q_INVOKABLE void scrapeApiKeyFromPage();
     Q_INVOKABLE void loginSteamCmd();
     Q_INVOKABLE void provideSteamCmdSetupCredential(const QString& credential);
@@ -103,6 +104,9 @@ private:
 
     // SteamCMD setup (login-only) process
     QProcess *m_steamCmdSetupProc = nullptr;
+
+    // Browser process launched for API key page
+    qint64 m_apiKeyBrowserPid = 0;
 
     void registerBackends();
     void monitorGameProcess();

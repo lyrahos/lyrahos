@@ -15,6 +15,7 @@
 #include <QFileSystemWatcher>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <memory>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -566,16 +567,22 @@ void GameManager::installGame(int gameId) {
         m_steamCmdProcesses.remove(appId);
         m_downloadProgressCache.remove(appId);
 
-        if (exitCode == 0 && status == QProcess::NormalExit) {
-            qDebug() << "SteamCMD finished successfully for appId:" << appId;
+        // SteamCMD exit codes are unreliable (often exits 5 on success).
+        // Check for the app manifest file — its existence is the real proof
+        // that the game was downloaded successfully.
+        QString manifestPath = primarySteamApps + "/appmanifest_" + appId + ".acf";
+        bool manifestExists = QFile::exists(manifestPath);
+
+        if (manifestExists || (exitCode == 0 && status == QProcess::NormalExit)) {
+            qDebug() << "SteamCMD finished for appId:" << appId
+                     << "(exit code:" << exitCode << ", manifest:" << manifestExists << ")";
 
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
             game.isInstalled = true;
             game.launchCommand = "steam steam://rungameid/" + appId;
 
-            // Try to find the install path from the manifest
-            QString manifestPath = primarySteamApps + "/appmanifest_" + appId + ".acf";
+            // Read the install path from the manifest
             QFile manifest(manifestPath);
             if (manifest.open(QIODevice::ReadOnly)) {
                 QTextStream in(&manifest);
@@ -596,7 +603,7 @@ void GameManager::installGame(int gameId) {
             qDebug() << "SteamCMD failed for appId:" << appId
                      << "exit code:" << exitCode << "status:" << status;
             m_activeDownloads.remove(appId);
-            emit installError(appId, "Installation failed (steamcmd exit code " + QString::number(exitCode) + ")");
+            emit installError(appId, "Installation failed — check your credentials and try again.");
             // Emit progress -1 to clear the UI progress bar
             emit downloadProgressChanged(appId, -1.0);
         }
@@ -813,9 +820,9 @@ void GameManager::openApiKeyInBrowser() {
     // Open the Steam API key page in a real browser, full screen.
     // In gamescope, we need explicit full-screen flags since xdg-open
     // doesn't pass them through. Try known browsers with kiosk/fullscreen.
+    // We track the PID so closeApiKeyBrowser() can kill it later.
     QString url = "https://steamcommunity.com/dev/apikey";
 
-    // Try browsers in order of preference with full-screen flags
     struct BrowserOption {
         QString bin;
         QStringList args;
@@ -830,101 +837,163 @@ void GameManager::openApiKeyInBrowser() {
     for (const auto& b : browsers) {
         QString path = QStandardPaths::findExecutable(b.bin);
         if (!path.isEmpty()) {
-            QProcess::startDetached(path, b.args);
-            qDebug() << "Opened API key page with" << b.bin << "(full screen)";
+            qint64 pid = 0;
+            QProcess::startDetached(path, b.args, QString(), &pid);
+            m_apiKeyBrowserPid = pid;
+            qDebug() << "Opened API key page with" << b.bin << "(full screen, pid:" << pid << ")";
             return;
         }
     }
 
-    // Fallback: xdg-open without full-screen (better than nothing)
-    QProcess::startDetached("xdg-open", QStringList() << url);
-    qDebug() << "Opened API key page with xdg-open (no full-screen flag)";
+    // Fallback: xdg-open without full-screen
+    qint64 pid = 0;
+    QProcess::startDetached("xdg-open", QStringList() << url, QString(), &pid);
+    m_apiKeyBrowserPid = pid;
+    qDebug() << "Opened API key page with xdg-open (pid:" << pid << ")";
+}
+
+void GameManager::closeApiKeyBrowser() {
+    if (m_apiKeyBrowserPid > 0) {
+        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid << ")";
+        QProcess::execute("kill", QStringList() << QString::number(m_apiKeyBrowserPid));
+        m_apiKeyBrowserPid = 0;
+    }
 }
 
 void GameManager::scrapeApiKeyFromPage() {
-    // Auto-detect the Steam API key by reading the browser page content.
+    // Auto-detect the Steam API key by reading Steam client's CEF cookie
+    // database and fetching the API key page directly.
     //
-    // The browser is open to steamcommunity.com/dev/apikey which shows
-    // "Key: A1B2C3D4..." when a key is registered. We use xdotool to
-    // select all text on the page and copy it to the clipboard, then
-    // parse the clipboard for the key pattern.
+    // When the user logs into the Steam client (step 1), it stores web
+    // session cookies in an SQLite DB at:
+    //   ~/.local/share/Steam/config/htmlcache/Cookies
     //
-    // The script polls every 2 seconds for up to 30 attempts (60s total),
-    // giving the browser time to load and the user time to log in if needed.
+    // On Linux, CEF encrypts cookie values using Chrome's standard
+    // encryption: AES-128-CBC with a key derived from password "peanuts",
+    // salt "saltysalt", 1 PBKDF2 iteration, IV = 16 spaces (0x20).
+    //
+    // We use Python3 (stdlib only + openssl CLI) to:
+    //   1. Copy the cookie DB to /tmp (avoid lock issues)
+    //   2. Read steamLoginSecure cookie (try plaintext, then decrypt)
+    //   3. Fetch steamcommunity.com/dev/apikey with that cookie
+    //   4. Parse the 32-char hex key from the HTML
 
     QProcess *proc = new QProcess(this);
+    QString steamDir = QDir::homePath() + "/.local/share/Steam";
 
-    QString script =
-        "# Wait for the browser to load, then grab page text via clipboard\n"
-        "for i in $(seq 1 30); do\n"
-        "    # Find any browser window (firefox, chromium, etc.)\n"
-        "    WIN=$(xdotool search --onlyvisible --name '.' 2>/dev/null | head -1)\n"
-        "    if [ -n \"$WIN\" ]; then\n"
-        "        # Focus the window, select all, copy\n"
-        "        xdotool windowactivate --sync \"$WIN\" 2>/dev/null\n"
-        "        sleep 0.3\n"
-        "        xdotool key ctrl+a 2>/dev/null\n"
-        "        sleep 0.2\n"
-        "        xdotool key ctrl+c 2>/dev/null\n"
-        "        sleep 0.3\n"
+    QString script = QString(
+        "python3 -c '\n"
+        "import sqlite3, os, hashlib, subprocess, re, sys, shutil\n"
+        "try:\n"
+        "    from urllib.request import Request, urlopen\n"
+        "except:\n"
+        "    print(\"ERROR:Python urllib not available\")\n"
+        "    sys.exit(1)\n"
         "\n"
-        "        # Read clipboard (try xclip, xsel, wl-paste)\n"
-        "        CLIP=$(xclip -selection clipboard -o 2>/dev/null \\\n"
-        "            || xsel --clipboard --output 2>/dev/null \\\n"
-        "            || wl-paste 2>/dev/null \\\n"
-        "            || echo '')\n"
+        "db_src = \"%1/config/htmlcache/Cookies\"\n"
+        "if not os.path.exists(db_src):\n"
+        "    print(\"ERROR:Steam cookie database not found\")\n"
+        "    sys.exit(1)\n"
         "\n"
-        "        # Look for 'Key: ' followed by a 32-char hex string\n"
-        "        KEY=$(echo \"$CLIP\" | grep -oP 'Key:\\s*[A-Fa-f0-9]{32}' | grep -oP '[A-Fa-f0-9]{32}' | head -1)\n"
-        "        if [ -n \"$KEY\" ]; then\n"
-        "            echo \"APIKEY:$KEY\"\n"
-        "            exit 0\n"
-        "        fi\n"
-        "    fi\n"
-        "    sleep 2\n"
-        "done\n"
+        "# Copy to /tmp to avoid SQLite lock issues\n"
+        "db_tmp = \"/tmp/.luna_steam_cookies.db\"\n"
+        "try:\n"
+        "    shutil.copy2(db_src, db_tmp)\n"
+        "except Exception as e:\n"
+        "    print(f\"ERROR:Could not copy cookie DB: {e}\")\n"
+        "    sys.exit(1)\n"
         "\n"
-        "echo 'ERROR:Could not find API key on the page'\n"
-        "exit 1\n";
+        "conn = sqlite3.connect(db_tmp)\n"
+        "\n"
+        "def get_cookie(name):\n"
+        "    cur = conn.execute(\n"
+        "        \"SELECT value, encrypted_value FROM cookies \"\n"
+        "        \"WHERE host_key=\\'\\'.steamcommunity.com\\'\\' AND name=? LIMIT 1\", (name,))\n"
+        "    row = cur.fetchone()\n"
+        "    if not row:\n"
+        "        return None\n"
+        "    value, encrypted = row\n"
+        "    if value:\n"
+        "        return value\n"
+        "    if not encrypted or len(encrypted) < 4:\n"
+        "        return None\n"
+        "    # Decrypt Chrome/CEF Linux cookie (AES-128-CBC)\n"
+        "    key = hashlib.pbkdf2_hmac(\"sha1\", b\"peanuts\", b\"saltysalt\", 1, dklen=16)\n"
+        "    data = encrypted[3:]  # strip v10/v11 prefix\n"
+        "    iv = bytes([0x20] * 16)\n"
+        "    r = subprocess.run(\n"
+        "        [\"openssl\", \"enc\", \"-aes-128-cbc\", \"-d\",\n"
+        "         \"-K\", key.hex(), \"-iv\", iv.hex()],\n"
+        "        input=data, capture_output=True)\n"
+        "    if r.returncode != 0:\n"
+        "        return None\n"
+        "    return r.stdout.decode(\"utf-8\", errors=\"ignore\")\n"
+        "\n"
+        "login = get_cookie(\"steamLoginSecure\")\n"
+        "sessid = get_cookie(\"sessionid\") or \"\"\n"
+        "conn.close()\n"
+        "try:\n"
+        "    os.remove(db_tmp)\n"
+        "except:\n"
+        "    pass\n"
+        "\n"
+        "if not login:\n"
+        "    print(\"ERROR:Could not read Steam session cookie\")\n"
+        "    sys.exit(1)\n"
+        "\n"
+        "try:\n"
+        "    req = Request(\"https://steamcommunity.com/dev/apikey\",\n"
+        "        headers={\"Cookie\": f\"steamLoginSecure={login}; sessionid={sessid}\",\n"
+        "                 \"User-Agent\": \"Mozilla/5.0\"})\n"
+        "    html = urlopen(req, timeout=10).read().decode(\"utf-8\", errors=\"ignore\")\n"
+        "except Exception as e:\n"
+        "    print(f\"ERROR:Failed to fetch page: {e}\")\n"
+        "    sys.exit(1)\n"
+        "\n"
+        "m = re.search(r\"Key:\\s*([A-Fa-f0-9]{32})\", html)\n"
+        "if m:\n"
+        "    print(f\"APIKEY:{m.group(1)}\")\n"
+        "else:\n"
+        "    print(\"ERROR:No API key found on page\")\n"
+        "    sys.exit(1)\n"
+        "'\n"
+    ).arg(steamDir);
 
-    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
         QString output = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        QString errors = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+        proc->deleteLater();
+
+        if (!errors.isEmpty()) {
+            qDebug() << "API key scrape stderr:" << errors;
+        }
 
         for (const QString& line : output.split('\n')) {
+            qDebug() << "API key scrape:" << line;
             if (line.startsWith("APIKEY:")) {
                 QString key = line.mid(7).trimmed().toUpper();
                 if (!key.isEmpty()) {
                     qDebug() << "Auto-detected Steam API key:" << key.left(4) + "...";
                     emit apiKeyScraped(key);
-                    proc->kill();
-                    proc->deleteLater();
                     return;
                 }
             }
         }
-    });
 
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, proc](int exitCode, QProcess::ExitStatus) {
-        QString output = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
-        proc->deleteLater();
-
-        // Check one more time in case readyRead didn't fire
+        // Extract error message for the user
+        QString errMsg = "Could not auto-detect API key.";
         for (const QString& line : output.split('\n')) {
-            if (line.startsWith("APIKEY:")) {
-                QString key = line.mid(7).trimmed().toUpper();
-                if (!key.isEmpty()) {
-                    emit apiKeyScraped(key);
-                    return;
-                }
+            if (line.startsWith("ERROR:")) {
+                errMsg = line.mid(6);
+                break;
             }
         }
-
-        emit apiKeyScrapeError("Could not auto-detect API key.");
+        emit apiKeyScrapeError(errMsg);
     });
 
     proc->start("bash", QStringList() << "-c" << script);
-    qDebug() << "Scraping API key from browser page via xdotool+clipboard...";
+    qDebug() << "Auto-detecting Steam API key via cookie decryption...";
 }
 
 void GameManager::loginSteamCmd() {
@@ -950,10 +1019,18 @@ void GameManager::loginSteamCmd() {
     }
 
     m_steamCmdSetupProc = new QProcess(this);
+    // Don't pass +quit on the command line. SteamCMD needs time to
+    // save the login token after a successful auth. If +quit is queued
+    // upfront, it fires before the token is persisted and exits with
+    // code 5. Instead, we write "quit" to stdin after login succeeds.
     QStringList args;
-    args << "+login" << username << "+quit";
+    args << "+login" << username;
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this]() {
+    // Track whether we saw a successful login in stdout, because
+    // SteamCMD's exit codes are unreliable (often exits 5 even on success).
+    auto loginOk = std::make_shared<bool>(false);
+
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, loginOk]() {
         QString output = QString::fromUtf8(m_steamCmdSetupProc->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
             QString trimmed = line.trimmed();
@@ -971,24 +1048,42 @@ void GameManager::loginSteamCmd() {
                 emit steamCmdSetupCredentialNeeded("steamguard");
                 continue;
             }
-            // Successful login
+            // Successful login — SteamCMD prints these on a valid session.
+            // Now tell it to quit so it exits cleanly after saving the token.
             if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
                 trimmed.contains("Waiting for user info", Qt::CaseInsensitive)) {
-                // Don't emit yet — wait for process to finish cleanly
+                *loginOk = true;
+                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+                    m_steamCmdSetupProc->write("quit\n");
+                }
+            }
+            // Login failure messages from SteamCMD itself
+            if (trimmed.contains("FAILED login", Qt::CaseInsensitive) ||
+                trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
+                trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
+                *loginOk = false;
+                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+                    m_steamCmdSetupProc->write("quit\n");
+                }
             }
         }
     });
 
     connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOk](int exitCode, QProcess::ExitStatus) {
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
 
-        if (exitCode == 0) {
-            qDebug() << "SteamCMD setup login successful";
+        // Trust the stdout "Logged in OK" over the exit code, because
+        // SteamCMD frequently exits with code 5 even after a successful
+        // login+quit sequence.
+        if (*loginOk || exitCode == 0) {
+            qDebug() << "SteamCMD setup login successful (exit code:" << exitCode << ")";
             emit steamCmdSetupLoginSuccess();
         } else {
-            emit steamCmdSetupLoginError("SteamCMD login failed (exit code " + QString::number(exitCode) + ")");
+            qDebug() << "SteamCMD setup login failed, exit code:" << exitCode;
+            emit steamCmdSetupLoginError(
+                "Login failed. Check your password or Steam Guard code and try again.");
         }
     });
 
