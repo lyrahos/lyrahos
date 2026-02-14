@@ -817,21 +817,47 @@ bool GameManager::isSteamSetupComplete() {
 }
 
 void GameManager::openApiKeyInBrowser() {
-    // Open the Steam API key page in a real browser, full screen.
-    // In gamescope, we need explicit full-screen flags since xdg-open
-    // doesn't pass them through. Try known browsers with kiosk/fullscreen.
+    // Open the Steam API key page in a real browser, truly full screen.
+    // In gamescope the window manager doesn't tile/maximize automatically,
+    // so we must give explicit geometry that fills the entire screen.
     // We track the PID so closeApiKeyBrowser() can kill it later.
     QString url = "https://steamcommunity.com/dev/apikey";
+
+    // Detect screen resolution from gamescope / Xrandr environment
+    // Default to 1280x800 (Steam Deck) if detection fails.
+    int screenW = 1280, screenH = 800;
+    QProcess xrandr;
+    xrandr.start("xrandr", QStringList() << "--current");
+    if (xrandr.waitForFinished(2000)) {
+        // Parse lines like "  1280x800     59.98*+"
+        QRegularExpression re("(\\d+)x(\\d+)\\s+\\d+\\.\\d+\\*");
+        auto m = re.match(QString::fromUtf8(xrandr.readAllStandardOutput()));
+        if (m.hasMatch()) {
+            screenW = m.captured(1).toInt();
+            screenH = m.captured(2).toInt();
+        }
+    }
+    QString geom = QString("%1x%2").arg(screenW).arg(screenH);
+    qDebug() << "Browser target geometry:" << geom;
 
     struct BrowserOption {
         QString bin;
         QStringList args;
     };
+    // Enable remote debugging so scrapeApiKeyFromPage() can read the DOM.
+    m_apiKeyBrowserType = "";
     QVector<BrowserOption> browsers = {
-        {"firefox",        {"--kiosk", url}},
-        {"chromium",       {"--start-fullscreen", "--no-first-run", url}},
-        {"chromium-browser", {"--start-fullscreen", "--no-first-run", url}},
-        {"google-chrome",  {"--start-fullscreen", "--no-first-run", url}},
+        {"chromium",         {"--kiosk", "--no-first-run",
+                              "--window-size=" + geom, "--window-position=0,0",
+                              "--remote-debugging-port=9222", url}},
+        {"chromium-browser", {"--kiosk", "--no-first-run",
+                              "--window-size=" + geom, "--window-position=0,0",
+                              "--remote-debugging-port=9222", url}},
+        {"google-chrome",    {"--kiosk", "--no-first-run",
+                              "--window-size=" + geom, "--window-position=0,0",
+                              "--remote-debugging-port=9222", url}},
+        {"firefox",          {"--kiosk", "--width", QString::number(screenW),
+                              "--height", QString::number(screenH), url}},
     };
 
     for (const auto& b : browsers) {
@@ -840,7 +866,8 @@ void GameManager::openApiKeyInBrowser() {
             qint64 pid = 0;
             QProcess::startDetached(path, b.args, QString(), &pid);
             m_apiKeyBrowserPid = pid;
-            qDebug() << "Opened API key page with" << b.bin << "(full screen, pid:" << pid << ")";
+            m_apiKeyBrowserType = b.bin;
+            qDebug() << "Opened API key page with" << b.bin << "(kiosk" << geom << ", pid:" << pid << ")";
             return;
         }
     }
@@ -861,103 +888,226 @@ void GameManager::closeApiKeyBrowser() {
 }
 
 void GameManager::scrapeApiKeyFromPage() {
-    // Auto-detect the Steam API key by reading Steam client's CEF cookie
-    // database and fetching the API key page directly.
+    // Scrape the Steam API key from the browser that openApiKeyInBrowser()
+    // launched.  We connect to the browser's Chrome DevTools Protocol
+    // (remote debugging on port 9222) and read the page's DOM text.
     //
-    // When the user logs into the Steam client (step 1), it stores web
-    // session cookies in an SQLite DB at:
-    //   ~/.local/share/Steam/config/htmlcache/Cookies
+    // The script polls every 2 seconds for up to 60 seconds, giving the
+    // user time to log in / load the page.  Once "Key: <hex>" appears
+    // in the page body, it prints the key and exits.
     //
-    // On Linux, CEF encrypts cookie values using Chrome's standard
-    // encryption: AES-128-CBC with a key derived from password "peanuts",
-    // salt "saltysalt", 1 PBKDF2 iteration, IV = 16 spaces (0x20).
-    //
-    // We use Python3 (stdlib only + openssl CLI) to:
-    //   1. Copy the cookie DB to /tmp (avoid lock issues)
-    //   2. Read steamLoginSecure cookie (try plaintext, then decrypt)
-    //   3. Fetch steamcommunity.com/dev/apikey with that cookie
-    //   4. Parse the 32-char hex key from the HTML
+    // For Firefox (no CDP), we fall back to cookie-based scraping.
 
     QProcess *proc = new QProcess(this);
+    bool useCDP = (m_apiKeyBrowserType != "firefox" && !m_apiKeyBrowserType.isEmpty());
     QString steamDir = QDir::homePath() + "/.local/share/Steam";
 
-    QString script = QString(
-        "python3 -c '\n"
-        "import sqlite3, os, hashlib, subprocess, re, sys, shutil\n"
-        "try:\n"
-        "    from urllib.request import Request, urlopen\n"
-        "except:\n"
-        "    print(\"ERROR:Python urllib not available\")\n"
-        "    sys.exit(1)\n"
-        "\n"
-        "db_src = \"%1/config/htmlcache/Cookies\"\n"
-        "if not os.path.exists(db_src):\n"
-        "    print(\"ERROR:Steam cookie database not found\")\n"
-        "    sys.exit(1)\n"
-        "\n"
-        "# Copy to /tmp to avoid SQLite lock issues\n"
-        "db_tmp = \"/tmp/.luna_steam_cookies.db\"\n"
-        "try:\n"
-        "    shutil.copy2(db_src, db_tmp)\n"
-        "except Exception as e:\n"
-        "    print(f\"ERROR:Could not copy cookie DB: {e}\")\n"
-        "    sys.exit(1)\n"
-        "\n"
-        "conn = sqlite3.connect(db_tmp)\n"
-        "\n"
-        "def get_cookie(name):\n"
-        "    cur = conn.execute(\n"
-        "        \"SELECT value, encrypted_value FROM cookies \"\n"
-        "        \"WHERE host_key=\\'\\'.steamcommunity.com\\'\\' AND name=? LIMIT 1\", (name,))\n"
-        "    row = cur.fetchone()\n"
-        "    if not row:\n"
-        "        return None\n"
-        "    value, encrypted = row\n"
-        "    if value:\n"
-        "        return value\n"
-        "    if not encrypted or len(encrypted) < 4:\n"
-        "        return None\n"
-        "    # Decrypt Chrome/CEF Linux cookie (AES-128-CBC)\n"
-        "    key = hashlib.pbkdf2_hmac(\"sha1\", b\"peanuts\", b\"saltysalt\", 1, dklen=16)\n"
-        "    data = encrypted[3:]  # strip v10/v11 prefix\n"
-        "    iv = bytes([0x20] * 16)\n"
-        "    r = subprocess.run(\n"
-        "        [\"openssl\", \"enc\", \"-aes-128-cbc\", \"-d\",\n"
-        "         \"-K\", key.hex(), \"-iv\", iv.hex()],\n"
-        "        input=data, capture_output=True)\n"
-        "    if r.returncode != 0:\n"
-        "        return None\n"
-        "    return r.stdout.decode(\"utf-8\", errors=\"ignore\")\n"
-        "\n"
-        "login = get_cookie(\"steamLoginSecure\")\n"
-        "sessid = get_cookie(\"sessionid\") or \"\"\n"
-        "conn.close()\n"
-        "try:\n"
-        "    os.remove(db_tmp)\n"
-        "except:\n"
-        "    pass\n"
-        "\n"
-        "if not login:\n"
-        "    print(\"ERROR:Could not read Steam session cookie\")\n"
-        "    sys.exit(1)\n"
-        "\n"
-        "try:\n"
-        "    req = Request(\"https://steamcommunity.com/dev/apikey\",\n"
-        "        headers={\"Cookie\": f\"steamLoginSecure={login}; sessionid={sessid}\",\n"
-        "                 \"User-Agent\": \"Mozilla/5.0\"})\n"
-        "    html = urlopen(req, timeout=10).read().decode(\"utf-8\", errors=\"ignore\")\n"
-        "except Exception as e:\n"
-        "    print(f\"ERROR:Failed to fetch page: {e}\")\n"
-        "    sys.exit(1)\n"
-        "\n"
-        "m = re.search(r\"Key:\\s*([A-Fa-f0-9]{32})\", html)\n"
-        "if m:\n"
-        "    print(f\"APIKEY:{m.group(1)}\")\n"
-        "else:\n"
-        "    print(\"ERROR:No API key found on page\")\n"
-        "    sys.exit(1)\n"
-        "'\n"
-    ).arg(steamDir);
+    QString script;
+    if (useCDP) {
+        // Chromium-based: scrape via Chrome DevTools Protocol
+        script = QString(
+            "python3 -c '\n"
+            "import json, re, sys, time\n"
+            "try:\n"
+            "    from urllib.request import Request, urlopen\n"
+            "except:\n"
+            "    print(\"ERROR:Python urllib not available\")\n"
+            "    sys.exit(1)\n"
+            "\n"
+            "def get_page_text():\n"
+            "    \"\"\"Connect to Chrome DevTools and get page body text.\"\"\"\n"
+            "    try:\n"
+            "        # Get the list of debuggable pages\n"
+            "        tabs = json.loads(urlopen(\"http://127.0.0.1:9222/json\", timeout=3).read())\n"
+            "        # Find the Steam API key tab\n"
+            "        ws_url = None\n"
+            "        for tab in tabs:\n"
+            "            if \"steamcommunity.com/dev/apikey\" in tab.get(\"url\", \"\"):\n"
+            "                ws_url = tab.get(\"id\")\n"
+            "                break\n"
+            "        if not ws_url and tabs:\n"
+            "            ws_url = tabs[0].get(\"id\")\n"
+            "        if not ws_url:\n"
+            "            return None\n"
+            "        # Use the /json/evaluate endpoint (no websocket needed)\n"
+            "        # We send a Runtime.evaluate via HTTP by POSTing to a simpler endpoint\n"
+            "        # Actually use the CDP HTTP fetch trick: navigate to javascript: won t work\n"
+            "        # Simplest: just fetch the page URL from the tab info and grab the body\n"
+            "        page_url = None\n"
+            "        for tab in tabs:\n"
+            "            if tab.get(\"id\") == ws_url:\n"
+            "                page_url = tab.get(\"url\")\n"
+            "                break\n"
+            "        if not page_url or \"steamcommunity\" not in page_url:\n"
+            "            return None\n"
+            "        # Read cookies from the browser by fetching the page through CDP\n"
+            "        # Use websocket to evaluate document.body.innerText\n"
+            "        import socket, struct, hashlib, base64, os\n"
+            "        ws_uri = None\n"
+            "        for tab in tabs:\n"
+            "            if tab.get(\"id\") == ws_url:\n"
+            "                ws_uri = tab.get(\"webSocketDebuggerUrl\")\n"
+            "                break\n"
+            "        if not ws_uri:\n"
+            "            return None\n"
+            "        # Parse ws://host:port/path\n"
+            "        ws_uri = ws_uri.replace(\"ws://\", \"\")\n"
+            "        host_port, path = ws_uri.split(\"/\", 1) if \"/\" in ws_uri else (ws_uri, \"\")\n"
+            "        host, port = host_port.split(\":\") if \":\" in host_port else (host_port, \"80\")\n"
+            "        path = \"/\" + path\n"
+            "        # WebSocket handshake\n"
+            "        sock = socket.create_connection((host, int(port)), timeout=5)\n"
+            "        ws_key = base64.b64encode(os.urandom(16)).decode()\n"
+            "        handshake = (f\"GET {path} HTTP/1.1\\r\\n\"\n"
+            "                     f\"Host: {host_port}\\r\\n\"\n"
+            "                     f\"Upgrade: websocket\\r\\n\"\n"
+            "                     f\"Connection: Upgrade\\r\\n\"\n"
+            "                     f\"Sec-WebSocket-Key: {ws_key}\\r\\n\"\n"
+            "                     f\"Sec-WebSocket-Version: 13\\r\\n\\r\\n\")\n"
+            "        sock.sendall(handshake.encode())\n"
+            "        resp = sock.recv(4096)\n"
+            "        if b\"101\" not in resp:\n"
+            "            sock.close()\n"
+            "            return None\n"
+            "        # Send CDP command: Runtime.evaluate\n"
+            "        cmd = json.dumps({\"id\": 1, \"method\": \"Runtime.evaluate\",\n"
+            "                          \"params\": {\"expression\": \"document.body.innerText\"}})\n"
+            "        payload = cmd.encode()\n"
+            "        mask = os.urandom(4)\n"
+            "        # Build websocket frame (masked, text)\n"
+            "        frame = bytearray([0x81])  # FIN + text opcode\n"
+            "        length = len(payload)\n"
+            "        if length < 126:\n"
+            "            frame.append(0x80 | length)  # masked\n"
+            "        elif length < 65536:\n"
+            "            frame.append(0x80 | 126)\n"
+            "            frame.extend(struct.pack(\">H\", length))\n"
+            "        else:\n"
+            "            frame.append(0x80 | 127)\n"
+            "            frame.extend(struct.pack(\">Q\", length))\n"
+            "        frame.extend(mask)\n"
+            "        frame.extend(bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))\n"
+            "        sock.sendall(frame)\n"
+            "        # Read response\n"
+            "        data = b\"\"\n"
+            "        sock.settimeout(5)\n"
+            "        try:\n"
+            "            while True:\n"
+            "                chunk = sock.recv(65536)\n"
+            "                if not chunk:\n"
+            "                    break\n"
+            "                data += chunk\n"
+            "                # Check if we have a complete frame\n"
+            "                try:\n"
+            "                    json.loads(data[data.index(b\"{\"):])\n"
+            "                    break\n"
+            "                except:\n"
+            "                    pass\n"
+            "        except socket.timeout:\n"
+            "            pass\n"
+            "        sock.close()\n"
+            "        # Parse the CDP response from the websocket frame\n"
+            "        try:\n"
+            "            json_start = data.index(b\"{\")\n"
+            "            result = json.loads(data[json_start:])\n"
+            "            return result.get(\"result\", {}).get(\"result\", {}).get(\"value\", \"\")\n"
+            "        except:\n"
+            "            return None\n"
+            "    except Exception as e:\n"
+            "        return None\n"
+            "\n"
+            "# Poll the browser page for up to 60 seconds\n"
+            "for attempt in range(30):\n"
+            "    text = get_page_text()\n"
+            "    if text:\n"
+            "        m = re.search(r\"Key:\\s*([A-Fa-f0-9]{32})\", text)\n"
+            "        if m:\n"
+            "            print(f\"APIKEY:{m.group(1)}\")\n"
+            "            sys.exit(0)\n"
+            "    time.sleep(2)\n"
+            "\n"
+            "print(\"ERROR:Could not find API key on the page. Copy it manually.\")\n"
+            "sys.exit(1)\n"
+            "'\n"
+        );
+    } else {
+        // Firefox fallback: use cookie-based scraping
+        script = QString(
+            "python3 -c '\n"
+            "import sqlite3, os, hashlib, subprocess, re, sys, shutil\n"
+            "try:\n"
+            "    from urllib.request import Request, urlopen\n"
+            "except:\n"
+            "    print(\"ERROR:Python urllib not available\")\n"
+            "    sys.exit(1)\n"
+            "\n"
+            "db_src = \"%1/config/htmlcache/Cookies\"\n"
+            "if not os.path.exists(db_src):\n"
+            "    print(\"ERROR:Steam cookie database not found\")\n"
+            "    sys.exit(1)\n"
+            "\n"
+            "db_tmp = \"/tmp/.luna_steam_cookies.db\"\n"
+            "try:\n"
+            "    shutil.copy2(db_src, db_tmp)\n"
+            "except Exception as e:\n"
+            "    print(f\"ERROR:Could not copy cookie DB: {e}\")\n"
+            "    sys.exit(1)\n"
+            "\n"
+            "conn = sqlite3.connect(db_tmp)\n"
+            "\n"
+            "def get_cookie(name):\n"
+            "    cur = conn.execute(\n"
+            "        \"SELECT value, encrypted_value FROM cookies \"\n"
+            "        \"WHERE host_key=\\'\\'.steamcommunity.com\\'\\' AND name=? LIMIT 1\", (name,))\n"
+            "    row = cur.fetchone()\n"
+            "    if not row:\n"
+            "        return None\n"
+            "    value, encrypted = row\n"
+            "    if value:\n"
+            "        return value\n"
+            "    if not encrypted or len(encrypted) < 4:\n"
+            "        return None\n"
+            "    key = hashlib.pbkdf2_hmac(\"sha1\", b\"peanuts\", b\"saltysalt\", 1, dklen=16)\n"
+            "    data = encrypted[3:]\n"
+            "    iv = bytes([0x20] * 16)\n"
+            "    r = subprocess.run(\n"
+            "        [\"openssl\", \"enc\", \"-aes-128-cbc\", \"-d\",\n"
+            "         \"-K\", key.hex(), \"-iv\", iv.hex()],\n"
+            "        input=data, capture_output=True)\n"
+            "    if r.returncode != 0:\n"
+            "        return None\n"
+            "    return r.stdout.decode(\"utf-8\", errors=\"ignore\")\n"
+            "\n"
+            "login = get_cookie(\"steamLoginSecure\")\n"
+            "sessid = get_cookie(\"sessionid\") or \"\"\n"
+            "conn.close()\n"
+            "try:\n"
+            "    os.remove(db_tmp)\n"
+            "except:\n"
+            "    pass\n"
+            "\n"
+            "if not login:\n"
+            "    print(\"ERROR:Could not read Steam session cookie\")\n"
+            "    sys.exit(1)\n"
+            "\n"
+            "try:\n"
+            "    req = Request(\"https://steamcommunity.com/dev/apikey\",\n"
+            "        headers={\"Cookie\": f\"steamLoginSecure={login}; sessionid={sessid}\",\n"
+            "                 \"User-Agent\": \"Mozilla/5.0\"})\n"
+            "    html = urlopen(req, timeout=10).read().decode(\"utf-8\", errors=\"ignore\")\n"
+            "except Exception as e:\n"
+            "    print(f\"ERROR:Failed to fetch page: {e}\")\n"
+            "    sys.exit(1)\n"
+            "\n"
+            "m = re.search(r\"Key:\\s*([A-Fa-f0-9]{32})\", html)\n"
+            "if m:\n"
+            "    print(f\"APIKEY:{m.group(1)}\")\n"
+            "else:\n"
+            "    print(\"ERROR:No API key found on page\")\n"
+            "    sys.exit(1)\n"
+            "'\n"
+        ).arg(steamDir);
+    }
 
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, proc](int exitCode, QProcess::ExitStatus) {
@@ -994,6 +1144,17 @@ void GameManager::scrapeApiKeyFromPage() {
 
     proc->start("bash", QStringList() << "-c" << script);
     qDebug() << "Auto-detecting Steam API key via cookie decryption...";
+}
+
+void GameManager::downloadSteamCmd() {
+    // Pre-download SteamCMD binary in the background if not already present.
+    // Called early so it's ready by the time the user reaches the login step.
+    if (isSteamCmdAvailable()) {
+        qDebug() << "SteamCMD already available, skipping download";
+        return;
+    }
+    qDebug() << "Pre-downloading SteamCMD in background...";
+    ensureSteamCmd(-1);
 }
 
 void GameManager::loginSteamCmd() {

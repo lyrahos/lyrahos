@@ -87,6 +87,11 @@ Rectangle {
         reset()
         // If Steam is already available (logged in), skip to step 2
         if (GameManager.isSteamAvailable()) {
+            // Start downloading SteamCMD in the background so it's ready
+            // by the time the user reaches step 3.
+            if (!GameManager.isSteamCmdAvailable()) {
+                GameManager.downloadSteamCmd()
+            }
             // If API key also already set, skip to step 3
             if (GameManager.hasSteamApiKey()) {
                 currentStep = 3
@@ -447,19 +452,6 @@ Rectangle {
                 spacing: 12
                 Layout.fillWidth: true
 
-                // Auto-start: open the browser full screen so the user can see the
-                // API key page, while simultaneously scraping it via Python.
-                // If the key is found, the browser closes automatically.
-                onVisibleChanged: {
-                    if (visible && !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput) {
-                        GameManager.openApiKeyInBrowser()
-                        wizard.apiKeyBrowserOpen = true
-                        wizard.apiKeyScraping = true
-                        wizard.apiKeyScrapeErrorMsg = ""
-                        GameManager.scrapeApiKeyFromPage()
-                    }
-                }
-
                 Text {
                     text: "Get Your Steam API Key"
                     font.pixelSize: ThemeManager.getFontSize("xlarge")
@@ -469,12 +461,43 @@ Rectangle {
                 }
 
                 Text {
-                    text: "Luna needs a free Steam API key to detect all your games (including uninstalled ones)."
+                    text: "Luna needs a free Steam API key to detect all your games (including uninstalled ones).\n\nA browser will open to the Steam API key page. Once the page loads and shows your key, Luna will read it automatically and close the browser."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
                     color: ThemeManager.getColor("textSecondary")
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
+                }
+
+                // "Open Browser" button — only shown before scraping starts
+                Rectangle {
+                    visible: !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput
+                    Layout.preferredWidth: openBrowserLabel.width + 40
+                    Layout.preferredHeight: 44
+                    radius: 8
+                    color: ThemeManager.getColor("primary")
+
+                    Text {
+                        id: openBrowserLabel
+                        anchors.centerIn: parent
+                        text: "Open Browser"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: "white"
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            GameManager.openApiKeyInBrowser()
+                            wizard.apiKeyBrowserOpen = true
+                            wizard.apiKeyScraping = true
+                            wizard.apiKeyScrapeErrorMsg = ""
+                            GameManager.scrapeApiKeyFromPage()
+                        }
+                    }
                 }
 
                 // ── Auto-detection in progress ──
