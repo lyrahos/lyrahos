@@ -957,8 +957,12 @@ void GameManager::loginSteamCmd() {
     }
 
     m_steamCmdSetupProc = new QProcess(this);
+    // Don't pass +quit on the command line. SteamCMD needs time to
+    // save the login token after a successful auth. If +quit is queued
+    // upfront, it fires before the token is persisted and exits with
+    // code 5. Instead, we write "quit" to stdin after login succeeds.
     QStringList args;
-    args << "+login" << username << "+quit";
+    args << "+login" << username;
 
     // Track whether we saw a successful login in stdout, because
     // SteamCMD's exit codes are unreliable (often exits 5 even on success).
@@ -982,16 +986,23 @@ void GameManager::loginSteamCmd() {
                 emit steamCmdSetupCredentialNeeded("steamguard");
                 continue;
             }
-            // Successful login — SteamCMD prints these on a valid session
+            // Successful login — SteamCMD prints these on a valid session.
+            // Now tell it to quit so it exits cleanly after saving the token.
             if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
                 trimmed.contains("Waiting for user info", Qt::CaseInsensitive)) {
                 *loginOk = true;
+                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+                    m_steamCmdSetupProc->write("quit\n");
+                }
             }
             // Login failure messages from SteamCMD itself
             if (trimmed.contains("FAILED login", Qt::CaseInsensitive) ||
                 trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
                 trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
                 *loginOk = false;
+                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+                    m_steamCmdSetupProc->write("quit\n");
+                }
             }
         }
     });
