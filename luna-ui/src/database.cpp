@@ -65,6 +65,13 @@ void Database::createTables() {
     query.exec("CREATE VIRTUAL TABLE IF NOT EXISTS games_fts USING fts5("
                "title, tags, metadata, content='games', content_rowid='id')");
 
+    // Migration: clear stale steam://install/ launch commands.
+    // These were set by the old install flow; installation is now handled
+    // by steamcmd via GameManager::installGame(), not via launch_command.
+    query.exec("UPDATE games SET launch_command = '' "
+               "WHERE store_source = 'steam' AND is_installed = 0 "
+               "AND launch_command LIKE 'steam steam://install/%'");
+
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
     query.exec("CREATE TRIGGER games_fts_insert AFTER INSERT ON games BEGIN "

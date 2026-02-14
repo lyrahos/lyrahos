@@ -72,10 +72,17 @@ void GameManager::scanAllStores() {
 void GameManager::launchGame(int gameId) {
     Game game = m_db->getGameById(gameId);
 
-    // If game is not installed, trigger a silent download instead of opening Steam UI
+    // If game is not installed, trigger steamcmd download
     if (!game.isInstalled) {
         installGame(gameId);
         return;
+    }
+
+    // Safety: if a stale steam://install/ command is in the database for a game
+    // that's marked installed, fix it before launching.
+    if (game.storeSource == "steam" && game.launchCommand.contains("steam://install/")) {
+        game.launchCommand = "steam steam://rungameid/" + game.appId;
+        m_db->updateGame(game);
     }
 
     // Start session tracking
