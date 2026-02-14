@@ -8,6 +8,7 @@ Rectangle {
     color: "transparent"
 
     property int activeTab: 0   // 0 = My Games, 1 = Game Stores
+    onActiveTabChanged: if (activeTab === 0) refreshGames()
 
     ColumnLayout {
         anchors.fill: parent
