@@ -846,6 +846,25 @@ jobs:
             'options nouveau modeset=0' \
             > /etc/modprobe.d/lyrah-nouveau-blacklist.conf
 
+          # Mask services pulled in by Fedora dependencies that aren't
+          # needed for a gaming OS. Without masking they fail on boot
+          # (missing configs/keys) and produce ugly [FAILED] lines.
+          for svc in gssproxy.service sshd.service atd.service rsyslog.service; do
+            systemctl mask "$svc" 2>/dev/null || \
+              ln -sf /dev/null "/etc/systemd/system/$svc" 2>/dev/null || true
+          done
+
+          # Fix systemd-user-sessions.service failing on live boot.
+          # The service removes /run/nologin but can fail if /run isn't
+          # fully prepared yet. A drop-in with -/run/nologin makes the
+          # rm non-fatal (the dash prefix tells systemd to ignore errors).
+          mkdir -p /etc/systemd/system/systemd-user-sessions.service.d
+          cat > /etc/systemd/system/systemd-user-sessions.service.d/live-fix.conf << USERSESS_EOF
+          [Service]
+          ExecStart=
+          ExecStart=-/usr/bin/rm -f /run/nologin
+          USERSESS_EOF
+
           # Enable switcheroo-control for hybrid GPU systems
           systemctl enable switcheroo-control 2>/dev/null || true
 

@@ -72,6 +72,12 @@ void Database::createTables() {
                "WHERE store_source = 'steam' AND is_installed = 0 "
                "AND launch_command LIKE 'steam steam://install/%'");
 
+    // Migration: fix games hidden by uninitialized isHidden garbage values.
+    // The Game struct previously had uninitialized bool members, so games
+    // added via the Steam API could have random non-zero is_hidden values.
+    // There is no UI to hide games, so all hidden games are from this bug.
+    query.exec("UPDATE games SET is_hidden = 0 WHERE is_hidden != 0");
+
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
     query.exec("CREATE TRIGGER games_fts_insert AFTER INSERT ON games BEGIN "

@@ -7,7 +7,7 @@
 #include <QVector>
 
 struct Game {
-    int id;
+    int id = 0;
     QString title;
     QString storeSource;
     QString appId;
@@ -17,11 +17,11 @@ struct Game {
     QString coverArtUrl;
     QString backgroundArtUrl;
     QString iconPath;
-    qint64 lastPlayed;
-    int playTimeHours;
-    bool isFavorite;
-    bool isInstalled;
-    bool isHidden;
+    qint64 lastPlayed = 0;
+    int playTimeHours = 0;
+    bool isFavorite = false;
+    bool isInstalled = false;
+    bool isHidden = false;
     QString tags;       // JSON array string
     QString metadata;   // JSON object string
 };
