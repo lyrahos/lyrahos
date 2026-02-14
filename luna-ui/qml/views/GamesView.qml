@@ -1207,6 +1207,9 @@ Rectangle {
     Component.onCompleted: {
         refreshGames()
 
+        // Pre-start Steam silently so game launches are instant with no UI
+        GameManager.ensureSteamRunning()
+
         // Check if we're returning from a Steam login (step 1 of wizard).
         // The wizard sets "__setup_pending__" as API key before launching Steam.
         if (GameManager.getSteamApiKey() === "__setup_pending__") {

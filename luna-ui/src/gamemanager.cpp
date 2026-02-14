@@ -82,7 +82,7 @@ void GameManager::launchGame(int gameId) {
     // Safety: if a stale steam://install/ command is in the database for a game
     // that's marked installed, fix it before launching.
     if (game.storeSource == "steam" && game.launchCommand.contains("steam://install/")) {
-        game.launchCommand = "steam -silent steam://rungameid/" + game.appId;
+        game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
         m_db->updateGame(game);
     }
 
@@ -190,6 +190,29 @@ bool GameManager::isSteamAvailable() {
 
 void GameManager::launchSteam() {
     QProcess::startDetached("steam", QStringList());
+}
+
+void GameManager::ensureSteamRunning() {
+    // Pre-start Steam silently in the background so that when the user
+    // clicks Play, the steam:// protocol command is handled by the
+    // already-running process. This avoids the friends list, hardware
+    // survey, and other first-run UI that appears when Steam cold-starts.
+    if (!isSteamInstalled() || !isSteamAvailable()) return;
+
+    // Check if Steam is already running
+    QProcess pgrep;
+    pgrep.start("pgrep", QStringList() << "-x" << "steam");
+    pgrep.waitForFinished(2000);
+    if (pgrep.exitCode() == 0) {
+        qDebug() << "Steam is already running";
+        return;
+    }
+
+    qDebug() << "Pre-starting Steam silently in background...";
+    QProcess::startDetached("steam", QStringList()
+        << "-silent" << "-nofriendsui" << "-nochatui"
+        << "-no-browser" << "-skipstreamingdrivers"
+        << "-skipinitialbootstrap");
 }
 
 void GameManager::launchSteamLogin() {
@@ -428,6 +451,17 @@ QString GameManager::findSteamCmdBin() const {
     return QString();
 }
 
+QString GameManager::steamCmdDataDir() const {
+    // Always use a consistent, writable directory for SteamCMD data.
+    // SteamCMD stores login tokens in config/config.vdf relative to CWD.
+    // If the binary is system-installed (e.g., /usr/bin/steamcmd), CWD
+    // would be unwritable. Using ~/.steam/steamcmd/ ensures credentials
+    // persist across reboots and session logouts.
+    QString dir = QDir::homePath() + "/.steam/steamcmd";
+    QDir().mkpath(dir);
+    return dir;
+}
+
 bool GameManager::isSteamCmdAvailable() {
     return !findSteamCmdBin().isEmpty();
 }
@@ -549,9 +583,9 @@ void GameManager::installGame(int gameId) {
     // +app_update <appid> validate        → download & verify game files
     // +quit                               → exit when done
     QProcess *proc = new QProcess(this);
-    // Run from SteamCMD's directory so it finds cached login tokens
-    QFileInfo cmdInfo(steamcmdBin);
-    proc->setWorkingDirectory(cmdInfo.absolutePath());
+    // Always run from the consistent data directory so SteamCMD finds
+    // cached login tokens saved during setup (survives reboots/logouts)
+    proc->setWorkingDirectory(steamCmdDataDir());
     QStringList args;
     args << "+@sSteamCmdForcePlatformType" << "linux"
          << "+login" << username
@@ -570,8 +604,9 @@ void GameManager::installGame(int gameId) {
     });
 
     // Handle process completion
+    QString dataDir = steamCmdDataDir();
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, proc, appId = game.appId, gameId, primarySteamApps, steamcmdBin](int exitCode, QProcess::ExitStatus status) {
+            this, [this, proc, appId = game.appId, gameId, primarySteamApps, dataDir](int exitCode, QProcess::ExitStatus status) {
         proc->deleteLater();
         m_steamCmdProcesses.remove(appId);
         m_downloadProgressCache.remove(appId);
@@ -590,11 +625,9 @@ void GameManager::installGame(int gameId) {
         // This lets "steam steam://rungameid/<appid>" find the game.
         QString manifestName = "appmanifest_" + appId + ".acf";
 
-        // Search SteamCMD's steamapps directories for the manifest
-        QFileInfo cmdInfo(steamcmdBin);
+        // Search SteamCMD's data directory for the manifest
         QStringList searchDirs = {
-            cmdInfo.absolutePath() + "/steamapps",
-            QDir::homePath() + "/.steam/steamcmd/steamapps",
+            dataDir + "/steamapps",
         };
         QString steamcmdManifest;
         QString steamcmdSteamApps;
@@ -661,7 +694,7 @@ void GameManager::installGame(int gameId) {
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
             game.isInstalled = true;
-            game.launchCommand = "steam -silent steam://rungameid/" + appId;
+            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + appId;
             if (!installDir.isEmpty()) {
                 game.installPath = primarySteamApps + "/common/" + installDir;
             }
@@ -868,7 +901,7 @@ void GameManager::checkDownloadProgress() {
                         Game game = m_db->getGameById(gameId);
                         if (!game.isInstalled) {
                             game.isInstalled = true;
-                            game.launchCommand = "steam -silent steam://rungameid/" + appId;
+                            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + appId;
                             m_db->updateGame(game);
                             emit downloadComplete(appId, gameId);
                             qDebug() << "ACF watcher: download complete:" << game.title;
@@ -1271,10 +1304,9 @@ void GameManager::loginSteamCmd() {
     }
 
     m_steamCmdSetupProc = new QProcess(this);
-    // Run from SteamCMD's directory so cached login tokens are stored
-    // where installGame() will find them later.
-    QFileInfo cmdInfo(steamcmdBin);
-    m_steamCmdSetupProc->setWorkingDirectory(cmdInfo.absolutePath());
+    // Always use the consistent data directory so login tokens are stored
+    // where installGame() will find them — survives reboots and logouts.
+    m_steamCmdSetupProc->setWorkingDirectory(steamCmdDataDir());
     // Don't pass +quit on the command line. SteamCMD needs time to
     // save the login token after a successful auth. If +quit is queued
     // upfront, it fires before the token is persisted and exits with

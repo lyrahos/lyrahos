@@ -1280,8 +1280,17 @@ Rectangle {
 
         property string overlayKey: ""
 
+        // Gamescope may stretch the Window to fullscreen.
+        // Use a semi-transparent backdrop so the popup is visible either way.
         Rectangle {
             anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.6)
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 420
+            height: 260
             radius: 16
             color: ThemeManager.getColor("surface")
             border.color: ThemeManager.getColor("accent")
