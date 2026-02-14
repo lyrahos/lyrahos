@@ -39,10 +39,9 @@ Rectangle {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
-            // Raise Luna UI above the browser so the confirmation popup
-            // is visible. The browser stays open until the user confirms.
-            wizard.Window.window.raise()
-            wizard.Window.window.requestActivate()
+            // Show the always-on-top popup over the kiosk browser
+            apiKeyOverlay.overlayKey = key
+            apiKeyOverlay.visible = true
         }
 
         function onApiKeyScrapeError(error) {
@@ -1259,6 +1258,138 @@ Rectangle {
                                 GameManager.scanAllStores()
                                 GameManager.fetchSteamOwnedGames()
                                 wizard.close()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Always-on-top popup that appears over the kiosk browser ──
+    // Qt.WindowStaysOnTopHint ensures this floats above fullscreen/kiosk windows.
+    Window {
+        id: apiKeyOverlay
+        visible: false
+        width: 420
+        height: 260
+        flags: Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Dialog
+        color: "transparent"
+        x: (Screen.width - width) / 2
+        y: (Screen.height - height) / 2
+
+        property string overlayKey: ""
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 16
+            color: ThemeManager.getColor("surface")
+            border.color: ThemeManager.getColor("accent")
+            border.width: 2
+
+            // Drop shadow effect
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -2
+                radius: 18
+                color: Qt.rgba(0, 0, 0, 0.5)
+                z: -1
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 24
+                spacing: 14
+
+                Text {
+                    text: "Found your API key!"
+                    font.pixelSize: 20
+                    font.bold: true
+                    color: ThemeManager.getColor("accent")
+                }
+
+                Text {
+                    text: "Is this your Steam API key?"
+                    font.pixelSize: 14
+                    color: ThemeManager.getColor("textPrimary")
+                }
+
+                // Show masked key
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 40
+                    radius: 8
+                    color: ThemeManager.getColor("hover")
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: {
+                            var k = apiKeyOverlay.overlayKey
+                            if (k.length > 12)
+                                return k.substring(0, 8) + "..." + k.substring(k.length - 4)
+                            return k
+                        }
+                        font.pixelSize: 15
+                        font.family: "monospace"
+                        color: ThemeManager.getColor("accent")
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+
+                RowLayout {
+                    spacing: 10
+                    Layout.fillWidth: true
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 8
+                        color: ThemeManager.getColor("accent")
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Yes, use this key"
+                            font.pixelSize: 14
+                            font.bold: true
+                            color: "white"
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                apiKeyOverlay.visible = false
+                                GameManager.closeApiKeyBrowser()
+                                GameManager.setSteamApiKey(apiKeyOverlay.overlayKey)
+                                wizard.detectedApiKey = apiKeyOverlay.overlayKey
+                                wizard.currentStep = 3
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 8
+                        color: "transparent"
+                        border.color: Qt.rgba(1, 1, 1, 0.15)
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "No"
+                            font.pixelSize: 14
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                apiKeyOverlay.visible = false
+                                wizard.detectedApiKey = ""
+                                wizard.showManualInput = true
                             }
                         }
                     }
