@@ -43,11 +43,6 @@ Rectangle {
         function onApiKeyScrapeError(error) {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = error
-            // Auto-detection failed — open browser and show manual paste
-            if (!wizard.apiKeyBrowserOpen) {
-                GameManager.openApiKeyInBrowser()
-                wizard.apiKeyBrowserOpen = true
-            }
             wizard.showManualInput = true
         }
 
@@ -448,9 +443,11 @@ Rectangle {
                 spacing: 12
                 Layout.fillWidth: true
 
-                // Auto-start scraping when this step becomes visible
+                // Auto-start: open browser full screen, then scrape the page for the key
                 onVisibleChanged: {
                     if (visible && !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput) {
+                        GameManager.openApiKeyInBrowser()
+                        wizard.apiKeyBrowserOpen = true
                         wizard.apiKeyScraping = true
                         wizard.apiKeyScrapeErrorMsg = ""
                         GameManager.scrapeApiKeyFromPage()
@@ -495,7 +492,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Reading your Steam session to check for an existing key..."
+                        text: "A browser has been opened. Waiting for the page to load..."
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
@@ -636,7 +633,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "A browser has been opened to the Steam API key page.\nRegister a key if you don't have one, then paste it below:"
+                        text: "Copy the key from the browser page and paste it below:"
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")

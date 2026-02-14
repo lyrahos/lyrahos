@@ -183,6 +183,7 @@ Rectangle {
                 property bool wifiConnecting: false
                 property string steamFetchStatus: ""
                 property bool steamFetching: false
+                property bool steamSettingsOpen: false
 
                 // Refresh network status when tab becomes visible
                 Timer {
@@ -603,312 +604,522 @@ Rectangle {
                             font.pixelSize: ThemeManager.getFontSize("small")
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
-                            Layout.bottomMargin: 8
+                            Layout.bottomMargin: 4
                         }
 
-                        // ─── Steam Store Card ───
-                        Rectangle {
+                        // ─── Store cards row ───
+                        Flow {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 120
-                            radius: 12
-                            color: ThemeManager.getColor("surface")
-                            border.color: steamArea.containsMouse
-                                          ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: steamArea.containsMouse ? 2 : 0
+                            spacing: 12
 
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: 20
-                                spacing: 20
+                            // ── Steam ──
+                            Rectangle {
+                                width: 220
+                                height: 72
+                                radius: 12
+                                color: ThemeManager.getColor("surface")
+                                border.color: steamCardArea.containsMouse
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: steamCardArea.containsMouse ? 2 : 0
 
-                                // Steam icon placeholder
-                                Rectangle {
-                                    Layout.preferredWidth: 64
-                                    Layout.preferredHeight: 64
-                                    radius: 12
-                                    color: "#1b2838"
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 12
 
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "S"
-                                        font.pixelSize: 32
-                                        font.bold: true
-                                        color: "#66c0f4"
-                                    }
-                                }
+                                    // Icon
+                                    Rectangle {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        radius: 10
+                                        color: "#1b2838"
 
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 6
-
-                                    Text {
-                                        text: "Steam"
-                                        font.pixelSize: ThemeManager.getFontSize("large")
-                                        font.family: ThemeManager.getFont("body")
-                                        font.bold: true
-                                        color: ThemeManager.getColor("textPrimary")
-                                    }
-
-                                    Text {
-                                        id: steamStatus
-                                        font.pixelSize: ThemeManager.getFontSize("small")
-                                        font.family: ThemeManager.getFont("body")
-                                        color: ThemeManager.getColor("textSecondary")
-                                        text: {
-                                            if (!GameManager.isSteamInstalled())
-                                                return "Not installed"
-                                            if (GameManager.isSteamAvailable())
-                                                return "Connected — library detected"
-                                            return "Installed — log in to import games"
-                                        }
-                                    }
-                                }
-
-                                // Action button
-                                Rectangle {
-                                    Layout.preferredWidth: steamBtnText.width + 32
-                                    Layout.preferredHeight: 40
-                                    radius: 8
-                                    color: {
-                                        if (!GameManager.isSteamInstalled())
-                                            return ThemeManager.getColor("textSecondary")
-                                        if (GameManager.isSteamAvailable())
-                                            return ThemeManager.getColor("primary")
-                                        return "#1b2838"
-                                    }
-
-                                    Text {
-                                        id: steamBtnText
-                                        anchors.centerIn: parent
-                                        font.pixelSize: ThemeManager.getFontSize("small")
-                                        font.family: ThemeManager.getFont("body")
-                                        font.bold: true
-                                        color: "white"
-                                        text: {
-                                            if (!GameManager.isSteamInstalled())
-                                                return "Not Available"
-                                            if (GameManager.isSteamAvailable())
-                                                return "Scan Library"
-                                            return "Log In"
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "S"
+                                            font.pixelSize: 22
+                                            font.bold: true
+                                            color: "#66c0f4"
                                         }
                                     }
 
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: GameManager.isSteamInstalled()
-                                                     ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        onClicked: {
-                                            if (!GameManager.isSteamInstalled())
-                                                return
-                                            if (GameManager.isSteamAvailable()) {
-                                                // Rescan Steam library
-                                                GameManager.scanAllStores()
-                                                refreshGames()
-                                                activeTab = 0
-                                            } else {
-                                                // Open the setup wizard instead of
-                                                // directly launching Steam
-                                                steamSetupWizard.open()
+                                    // Name + status
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+
+                                        Text {
+                                            text: "Steam"
+                                            font.pixelSize: ThemeManager.getFontSize("medium")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: ThemeManager.getColor("textPrimary")
+                                        }
+
+                                        RowLayout {
+                                            spacing: 5
+
+                                            Rectangle {
+                                                Layout.preferredWidth: 8
+                                                Layout.preferredHeight: 8
+                                                radius: 4
+                                                color: {
+                                                    if (!GameManager.isSteamInstalled())
+                                                        return ThemeManager.getColor("textSecondary")
+                                                    if (GameManager.isSteamAvailable())
+                                                        return ThemeManager.getColor("accent")
+                                                    return "#ff6b6b"
+                                                }
+                                            }
+
+                                            Text {
+                                                text: {
+                                                    if (!GameManager.isSteamInstalled())
+                                                        return "Not installed"
+                                                    if (GameManager.isSteamSetupComplete())
+                                                        return "Ready"
+                                                    if (GameManager.isSteamAvailable())
+                                                        return "Connected"
+                                                    return "Not set up"
+                                                }
+                                                font.pixelSize: ThemeManager.getFontSize("small")
+                                                font.family: ThemeManager.getFont("body")
+                                                color: ThemeManager.getColor("textSecondary")
                                             }
                                         }
                                     }
-                                }
-                            }
 
-                            MouseArea {
-                                id: steamArea
-                                anchors.fill: parent
-                                z: -1
-                                hoverEnabled: true
-                                acceptedButtons: Qt.NoButton
-                            }
+                                    // Settings gear
+                                    Rectangle {
+                                        visible: GameManager.isSteamInstalled()
+                                        Layout.preferredWidth: 32
+                                        Layout.preferredHeight: 32
+                                        radius: 8
+                                        color: steamGearArea.containsMouse
+                                               ? ThemeManager.getColor("hover") : "transparent"
 
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
-                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "\u2699"
+                                            font.pixelSize: 18
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
 
-                        // ─── SteamCMD Status ───
-                        Rectangle {
-                            visible: GameManager.isSteamAvailable()
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 56
-                            radius: 12
-                            color: ThemeManager.getColor("surface")
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 20
-                                anchors.rightMargin: 20
-                                spacing: 12
-
-                                Rectangle {
-                                    Layout.preferredWidth: 10
-                                    Layout.preferredHeight: 10
-                                    radius: 5
-                                    color: GameManager.isSteamCmdAvailable()
-                                           ? ThemeManager.getColor("accent") : "#ff6b6b"
-                                }
-
-                                Text {
-                                    text: GameManager.isSteamCmdAvailable()
-                                          ? "SteamCMD ready — games install in the background"
-                                          : "SteamCMD not found — it will be downloaded automatically when you install a game"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
-                                    Layout.fillWidth: true
-                                }
-
-                                Text {
-                                    visible: GameManager.isSteamCmdAvailable()
-                                    text: {
-                                        var user = GameManager.getSteamUsername()
-                                        return user ? "Account: " + user : ""
+                                        MouseArea {
+                                            id: steamGearArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gameStoresTab.steamSettingsOpen = !gameStoresTab.steamSettingsOpen
+                                        }
                                     }
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("accent")
+                                }
+
+                                MouseArea {
+                                    id: steamCardArea
+                                    anchors.fill: parent
+                                    z: -1
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (!GameManager.isSteamInstalled())
+                                            return
+                                        if (!GameManager.isSteamAvailable()) {
+                                            steamSetupWizard.open()
+                                        } else {
+                                            gameStoresTab.steamSettingsOpen = !gameStoresTab.steamSettingsOpen
+                                        }
+                                    }
+                                }
+
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
+                            }
+
+                            // ── Epic (placeholder) ──
+                            Rectangle {
+                                width: 220
+                                height: 72
+                                radius: 12
+                                color: Qt.rgba(ThemeManager.getColor("surface").r,
+                                               ThemeManager.getColor("surface").g,
+                                               ThemeManager.getColor("surface").b, 0.4)
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 12
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        radius: 10
+                                        color: "#2a2a2a"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "E"
+                                            font.pixelSize: 22
+                                            font.bold: true
+                                            color: "#888"
+                                        }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+
+                                        Text {
+                                            text: "Epic"
+                                            font.pixelSize: ThemeManager.getFontSize("medium")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        Text {
+                                            text: "Coming soon"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── GOG (placeholder) ──
+                            Rectangle {
+                                width: 220
+                                height: 72
+                                radius: 12
+                                color: Qt.rgba(ThemeManager.getColor("surface").r,
+                                               ThemeManager.getColor("surface").g,
+                                               ThemeManager.getColor("surface").b, 0.4)
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 12
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        radius: 10
+                                        color: "#2a2a2a"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "G"
+                                            font.pixelSize: 22
+                                            font.bold: true
+                                            color: "#888"
+                                        }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+
+                                        Text {
+                                            text: "GOG"
+                                            font.pixelSize: ThemeManager.getFontSize("medium")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        Text {
+                                            text: "Coming soon"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── Heroic (placeholder) ──
+                            Rectangle {
+                                width: 220
+                                height: 72
+                                radius: 12
+                                color: Qt.rgba(ThemeManager.getColor("surface").r,
+                                               ThemeManager.getColor("surface").g,
+                                               ThemeManager.getColor("surface").b, 0.4)
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 12
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        radius: 10
+                                        color: "#2a2a2a"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "H"
+                                            font.pixelSize: 22
+                                            font.bold: true
+                                            color: "#888"
+                                        }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+
+                                        Text {
+                                            text: "Heroic"
+                                            font.pixelSize: ThemeManager.getFontSize("medium")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        Text {
+                                            text: "Coming soon"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        // ─── Steam API Key Setup (visible when Steam is logged in) ───
+                        // ─── Steam Settings Panel (expandable) ───
                         Rectangle {
-                            visible: GameManager.isSteamAvailable()
+                            visible: gameStoresTab.steamSettingsOpen && GameManager.isSteamInstalled()
                             Layout.fillWidth: true
-                            Layout.preferredHeight: apiKeyColumn.height + 40
+                            Layout.preferredHeight: steamSettingsCol.height + 32
                             radius: 12
                             color: ThemeManager.getColor("surface")
+                            border.color: Qt.rgba(ThemeManager.getColor("primary").r,
+                                                  ThemeManager.getColor("primary").g,
+                                                  ThemeManager.getColor("primary").b, 0.3)
+                            border.width: 1
 
                             ColumnLayout {
-                                id: apiKeyColumn
+                                id: steamSettingsCol
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.top: parent.top
-                                anchors.margins: 20
-                                spacing: 10
+                                anchors.margins: 16
+                                spacing: 12
 
-                                Text {
-                                    text: "Steam Game Library Sync"
-                                    font.pixelSize: ThemeManager.getFontSize("medium")
-                                    font.family: ThemeManager.getFont("body")
-                                    font.bold: true
-                                    color: ThemeManager.getColor("textPrimary")
-                                }
-
-                                Text {
-                                    text: {
-                                        var steamId = GameManager.getDetectedSteamId()
-                                        if (steamId)
-                                            return "Steam ID detected: " + steamId
-                                        return "Steam ID: not detected — log in to Steam first"
-                                    }
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("accent")
-                                }
-
-                                Text {
-                                    text: GameManager.hasSteamApiKey()
-                                          ? "API key is configured. Click below to fetch all your owned games."
-                                          : "To import ALL owned games (including uninstalled), you need a free Steam API key.\nClick the button below to open the key page in Steam's browser, then paste it here."
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
-                                }
-
-                                // "Get API Key" button — opens Steam's built-in browser
-                                Rectangle {
-                                    visible: !GameManager.hasSteamApiKey()
-                                    Layout.preferredWidth: getKeyLabel.width + 32
-                                    Layout.preferredHeight: 40
-                                    radius: 8
-                                    color: "#1b2838"
-                                    border.color: getKeyArea.containsMouse
-                                                  ? ThemeManager.getColor("focus") : "transparent"
-                                    border.width: getKeyArea.containsMouse ? 2 : 0
-
-                                    Text {
-                                        id: getKeyLabel
-                                        anchors.centerIn: parent
-                                        text: "Get API Key (opens Steam browser)"
-                                        font.pixelSize: ThemeManager.getFontSize("small")
-                                        font.family: ThemeManager.getFont("body")
-                                        font.bold: true
-                                        color: "#66c0f4"
-                                    }
-
-                                    MouseArea {
-                                        id: getKeyArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: GameManager.openSteamApiKeyPage()
-                                    }
-
-                                    Behavior on border.color { ColorAnimation { duration: 150 } }
-                                }
-
-                                // API key input row (hidden if key already saved)
-                                Rectangle {
-                                    visible: !GameManager.hasSteamApiKey()
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 44
-                                    radius: 8
-                                    color: ThemeManager.getColor("hover")
-                                    border.color: steamApiKeyInput.activeFocus
-                                                  ? ThemeManager.getColor("focus") : "transparent"
-                                    border.width: steamApiKeyInput.activeFocus ? 2 : 0
-
-                                    Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                                    TextInput {
-                                        id: steamApiKeyInput
-                                        anchors.fill: parent
-                                        anchors.margins: 12
-                                        verticalAlignment: TextInput.AlignVCenter
-                                        font.pixelSize: ThemeManager.getFontSize("medium")
-                                        font.family: ThemeManager.getFont("body")
-                                        color: ThemeManager.getColor("textPrimary")
-                                        clip: true
-                                        onAccepted: {
-                                            if (text.length > 0) {
-                                                GameManager.setSteamApiKey(text)
-                                                text = ""
-                                            }
-                                        }
-                                    }
-
-                                    Text {
-                                        anchors.fill: parent
-                                        anchors.margins: 12
-                                        verticalAlignment: Text.AlignVCenter
-                                        visible: steamApiKeyInput.text === "" && !steamApiKeyInput.activeFocus
-                                        text: "Paste your Steam API key here..."
-                                        font.pixelSize: ThemeManager.getFontSize("medium")
-                                        font.family: ThemeManager.getFont("body")
-                                        color: ThemeManager.getColor("textSecondary")
-                                    }
-                                }
-
-                                // Buttons row
+                                // Header
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 10
 
-                                    // Save key button (when no key)
+                                    Text {
+                                        text: "Steam Settings"
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: ThemeManager.getColor("textPrimary")
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    // Close button
                                     Rectangle {
-                                        visible: !GameManager.hasSteamApiKey()
-                                        Layout.preferredWidth: saveKeyLabel.width + 32
-                                        Layout.preferredHeight: 40
+                                        Layout.preferredWidth: 28
+                                        Layout.preferredHeight: 28
+                                        radius: 6
+                                        color: closeSettingsArea.containsMouse
+                                               ? ThemeManager.getColor("hover") : "transparent"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "\u2715"
+                                            font.pixelSize: 14
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        MouseArea {
+                                            id: closeSettingsArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gameStoresTab.steamSettingsOpen = false
+                                        }
+                                    }
+                                }
+
+                                // Separator
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: Qt.rgba(1, 1, 1, 0.06)
+                                }
+
+                                // SteamCMD status row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    Text {
+                                        text: "SteamCMD"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                        Layout.preferredWidth: 100
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 8
+                                        Layout.preferredHeight: 8
+                                        radius: 4
+                                        color: GameManager.isSteamCmdAvailable()
+                                               ? ThemeManager.getColor("accent") : "#ff6b6b"
+                                    }
+
+                                    Text {
+                                        text: {
+                                            if (GameManager.isSteamCmdAvailable()) {
+                                                var user = GameManager.getSteamUsername()
+                                                return user ? "Ready (" + user + ")" : "Ready"
+                                            }
+                                            return "Not configured"
+                                        }
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textPrimary")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    // Re-run setup wizard
+                                    Rectangle {
+                                        visible: !GameManager.isSteamSetupComplete()
+                                        Layout.preferredWidth: setupBtnLabel.width + 24
+                                        Layout.preferredHeight: 32
+                                        radius: 6
+                                        color: "#1b2838"
+
+                                        Text {
+                                            id: setupBtnLabel
+                                            anchors.centerIn: parent
+                                            text: "Run Setup"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: "#66c0f4"
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: steamSetupWizard.open()
+                                        }
+                                    }
+                                }
+
+                                // API Key status row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    Text {
+                                        text: "API Key"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                        Layout.preferredWidth: 100
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 8
+                                        Layout.preferredHeight: 8
+                                        radius: 4
+                                        color: GameManager.hasSteamApiKey()
+                                               ? ThemeManager.getColor("accent") : "#ff6b6b"
+                                    }
+
+                                    Text {
+                                        text: GameManager.hasSteamApiKey() ? "Configured" : "Not set"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textPrimary")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Rectangle {
+                                        visible: GameManager.hasSteamApiKey()
+                                        Layout.preferredWidth: changeKeyLabel.width + 24
+                                        Layout.preferredHeight: 32
+                                        radius: 6
+                                        color: "transparent"
+                                        border.color: Qt.rgba(1, 1, 1, 0.12)
+                                        border.width: 1
+
+                                        Text {
+                                            id: changeKeyLabel
+                                            anchors.centerIn: parent
+                                            text: "Change"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: GameManager.setSteamApiKey("")
+                                        }
+                                    }
+                                }
+
+                                // Steam ID row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    Text {
+                                        text: "Steam ID"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                        Layout.preferredWidth: 100
+                                    }
+
+                                    Text {
+                                        text: {
+                                            var sid = GameManager.getDetectedSteamId()
+                                            return sid ? sid : "Not detected"
+                                        }
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: "monospace"
+                                        color: ThemeManager.getColor("textPrimary")
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                // Separator
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: Qt.rgba(1, 1, 1, 0.06)
+                                }
+
+                                // Action buttons row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    // Scan library
+                                    Rectangle {
+                                        Layout.preferredWidth: scanLibLabel.width + 28
+                                        Layout.preferredHeight: 36
                                         radius: 8
                                         color: ThemeManager.getColor("primary")
 
                                         Text {
-                                            id: saveKeyLabel
+                                            id: scanLibLabel
                                             anchors.centerIn: parent
-                                            text: "Save Key"
+                                            text: "Scan Library"
                                             font.pixelSize: ThemeManager.getFontSize("small")
                                             font.family: ThemeManager.getFont("body")
                                             font.bold: true
@@ -919,26 +1130,24 @@ Rectangle {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
-                                                if (steamApiKeyInput.text.length > 0) {
-                                                    GameManager.setSteamApiKey(steamApiKeyInput.text)
-                                                    steamApiKeyInput.text = ""
-                                                }
+                                                GameManager.scanAllStores()
+                                                refreshGames()
                                             }
                                         }
                                     }
 
-                                    // Fetch all games button (when key is saved)
+                                    // Fetch owned games (requires API key)
                                     Rectangle {
                                         visible: GameManager.hasSteamApiKey()
-                                        Layout.preferredWidth: fetchGamesLabel.width + 32
-                                        Layout.preferredHeight: 40
+                                        Layout.preferredWidth: fetchLabel.width + 28
+                                        Layout.preferredHeight: 36
                                         radius: 8
                                         color: gameStoresTab.steamFetching
                                                ? ThemeManager.getColor("textSecondary")
                                                : "#1b2838"
 
                                         Text {
-                                            id: fetchGamesLabel
+                                            id: fetchLabel
                                             anchors.centerIn: parent
                                             text: gameStoresTab.steamFetching
                                                   ? "Fetching..."
@@ -956,78 +1165,25 @@ Rectangle {
                                             onClicked: {
                                                 if (!gameStoresTab.steamFetching) {
                                                     gameStoresTab.steamFetching = true
-                                                    gameStoresTab.steamFetchStatus = "Fetching owned games from Steam..."
+                                                    gameStoresTab.steamFetchStatus = "Fetching owned games..."
                                                     GameManager.fetchSteamOwnedGames()
                                                 }
                                             }
                                         }
                                     }
 
-                                    // Clear key button (when key is saved)
-                                    Rectangle {
-                                        visible: GameManager.hasSteamApiKey()
-                                        Layout.preferredWidth: clearKeyLabel.width + 32
-                                        Layout.preferredHeight: 40
-                                        radius: 8
-                                        color: ThemeManager.getColor("surface")
-                                        border.color: clearKeyArea.containsMouse
-                                                      ? ThemeManager.getColor("focus") : Qt.rgba(1,1,1,0.15)
-                                        border.width: 1
-
-                                        Text {
-                                            id: clearKeyLabel
-                                            anchors.centerIn: parent
-                                            text: "Change Key"
-                                            font.pixelSize: ThemeManager.getFontSize("small")
-                                            font.family: ThemeManager.getFont("body")
-                                            color: ThemeManager.getColor("textSecondary")
-                                        }
-
-                                        MouseArea {
-                                            id: clearKeyArea
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                GameManager.setSteamApiKey("")
-                                            }
-                                        }
-
-                                        Behavior on border.color { ColorAnimation { duration: 150 } }
-                                    }
-
                                     Item { Layout.fillWidth: true }
+
+                                    // Status text
+                                    Text {
+                                        visible: gameStoresTab.steamFetchStatus !== ""
+                                        text: gameStoresTab.steamFetchStatus
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: gameStoresTab.steamFetchStatus.startsWith("Error")
+                                               ? "#ff6b6b" : ThemeManager.getColor("accent")
+                                    }
                                 }
-
-                                // Status text
-                                Text {
-                                    visible: gameStoresTab.steamFetchStatus !== ""
-                                    text: gameStoresTab.steamFetchStatus
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: gameStoresTab.steamFetchStatus.startsWith("Error")
-                                           ? "#ff6b6b" : ThemeManager.getColor("accent")
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
-                                }
-                            }
-                        }
-
-                        // ─── More stores coming soon ───
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 80
-                            radius: 12
-                            color: Qt.rgba(ThemeManager.getColor("surface").r,
-                                           ThemeManager.getColor("surface").g,
-                                           ThemeManager.getColor("surface").b, 0.4)
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "More stores coming soon (Epic, GOG, Lutris, Heroic)"
-                                font.pixelSize: ThemeManager.getFontSize("small")
-                                font.family: ThemeManager.getFont("body")
-                                color: ThemeManager.getColor("textSecondary")
                             }
                         }
 
