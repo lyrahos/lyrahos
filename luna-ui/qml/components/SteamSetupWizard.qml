@@ -43,6 +43,11 @@ Rectangle {
         function onApiKeyScrapeError(error) {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = error
+            // Auto-detection failed — open browser so the user can get the key manually
+            if (!wizard.apiKeyBrowserOpen) {
+                GameManager.openApiKeyInBrowser()
+                wizard.apiKeyBrowserOpen = true
+            }
             wizard.showManualInput = true
         }
 
@@ -443,11 +448,11 @@ Rectangle {
                 spacing: 12
                 Layout.fillWidth: true
 
-                // Auto-start: open browser full screen, then scrape the page for the key
+                // Auto-start: try to read the API key from Steam's local session data.
+                // No browser needed — we decrypt the cookies saved during step 1.
+                // A browser only opens if auto-detection fails (for manual fallback).
                 onVisibleChanged: {
                     if (visible && !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput) {
-                        GameManager.openApiKeyInBrowser()
-                        wizard.apiKeyBrowserOpen = true
                         wizard.apiKeyScraping = true
                         wizard.apiKeyScrapeErrorMsg = ""
                         GameManager.scrapeApiKeyFromPage()
@@ -492,7 +497,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "A browser has been opened. Waiting for the page to load..."
+                        text: "Checking your Steam session for an existing key..."
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
@@ -633,7 +638,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Copy the key from the browser page and paste it below:"
+                        text: "A browser has been opened to the Steam API key page.\nCopy the key and paste it below:"
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
