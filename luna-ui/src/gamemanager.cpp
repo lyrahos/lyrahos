@@ -849,89 +849,139 @@ void GameManager::openApiKeyInBrowser() {
 }
 
 void GameManager::scrapeApiKeyFromPage() {
-    // Auto-detect the Steam API key by reading the browser page content.
+    // Auto-detect the Steam API key by reading Steam client's CEF cookie
+    // database and fetching the API key page directly.
     //
-    // The browser is open to steamcommunity.com/dev/apikey which shows
-    // "Key: A1B2C3D4..." when a key is registered. We use xdotool to
-    // select all text on the page and copy it to the clipboard, then
-    // parse the clipboard for the key pattern.
+    // When the user logs into the Steam client (step 1), it stores web
+    // session cookies in an SQLite DB at:
+    //   ~/.local/share/Steam/config/htmlcache/Cookies
     //
-    // The script polls every 2 seconds for up to 30 attempts (60s total),
-    // giving the browser time to load and the user time to log in if needed.
+    // On Linux, CEF encrypts cookie values using Chrome's standard
+    // encryption: AES-128-CBC with a key derived from password "peanuts",
+    // salt "saltysalt", 1 PBKDF2 iteration, IV = 16 spaces (0x20).
+    //
+    // We use Python3 (stdlib only + openssl CLI) to:
+    //   1. Copy the cookie DB to /tmp (avoid lock issues)
+    //   2. Read steamLoginSecure cookie (try plaintext, then decrypt)
+    //   3. Fetch steamcommunity.com/dev/apikey with that cookie
+    //   4. Parse the 32-char hex key from the HTML
 
     QProcess *proc = new QProcess(this);
+    QString steamDir = QDir::homePath() + "/.local/share/Steam";
 
-    QString script =
-        "# Wait for the browser to load, then grab page text via clipboard\n"
-        "for i in $(seq 1 30); do\n"
-        "    # Find any browser window (firefox, chromium, etc.)\n"
-        "    WIN=$(xdotool search --onlyvisible --name '.' 2>/dev/null | head -1)\n"
-        "    if [ -n \"$WIN\" ]; then\n"
-        "        # Focus the window, select all, copy\n"
-        "        xdotool windowactivate --sync \"$WIN\" 2>/dev/null\n"
-        "        sleep 0.3\n"
-        "        xdotool key ctrl+a 2>/dev/null\n"
-        "        sleep 0.2\n"
-        "        xdotool key ctrl+c 2>/dev/null\n"
-        "        sleep 0.3\n"
+    QString script = QString(
+        "python3 -c '\n"
+        "import sqlite3, os, hashlib, subprocess, re, sys, shutil\n"
+        "try:\n"
+        "    from urllib.request import Request, urlopen\n"
+        "except:\n"
+        "    print(\"ERROR:Python urllib not available\")\n"
+        "    sys.exit(1)\n"
         "\n"
-        "        # Read clipboard (try xclip, xsel, wl-paste)\n"
-        "        CLIP=$(xclip -selection clipboard -o 2>/dev/null \\\n"
-        "            || xsel --clipboard --output 2>/dev/null \\\n"
-        "            || wl-paste 2>/dev/null \\\n"
-        "            || echo '')\n"
+        "db_src = \"%1/config/htmlcache/Cookies\"\n"
+        "if not os.path.exists(db_src):\n"
+        "    print(\"ERROR:Steam cookie database not found\")\n"
+        "    sys.exit(1)\n"
         "\n"
-        "        # Look for 'Key: ' followed by a 32-char hex string\n"
-        "        KEY=$(echo \"$CLIP\" | grep -oP 'Key:\\s*[A-Fa-f0-9]{32}' | grep -oP '[A-Fa-f0-9]{32}' | head -1)\n"
-        "        if [ -n \"$KEY\" ]; then\n"
-        "            echo \"APIKEY:$KEY\"\n"
-        "            exit 0\n"
-        "        fi\n"
-        "    fi\n"
-        "    sleep 2\n"
-        "done\n"
+        "# Copy to /tmp to avoid SQLite lock issues\n"
+        "db_tmp = \"/tmp/.luna_steam_cookies.db\"\n"
+        "try:\n"
+        "    shutil.copy2(db_src, db_tmp)\n"
+        "except Exception as e:\n"
+        "    print(f\"ERROR:Could not copy cookie DB: {e}\")\n"
+        "    sys.exit(1)\n"
         "\n"
-        "echo 'ERROR:Could not find API key on the page'\n"
-        "exit 1\n";
+        "conn = sqlite3.connect(db_tmp)\n"
+        "\n"
+        "def get_cookie(name):\n"
+        "    cur = conn.execute(\n"
+        "        \"SELECT value, encrypted_value FROM cookies \"\n"
+        "        \"WHERE host_key=\\'\\'.steamcommunity.com\\'\\' AND name=? LIMIT 1\", (name,))\n"
+        "    row = cur.fetchone()\n"
+        "    if not row:\n"
+        "        return None\n"
+        "    value, encrypted = row\n"
+        "    if value:\n"
+        "        return value\n"
+        "    if not encrypted or len(encrypted) < 4:\n"
+        "        return None\n"
+        "    # Decrypt Chrome/CEF Linux cookie (AES-128-CBC)\n"
+        "    key = hashlib.pbkdf2_hmac(\"sha1\", b\"peanuts\", b\"saltysalt\", 1, dklen=16)\n"
+        "    data = encrypted[3:]  # strip v10/v11 prefix\n"
+        "    iv = bytes([0x20] * 16)\n"
+        "    r = subprocess.run(\n"
+        "        [\"openssl\", \"enc\", \"-aes-128-cbc\", \"-d\",\n"
+        "         \"-K\", key.hex(), \"-iv\", iv.hex()],\n"
+        "        input=data, capture_output=True)\n"
+        "    if r.returncode != 0:\n"
+        "        return None\n"
+        "    return r.stdout.decode(\"utf-8\", errors=\"ignore\")\n"
+        "\n"
+        "login = get_cookie(\"steamLoginSecure\")\n"
+        "sessid = get_cookie(\"sessionid\") or \"\"\n"
+        "conn.close()\n"
+        "try:\n"
+        "    os.remove(db_tmp)\n"
+        "except:\n"
+        "    pass\n"
+        "\n"
+        "if not login:\n"
+        "    print(\"ERROR:Could not read Steam session cookie\")\n"
+        "    sys.exit(1)\n"
+        "\n"
+        "try:\n"
+        "    req = Request(\"https://steamcommunity.com/dev/apikey\",\n"
+        "        headers={\"Cookie\": f\"steamLoginSecure={login}; sessionid={sessid}\",\n"
+        "                 \"User-Agent\": \"Mozilla/5.0\"})\n"
+        "    html = urlopen(req, timeout=10).read().decode(\"utf-8\", errors=\"ignore\")\n"
+        "except Exception as e:\n"
+        "    print(f\"ERROR:Failed to fetch page: {e}\")\n"
+        "    sys.exit(1)\n"
+        "\n"
+        "m = re.search(r\"Key:\\s*([A-Fa-f0-9]{32})\", html)\n"
+        "if m:\n"
+        "    print(f\"APIKEY:{m.group(1)}\")\n"
+        "else:\n"
+        "    print(\"ERROR:No API key found on page\")\n"
+        "    sys.exit(1)\n"
+        "'\n"
+    ).arg(steamDir);
 
-    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
         QString output = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        QString errors = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+        proc->deleteLater();
+
+        if (!errors.isEmpty()) {
+            qDebug() << "API key scrape stderr:" << errors;
+        }
 
         for (const QString& line : output.split('\n')) {
+            qDebug() << "API key scrape:" << line;
             if (line.startsWith("APIKEY:")) {
                 QString key = line.mid(7).trimmed().toUpper();
                 if (!key.isEmpty()) {
                     qDebug() << "Auto-detected Steam API key:" << key.left(4) + "...";
                     emit apiKeyScraped(key);
-                    proc->kill();
-                    proc->deleteLater();
                     return;
                 }
             }
         }
-    });
 
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, proc](int exitCode, QProcess::ExitStatus) {
-        QString output = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
-        proc->deleteLater();
-
-        // Check one more time in case readyRead didn't fire
+        // Extract error message for the user
+        QString errMsg = "Could not auto-detect API key.";
         for (const QString& line : output.split('\n')) {
-            if (line.startsWith("APIKEY:")) {
-                QString key = line.mid(7).trimmed().toUpper();
-                if (!key.isEmpty()) {
-                    emit apiKeyScraped(key);
-                    return;
-                }
+            if (line.startsWith("ERROR:")) {
+                errMsg = line.mid(6);
+                break;
             }
         }
-
-        emit apiKeyScrapeError("Could not auto-detect API key.");
+        emit apiKeyScrapeError(errMsg);
     });
 
     proc->start("bash", QStringList() << "-c" << script);
-    qDebug() << "Scraping API key from browser page via xdotool+clipboard...";
+    qDebug() << "Auto-detecting Steam API key via cookie decryption...";
 }
 
 void GameManager::loginSteamCmd() {
