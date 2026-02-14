@@ -194,9 +194,8 @@ void GameManager::launchSteam() {
 
 void GameManager::ensureSteamRunning() {
     // Pre-start Steam silently in the background so that when the user
-    // clicks Play, the steam:// protocol command is handled by the
-    // already-running process. This avoids the friends list, hardware
-    // survey, and other first-run UI that appears when Steam cold-starts.
+    // clicks Play, the steam:// protocol URL is handled by the
+    // already-running process via xdg-open — no new windows appear.
     if (!isSteamInstalled() || !isSteamAvailable()) return;
 
     // Check if Steam is already running
@@ -209,6 +208,8 @@ void GameManager::ensureSteamRunning() {
     }
 
     qDebug() << "Pre-starting Steam silently in background...";
+    // qputenv sets the variable in this process; child processes inherit it.
+    qputenv("STEAM_NO_CEFHOST", "1");
     QProcess::startDetached("steam", QStringList()
         << "-silent" << "-nofriendsui" << "-nochatui"
         << "-no-browser" << "-skipstreamingdrivers"
@@ -1005,8 +1006,21 @@ void GameManager::openApiKeyInBrowser() {
 
 void GameManager::closeApiKeyBrowser() {
     if (m_apiKeyBrowserPid > 0) {
-        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid << ")";
-        QProcess::execute("kill", QStringList() << QString::number(m_apiKeyBrowserPid));
+        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid
+                 << "type:" << m_apiKeyBrowserType << ")";
+        // Kill the process tree: the PID from startDetached is the
+        // launcher wrapper — the actual browser forks child processes.
+        // Use SIGTERM on the process group, then fall back to pkill
+        // by browser name to catch any orphans.
+        QProcess::execute("kill", QStringList() << "-TERM"
+            << QString::number(m_apiKeyBrowserPid));
+
+        // Also kill by name — Brave/Chromium fork many children that
+        // survive after the parent PID is killed.
+        if (!m_apiKeyBrowserType.isEmpty()) {
+            QProcess::execute("pkill", QStringList() << "-f"
+                << m_apiKeyBrowserType);
+        }
         m_apiKeyBrowserPid = 0;
     }
 }
