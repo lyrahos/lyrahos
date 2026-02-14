@@ -187,9 +187,9 @@ QVector<Game> SteamBackend::parseOwnedGamesResponse(const QByteArray& jsonData) 
 
         if (game.isInstalled) {
             game.launchCommand = "steam steam://rungameid/" + game.appId;
-        } else {
-            game.launchCommand = "steam steam://install/" + game.appId;
         }
+        // Uninstalled games have no launchCommand — installation is
+        // handled by GameManager::installGame() via steamcmd.
 
         // Use local cover art cache if available, otherwise use Steam CDN URL
         QString localGrid = QDir::homePath() +
