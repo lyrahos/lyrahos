@@ -55,6 +55,14 @@ public:
     // SteamCMD credential input (for interactive login)
     Q_INVOKABLE void provideSteamCmdCredential(const QString& appId, const QString& credential);
 
+    // Steam Setup Wizard — guided first-time setup
+    Q_INVOKABLE void openApiKeyInBrowser();
+    Q_INVOKABLE void scrapeApiKeyFromPage();
+    Q_INVOKABLE void loginSteamCmd();
+    Q_INVOKABLE void provideSteamCmdSetupCredential(const QString& credential);
+    Q_INVOKABLE void cancelSteamCmdSetup();
+    Q_INVOKABLE bool isSteamSetupComplete();
+
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId);
@@ -68,6 +76,13 @@ signals:
     void downloadComplete(QString appId, int gameId);
     void installError(QString appId, QString error);
     void steamCmdCredentialNeeded(QString appId, QString promptType);
+
+    // Setup wizard signals
+    void apiKeyScraped(QString key);
+    void apiKeyScrapeError(QString error);
+    void steamCmdSetupCredentialNeeded(QString promptType);
+    void steamCmdSetupLoginSuccess();
+    void steamCmdSetupLoginError(QString error);
 
 private:
     Database *m_db;
@@ -85,6 +100,9 @@ private:
     QHash<QString, double> m_downloadProgressCache;
     QTimer *m_downloadMonitor;
     QFileSystemWatcher *m_acfWatcher;
+
+    // SteamCMD setup (login-only) process
+    QProcess *m_steamCmdSetupProc = nullptr;
 
     void registerBackends();
     void monitorGameProcess();

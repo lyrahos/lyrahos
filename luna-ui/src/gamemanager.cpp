@@ -308,7 +308,8 @@ void GameManager::setSteamApiKey(const QString& key) {
 }
 
 bool GameManager::hasSteamApiKey() {
-    return !getSteamApiKey().isEmpty();
+    QString key = getSteamApiKey();
+    return !key.isEmpty() && key != "__setup_pending__";
 }
 
 QString GameManager::getDetectedSteamId() {
@@ -447,13 +448,18 @@ void GameManager::ensureSteamCmd(int gameId) {
         QString output = QString::fromUtf8(dlProc->readAllStandardOutput());
         if (exitCode == 0 && output.contains("STEAMCMD_READY")) {
             qDebug() << "SteamCMD auto-downloaded to" << destDir;
-            // Retry the install now that steamcmd is available
-            installGame(gameId);
+            // Retry the install now that steamcmd is available (skip if -1 = setup-only)
+            if (gameId >= 0) installGame(gameId);
         } else {
             QString err = QString::fromUtf8(dlProc->readAllStandardError()).trimmed();
-            Game game = m_db->getGameById(gameId);
-            emit installError(game.appId,
-                "Failed to download steamcmd: " + (err.isEmpty() ? "unknown error" : err));
+            if (gameId >= 0) {
+                Game game = m_db->getGameById(gameId);
+                emit installError(game.appId,
+                    "Failed to download steamcmd: " + (err.isEmpty() ? "unknown error" : err));
+            } else {
+                emit steamCmdSetupLoginError(
+                    "Failed to download steamcmd: " + (err.isEmpty() ? "unknown error" : err));
+            }
         }
     });
 
@@ -793,5 +799,132 @@ void GameManager::checkDownloadProgress() {
 
     if (m_activeDownloads.isEmpty()) {
         m_downloadMonitor->stop();
+    }
+}
+
+// ── Steam Setup Wizard backend ──
+
+bool GameManager::isSteamSetupComplete() {
+    // Setup is "complete" when: Steam is logged in, API key is saved, and steamcmd is available
+    return isSteamAvailable() && hasSteamApiKey() && isSteamCmdAvailable();
+}
+
+void GameManager::openApiKeyInBrowser() {
+    // Open the Steam API key page in a real browser (not Steam's built-in browser).
+    // xdg-open picks up the user's preferred browser (Firefox, Chromium, etc.)
+    QProcess::startDetached("xdg-open", QStringList() << "https://steamcommunity.com/dev/apikey");
+}
+
+void GameManager::scrapeApiKeyFromPage() {
+    // Fetch the Steam API key page and extract the key from the HTML.
+    // The page shows the key in a <p> after "Key: " when one is registered.
+    // This requires the user to be logged in via the browser session.
+    // We use curl with the user's browser cookies to attempt the scrape.
+    //
+    // However, browser cookies aren't easily accessible. Instead, we try a
+    // simpler approach: use the Steam Web API to validate if we can detect
+    // the key. Actually, the most reliable approach is to fetch the page
+    // and look for the key pattern (32-char hex string).
+    //
+    // Since the user has the page open in their browser, we'll just poll
+    // for the key by checking if they've registered one via the API.
+    // A registered key is a 32-character hex string (e.g. A1B2C3D4E5F6...).
+    //
+    // Approach: Use QNetworkAccessManager to fetch the dev/apikey page.
+    // If the user's Steam session cookies are shared (unlikely from browser),
+    // this won't work. So we take a different approach:
+    //
+    // We monitor the clipboard for a 32-char hex string paste — the user
+    // copies the key from the browser and the wizard detects it.
+    //
+    // But simplest: just try to read the API key page HTML since the user
+    // opened it. We can't access browser cookies from here, so we'll
+    // signal the QML to periodically check the clipboard for a key pattern.
+
+    // For now, emit an error telling QML to use clipboard detection
+    emit apiKeyScrapeError("clipboard");
+}
+
+void GameManager::loginSteamCmd() {
+    // Run steamcmd with +login only (no game install) to cache credentials.
+    // This is a standalone login process separate from game downloads.
+    if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+        qDebug() << "SteamCMD setup login already running";
+        return;
+    }
+
+    QString steamcmdBin = findSteamCmdBin();
+    if (steamcmdBin.isEmpty()) {
+        emit steamCmdSetupLoginError("SteamCMD not found. It will be downloaded first.");
+        // Trigger auto-download, then the QML wizard can retry
+        ensureSteamCmd(-1);  // -1 = no game, just download steamcmd
+        return;
+    }
+
+    QString username = getSteamUsername();
+    if (username.isEmpty()) {
+        emit steamCmdSetupLoginError("No Steam account detected. Please complete Step 2 first.");
+        return;
+    }
+
+    m_steamCmdSetupProc = new QProcess(this);
+    QStringList args;
+    args << "+login" << username << "+quit";
+
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this]() {
+        QString output = QString::fromUtf8(m_steamCmdSetupProc->readAllStandardOutput());
+        for (const QString& line : output.split('\n')) {
+            QString trimmed = line.trimmed();
+            if (trimmed.isEmpty()) continue;
+            qDebug() << "[steamcmd-setup]" << trimmed;
+
+            // Password prompt
+            if (trimmed.contains("password:", Qt::CaseInsensitive)) {
+                emit steamCmdSetupCredentialNeeded("password");
+                continue;
+            }
+            // Steam Guard / Two-factor / authenticator prompt
+            if (trimmed.contains("Steam Guard", Qt::CaseInsensitive) ||
+                trimmed.contains("Two-factor", Qt::CaseInsensitive)) {
+                emit steamCmdSetupCredentialNeeded("steamguard");
+                continue;
+            }
+            // Successful login
+            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
+                trimmed.contains("Waiting for user info", Qt::CaseInsensitive)) {
+                // Don't emit yet — wait for process to finish cleanly
+            }
+        }
+    });
+
+    connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this](int exitCode, QProcess::ExitStatus) {
+        m_steamCmdSetupProc->deleteLater();
+        m_steamCmdSetupProc = nullptr;
+
+        if (exitCode == 0) {
+            qDebug() << "SteamCMD setup login successful";
+            emit steamCmdSetupLoginSuccess();
+        } else {
+            emit steamCmdSetupLoginError("SteamCMD login failed (exit code " + QString::number(exitCode) + ")");
+        }
+    });
+
+    m_steamCmdSetupProc->start(steamcmdBin, args);
+    qDebug() << "Started steamcmd setup login for user:" << username;
+}
+
+void GameManager::provideSteamCmdSetupCredential(const QString& credential) {
+    if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+        m_steamCmdSetupProc->write((credential + "\n").toUtf8());
+    }
+}
+
+void GameManager::cancelSteamCmdSetup() {
+    if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+        m_steamCmdSetupProc->terminate();
+        if (!m_steamCmdSetupProc->waitForFinished(3000)) {
+            m_steamCmdSetupProc->kill();
+        }
     }
 }
