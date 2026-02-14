@@ -38,16 +38,14 @@ Rectangle {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
+            // Found the key — close the browser
+            GameManager.closeApiKeyBrowser()
         }
 
         function onApiKeyScrapeError(error) {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = error
-            // Auto-detection failed — open browser so the user can get the key manually
-            if (!wizard.apiKeyBrowserOpen) {
-                GameManager.openApiKeyInBrowser()
-                wizard.apiKeyBrowserOpen = true
-            }
+            // Leave the browser open so the user can copy the key manually
             wizard.showManualInput = true
         }
 
@@ -100,6 +98,7 @@ Rectangle {
     }
 
     function close() {
+        GameManager.closeApiKeyBrowser()
         GameManager.cancelSteamCmdSetup()
         visible = false
     }
@@ -448,11 +447,13 @@ Rectangle {
                 spacing: 12
                 Layout.fillWidth: true
 
-                // Auto-start: try to read the API key from Steam's local session data.
-                // No browser needed — we decrypt the cookies saved during step 1.
-                // A browser only opens if auto-detection fails (for manual fallback).
+                // Auto-start: open the browser full screen so the user can see the
+                // API key page, while simultaneously scraping it via Python.
+                // If the key is found, the browser closes automatically.
                 onVisibleChanged: {
                     if (visible && !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput) {
+                        GameManager.openApiKeyInBrowser()
+                        wizard.apiKeyBrowserOpen = true
                         wizard.apiKeyScraping = true
                         wizard.apiKeyScrapeErrorMsg = ""
                         GameManager.scrapeApiKeyFromPage()
@@ -497,7 +498,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Checking your Steam session for an existing key..."
+                        text: "Looking for your API key on the page..."
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")

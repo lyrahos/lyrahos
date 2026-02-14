@@ -820,9 +820,9 @@ void GameManager::openApiKeyInBrowser() {
     // Open the Steam API key page in a real browser, full screen.
     // In gamescope, we need explicit full-screen flags since xdg-open
     // doesn't pass them through. Try known browsers with kiosk/fullscreen.
+    // We track the PID so closeApiKeyBrowser() can kill it later.
     QString url = "https://steamcommunity.com/dev/apikey";
 
-    // Try browsers in order of preference with full-screen flags
     struct BrowserOption {
         QString bin;
         QStringList args;
@@ -837,15 +837,27 @@ void GameManager::openApiKeyInBrowser() {
     for (const auto& b : browsers) {
         QString path = QStandardPaths::findExecutable(b.bin);
         if (!path.isEmpty()) {
-            QProcess::startDetached(path, b.args);
-            qDebug() << "Opened API key page with" << b.bin << "(full screen)";
+            qint64 pid = 0;
+            QProcess::startDetached(path, b.args, QString(), &pid);
+            m_apiKeyBrowserPid = pid;
+            qDebug() << "Opened API key page with" << b.bin << "(full screen, pid:" << pid << ")";
             return;
         }
     }
 
-    // Fallback: xdg-open without full-screen (better than nothing)
-    QProcess::startDetached("xdg-open", QStringList() << url);
-    qDebug() << "Opened API key page with xdg-open (no full-screen flag)";
+    // Fallback: xdg-open without full-screen
+    qint64 pid = 0;
+    QProcess::startDetached("xdg-open", QStringList() << url, QString(), &pid);
+    m_apiKeyBrowserPid = pid;
+    qDebug() << "Opened API key page with xdg-open (pid:" << pid << ")";
+}
+
+void GameManager::closeApiKeyBrowser() {
+    if (m_apiKeyBrowserPid > 0) {
+        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid << ")";
+        QProcess::execute("kill", QStringList() << QString::number(m_apiKeyBrowserPid));
+        m_apiKeyBrowserPid = 0;
+    }
 }
 
 void GameManager::scrapeApiKeyFromPage() {
