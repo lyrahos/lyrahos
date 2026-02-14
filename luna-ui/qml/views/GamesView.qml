@@ -706,11 +706,9 @@ Rectangle {
                                                 refreshGames()
                                                 activeTab = 0
                                             } else {
-                                                // Exit luna-ui and signal luna-session
-                                                // to launch Steam directly as gamescope's
-                                                // child. luna-session restarts luna-ui
-                                                // when Steam exits.
-                                                GameManager.launchSteamLogin()
+                                                // Open the setup wizard instead of
+                                                // directly launching Steam
+                                                steamSetupWizard.open()
                                             }
                                         }
                                     }
@@ -1040,10 +1038,28 @@ Rectangle {
         }
     }
 
+    // ── Steam Setup Wizard ──
+    SteamSetupWizard {
+        id: steamSetupWizard
+    }
+
     // ── Load games on startup and when store scan completes ──
     // When luna-ui restarts after Steam login (via luna-session),
     // Component.onCompleted fires and picks up newly imported games.
-    Component.onCompleted: refreshGames()
+    // Also auto-resume the setup wizard if we returned from Steam login.
+    Component.onCompleted: {
+        refreshGames()
+
+        // Check if we're returning from a Steam login (step 1 of wizard).
+        // The wizard sets "__setup_pending__" as API key before launching Steam.
+        if (GameManager.getSteamApiKey() === "__setup_pending__") {
+            GameManager.setSteamApiKey("")  // Clear the marker
+            if (GameManager.isSteamAvailable()) {
+                // Steam login succeeded — jump to API key step
+                steamSetupWizard.open()
+            }
+        }
+    }
 
     // ── SteamCMD credential prompt dialog ──
     Rectangle {
