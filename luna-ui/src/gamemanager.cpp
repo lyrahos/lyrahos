@@ -82,7 +82,7 @@ void GameManager::launchGame(int gameId) {
     // Safety: if a stale steam://install/ command is in the database for a game
     // that's marked installed, fix it before launching.
     if (game.storeSource == "steam" && game.launchCommand.contains("steam://install/")) {
-        game.launchCommand = "steam steam://rungameid/" + game.appId;
+        game.launchCommand = "steam -silent steam://rungameid/" + game.appId;
         m_db->updateGame(game);
     }
 
@@ -93,14 +93,18 @@ void GameManager::launchGame(int gameId) {
     // Get appropriate backend and launch
     StoreBackend* backend = getBackendForGame(game);
     if (backend) {
-        // FIX #7: Prepend gamemoderun to the launch command instead of calling it separately.
-        // GameMode optimizes CPU governor, I/O priority, etc. for the running game.
-        // The backend's launchGame handles the actual execution; for games that
-        // use a direct executable, wrap with gamemoderun in the launch command.
-        backend->launchGame(game);
-        emit gameLaunched(gameId);
-        // Start monitoring for game exit
-        m_processMonitor->start(1000);
+        bool launched = backend->launchGame(game);
+        if (launched) {
+            emit gameLaunched(gameId, game.title);
+            // Start monitoring for game exit
+            m_processMonitor->start(1000);
+        } else {
+            emit gameLaunchError(gameId, game.title,
+                "Failed to start the game. The executable may be missing or corrupted.");
+        }
+    } else {
+        emit gameLaunchError(gameId, game.title,
+            "No compatible launcher found for this game.");
     }
 }
 
@@ -545,6 +549,9 @@ void GameManager::installGame(int gameId) {
     // +app_update <appid> validate        → download & verify game files
     // +quit                               → exit when done
     QProcess *proc = new QProcess(this);
+    // Run from SteamCMD's directory so it finds cached login tokens
+    QFileInfo cmdInfo(steamcmdBin);
+    proc->setWorkingDirectory(cmdInfo.absolutePath());
     QStringList args;
     args << "+@sSteamCmdForcePlatformType" << "linux"
          << "+login" << username
@@ -654,7 +661,7 @@ void GameManager::installGame(int gameId) {
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
             game.isInstalled = true;
-            game.launchCommand = "steam steam://rungameid/" + appId;
+            game.launchCommand = "steam -silent steam://rungameid/" + appId;
             if (!installDir.isEmpty()) {
                 game.installPath = primarySteamApps + "/common/" + installDir;
             }
@@ -861,7 +868,7 @@ void GameManager::checkDownloadProgress() {
                         Game game = m_db->getGameById(gameId);
                         if (!game.isInstalled) {
                             game.isInstalled = true;
-                            game.launchCommand = "steam steam://rungameid/" + appId;
+                            game.launchCommand = "steam -silent steam://rungameid/" + appId;
                             m_db->updateGame(game);
                             emit downloadComplete(appId, gameId);
                             qDebug() << "ACF watcher: download complete:" << game.title;
@@ -1264,6 +1271,10 @@ void GameManager::loginSteamCmd() {
     }
 
     m_steamCmdSetupProc = new QProcess(this);
+    // Run from SteamCMD's directory so cached login tokens are stored
+    // where installGame() will find them later.
+    QFileInfo cmdInfo(steamcmdBin);
+    m_steamCmdSetupProc->setWorkingDirectory(cmdInfo.absolutePath());
     // Don't pass +quit on the command line. SteamCMD needs time to
     // save the login token after a successful auth. If +quit is queued
     // upfront, it fires before the token is persisted and exits with

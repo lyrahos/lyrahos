@@ -78,6 +78,12 @@ void Database::createTables() {
     // There is no UI to hide games, so all hidden games are from this bug.
     query.exec("UPDATE games SET is_hidden = 0 WHERE is_hidden != 0");
 
+    // Migration: add -silent flag to Steam launch commands so the Steam
+    // client UI doesn't show when launching games.
+    query.exec("UPDATE games SET launch_command = REPLACE(launch_command, "
+               "'steam steam://rungameid/', 'steam -silent steam://rungameid/') "
+               "WHERE launch_command LIKE 'steam steam://rungameid/%'");
+
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
     query.exec("CREATE TRIGGER games_fts_insert AFTER INSERT ON games BEGIN "

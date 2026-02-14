@@ -99,7 +99,10 @@ Game SteamBackend::parseAppManifest(const QString& manifestPath) {
 }
 
 bool SteamBackend::launchGame(const Game& game) {
-    return QProcess::startDetached("steam", QStringList() << "steam://rungameid/" + game.appId);
+    // -silent: suppress the Steam client UI (no store/library windows),
+    // Steam stays in the background and just launches the game.
+    return QProcess::startDetached("steam", QStringList()
+        << "-silent" << "steam://rungameid/" + game.appId);
 }
 
 QString SteamBackend::getLoggedInSteamId() const {

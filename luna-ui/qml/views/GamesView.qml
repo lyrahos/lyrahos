@@ -1375,6 +1375,184 @@ Rectangle {
         }
     }
 
+    // ── Game Launch Overlay ──
+    Rectangle {
+        id: launchOverlay
+        visible: false
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.85)
+        z: 200
+
+        property string gameTitle: ""
+        property bool isError: false
+        property string errorMessage: ""
+
+        MouseArea { anchors.fill: parent; onClicked: {} } // block clicks behind
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 20
+            width: 400
+
+            // Spinner (visible during loading, not during error)
+            Item {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 64
+                Layout.preferredHeight: 64
+                visible: !launchOverlay.isError
+
+                Rectangle {
+                    id: spinnerRing
+                    anchors.centerIn: parent
+                    width: 56
+                    height: 56
+                    radius: 28
+                    color: "transparent"
+                    border.width: 4
+                    border.color: Qt.rgba(1, 1, 1, 0.1)
+
+                    Rectangle {
+                        width: 56
+                        height: 56
+                        radius: 28
+                        color: "transparent"
+                        border.width: 4
+                        border.color: "transparent"
+
+                        // Arc segment
+                        Rectangle {
+                            width: 14
+                            height: 4
+                            radius: 2
+                            color: ThemeManager.getColor("primary")
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                        }
+                        Rectangle {
+                            width: 4
+                            height: 14
+                            radius: 2
+                            color: ThemeManager.getColor("primary")
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.right: parent.right
+                        }
+
+                        RotationAnimation on rotation {
+                            from: 0
+                            to: 360
+                            duration: 1200
+                            loops: Animation.Infinite
+                            running: launchOverlay.visible && !launchOverlay.isError
+                        }
+                    }
+                }
+            }
+
+            // Error icon (visible during error)
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 56
+                Layout.preferredHeight: 56
+                radius: 28
+                color: Qt.rgba(1, 0.3, 0.3, 0.15)
+                visible: launchOverlay.isError
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "!"
+                    font.pixelSize: 28
+                    font.bold: true
+                    color: "#ff6b6b"
+                }
+            }
+
+            // Title text
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: launchOverlay.isError
+                      ? "Launch Failed"
+                      : "Starting Game..."
+                font.pixelSize: ThemeManager.getFontSize("xlarge")
+                font.family: ThemeManager.getFont("heading")
+                font.bold: true
+                color: launchOverlay.isError
+                       ? "#ff6b6b"
+                       : ThemeManager.getColor("textPrimary")
+            }
+
+            // Game name
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: launchOverlay.gameTitle
+                font.pixelSize: ThemeManager.getFontSize("large")
+                font.family: ThemeManager.getFont("body")
+                color: ThemeManager.getColor("textSecondary")
+                elide: Text.ElideRight
+                Layout.maximumWidth: 380
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            // Error message (only visible on error)
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                visible: launchOverlay.isError && launchOverlay.errorMessage !== ""
+                text: launchOverlay.errorMessage
+                font.pixelSize: ThemeManager.getFontSize("small")
+                font.family: ThemeManager.getFont("body")
+                color: ThemeManager.getColor("textSecondary")
+                wrapMode: Text.WordWrap
+                Layout.maximumWidth: 360
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            // Dismiss button (visible on error)
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: dismissLabel.width + 40
+                Layout.preferredHeight: 40
+                radius: 8
+                visible: launchOverlay.isError
+                color: dismissBtnArea.containsMouse
+                       ? ThemeManager.getColor("hover")
+                       : ThemeManager.getColor("surface")
+                border.color: dismissBtnArea.containsMouse
+                              ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                border.width: dismissBtnArea.containsMouse ? 2 : 1
+
+                Text {
+                    id: dismissLabel
+                    anchors.centerIn: parent
+                    text: "Dismiss"
+                    font.pixelSize: ThemeManager.getFontSize("small")
+                    font.family: ThemeManager.getFont("body")
+                    font.bold: true
+                    color: ThemeManager.getColor("textPrimary")
+                }
+
+                MouseArea {
+                    id: dismissBtnArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: launchOverlay.visible = false
+                }
+
+                Behavior on border.color { ColorAnimation { duration: 150 } }
+            }
+        }
+
+        // Auto-dismiss timer for successful launches
+        Timer {
+            id: launchDismissTimer
+            interval: 5000
+            onTriggered: {
+                if (!launchOverlay.isError) {
+                    launchOverlay.visible = false
+                }
+            }
+        }
+    }
+
     Connections {
         target: GameManager
         function onGamesUpdated() { refreshGames() }
@@ -1431,6 +1609,22 @@ Rectangle {
             credentialDialog.promptType = promptType
             credentialDialog.visible = true
             credInput.forceActiveFocus()
+        }
+
+        function onGameLaunched(gameId, gameTitle) {
+            launchOverlay.gameTitle = gameTitle
+            launchOverlay.isError = false
+            launchOverlay.errorMessage = ""
+            launchOverlay.visible = true
+            launchDismissTimer.restart()
+        }
+
+        function onGameLaunchError(gameId, gameTitle, error) {
+            launchOverlay.gameTitle = gameTitle
+            launchOverlay.isError = true
+            launchOverlay.errorMessage = error
+            launchOverlay.visible = true
+            launchDismissTimer.stop()
         }
     }
 
