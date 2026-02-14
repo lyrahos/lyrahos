@@ -816,33 +816,96 @@ void GameManager::openApiKeyInBrowser() {
 }
 
 void GameManager::scrapeApiKeyFromPage() {
-    // Fetch the Steam API key page and extract the key from the HTML.
-    // The page shows the key in a <p> after "Key: " when one is registered.
-    // This requires the user to be logged in via the browser session.
-    // We use curl with the user's browser cookies to attempt the scrape.
+    // Auto-detect the Steam API key by reading the Steam client's local
+    // cookie database and using curl to fetch the dev/apikey page.
     //
-    // However, browser cookies aren't easily accessible. Instead, we try a
-    // simpler approach: use the Steam Web API to validate if we can detect
-    // the key. Actually, the most reliable approach is to fetch the page
-    // and look for the key pattern (32-char hex string).
+    // When the user logs into the Steam client (step 1 of wizard), it
+    // stores web session cookies in an SQLite DB at:
+    //   ~/.local/share/Steam/config/htmlcache/Cookies
     //
-    // Since the user has the page open in their browser, we'll just poll
-    // for the key by checking if they've registered one via the API.
-    // A registered key is a 32-character hex string (e.g. A1B2C3D4E5F6...).
+    // We read the steamLoginSecure + sessionid cookies from that DB,
+    // then curl the API key page and parse the key from the HTML.
+    // The page shows: "Key: A1B2C3D4..." when a key is registered.
     //
-    // Approach: Use QNetworkAccessManager to fetch the dev/apikey page.
-    // If the user's Steam session cookies are shared (unlikely from browser),
-    // this won't work. So we take a different approach:
-    //
-    // We monitor the clipboard for a 32-char hex string paste — the user
-    // copies the key from the browser and the wizard detects it.
-    //
-    // But simplest: just try to read the API key page HTML since the user
-    // opened it. We can't access browser cookies from here, so we'll
-    // signal the QML to periodically check the clipboard for a key pattern.
+    // If cookies are expired/encrypted or no key is registered,
+    // we emit apiKeyScrapeError so the QML shows a manual paste field.
 
-    // For now, emit an error telling QML to use clipboard detection
-    emit apiKeyScrapeError("clipboard");
+    QProcess *proc = new QProcess(this);
+    QString steamDir = QDir::homePath() + "/.local/share/Steam";
+
+    QString script = QString(
+        "COOKIE_DB='%1/config/htmlcache/Cookies'\n"
+        "\n"
+        "# Read Steam session cookies from CEF's SQLite DB\n"
+        "if [ ! -f \"$COOKIE_DB\" ]; then\n"
+        "    echo 'ERROR:Cookie database not found'\n"
+        "    exit 1\n"
+        "fi\n"
+        "\n"
+        "if ! command -v sqlite3 >/dev/null 2>&1; then\n"
+        "    echo 'ERROR:sqlite3 not installed'\n"
+        "    exit 1\n"
+        "fi\n"
+        "\n"
+        "LOGIN_COOKIE=$(sqlite3 \"$COOKIE_DB\" \\\n"
+        "    \"SELECT value FROM cookies WHERE host_key='.steamcommunity.com' AND name='steamLoginSecure' LIMIT 1\" 2>/dev/null)\n"
+        "SESSION_COOKIE=$(sqlite3 \"$COOKIE_DB\" \\\n"
+        "    \"SELECT value FROM cookies WHERE host_key='.steamcommunity.com' AND name='sessionid' LIMIT 1\" 2>/dev/null)\n"
+        "\n"
+        "if [ -z \"$LOGIN_COOKIE\" ]; then\n"
+        "    echo 'ERROR:No Steam session cookie found'\n"
+        "    exit 1\n"
+        "fi\n"
+        "\n"
+        "# Fetch the API key page using Steam's cookies\n"
+        "RESPONSE=$(curl -s -L --max-time 10 \\\n"
+        "    -b \"steamLoginSecure=$LOGIN_COOKIE; sessionid=$SESSION_COOKIE\" \\\n"
+        "    'https://steamcommunity.com/dev/apikey' 2>/dev/null)\n"
+        "\n"
+        "if [ -z \"$RESPONSE\" ]; then\n"
+        "    echo 'ERROR:Failed to fetch API key page'\n"
+        "    exit 1\n"
+        "fi\n"
+        "\n"
+        "# Parse the key: page shows \"Key: A1B2C3D4E5F6...\" (32-char hex)\n"
+        "KEY=$(echo \"$RESPONSE\" | grep -oP 'Key:\\s*[A-F0-9]{32}' | grep -oP '[A-F0-9]{32}' | head -1)\n"
+        "\n"
+        "if [ -n \"$KEY\" ]; then\n"
+        "    echo \"APIKEY:$KEY\"\n"
+        "    exit 0\n"
+        "fi\n"
+        "\n"
+        "# No key found — maybe user hasn't registered one yet\n"
+        "echo 'ERROR:No API key found on page (register one first)'\n"
+        "exit 1\n"
+    ).arg(steamDir);
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        QString output = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
+        proc->deleteLater();
+
+        for (const QString& line : output.split('\n')) {
+            if (line.startsWith("APIKEY:")) {
+                QString key = line.mid(7).trimmed();
+                if (!key.isEmpty()) {
+                    qDebug() << "Auto-detected Steam API key:" << key.left(4) + "...";
+                    emit apiKeyScraped(key);
+                    return;
+                }
+            }
+            if (line.startsWith("ERROR:")) {
+                qDebug() << "API key scrape:" << line;
+            }
+        }
+
+        emit apiKeyScrapeError(output.contains("register one")
+            ? "No API key registered yet. Register one on the page, then try again."
+            : "Could not auto-detect API key.");
+    });
+
+    proc->start("bash", QStringList() << "-c" << script);
+    qDebug() << "Scraping Steam API key from cookie-authenticated session...";
 }
 
 void GameManager::loginSteamCmd() {

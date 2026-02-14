@@ -16,6 +16,8 @@ Rectangle {
     property int currentStep: 0  // 0=intro, 1=steam-login, 2=api-key, 3=steamcmd-login, 4=done
 
     // Sub-states for step 2 (API key)
+    property bool apiKeyScraping: false
+    property string apiKeyScrapeErrorMsg: ""
     property bool apiKeyBrowserOpen: false
     property string detectedApiKey: ""
     property bool showManualInput: false
@@ -32,8 +34,20 @@ Rectangle {
     Connections {
         target: GameManager
 
+        function onApiKeyScraped(key) {
+            wizard.apiKeyScraping = false
+            wizard.apiKeyScrapeErrorMsg = ""
+            wizard.detectedApiKey = key
+        }
+
         function onApiKeyScrapeError(error) {
-            // Scrape can't access browser session — fall back to clipboard/manual
+            wizard.apiKeyScraping = false
+            wizard.apiKeyScrapeErrorMsg = error
+            // Auto-detection failed — open browser and show manual paste
+            if (!wizard.apiKeyBrowserOpen) {
+                GameManager.openApiKeyInBrowser()
+                wizard.apiKeyBrowserOpen = true
+            }
             wizard.showManualInput = true
         }
 
@@ -57,23 +71,10 @@ Rectangle {
         }
     }
 
-    // Clipboard polling timer for API key detection
-    Timer {
-        id: clipboardPoller
-        interval: 1500
-        repeat: true
-        running: wizard.visible && wizard.currentStep === 2 && wizard.apiKeyBrowserOpen
-        onTriggered: {
-            // Check if an API key file appeared (user might have pasted via another path)
-            if (GameManager.hasSteamApiKey()) {
-                wizard.detectedApiKey = GameManager.getSteamApiKey()
-                clipboardPoller.stop()
-            }
-        }
-    }
-
     function reset() {
         currentStep = 0
+        apiKeyScraping = false
+        apiKeyScrapeErrorMsg = ""
         apiKeyBrowserOpen = false
         detectedApiKey = ""
         showManualInput = false
@@ -447,6 +448,15 @@ Rectangle {
                 spacing: 12
                 Layout.fillWidth: true
 
+                // Auto-start scraping when this step becomes visible
+                onVisibleChanged: {
+                    if (visible && !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput) {
+                        wizard.apiKeyScraping = true
+                        wizard.apiKeyScrapeErrorMsg = ""
+                        GameManager.scrapeApiKeyFromPage()
+                    }
+                }
+
                 Text {
                     text: "Get Your Steam API Key"
                     font.pixelSize: ThemeManager.getFontSize("xlarge")
@@ -456,7 +466,7 @@ Rectangle {
                 }
 
                 Text {
-                    text: "Luna needs a free Steam API key to detect all your games (including uninstalled ones).\n\nA browser will open to the Steam API key page. Register a key if you don't have one, then copy it."
+                    text: "Luna needs a free Steam API key to detect all your games (including uninstalled ones)."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
                     color: ThemeManager.getColor("textSecondary")
@@ -464,46 +474,174 @@ Rectangle {
                     Layout.fillWidth: true
                 }
 
-                // Open browser button
-                Rectangle {
-                    visible: !wizard.apiKeyBrowserOpen
-                    Layout.preferredWidth: openBrowserLabel.width + 40
-                    Layout.preferredHeight: 44
-                    radius: 8
-                    color: "#1b2838"
+                // ── Auto-detection in progress ──
+                ColumnLayout {
+                    visible: wizard.apiKeyScraping
+                    spacing: 8
+                    Layout.fillWidth: true
 
                     Text {
-                        id: openBrowserLabel
-                        anchors.centerIn: parent
-                        text: "Open Browser"
+                        text: "Searching for your API key..."
                         font.pixelSize: ThemeManager.getFontSize("medium")
                         font.family: ThemeManager.getFont("body")
-                        font.bold: true
-                        color: "#66c0f4"
+                        color: ThemeManager.getColor("primary")
+
+                        SequentialAnimation on opacity {
+                            running: wizard.apiKeyScraping
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.4; duration: 800 }
+                            NumberAnimation { to: 1.0; duration: 800 }
+                        }
                     }
 
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            GameManager.openApiKeyInBrowser()
-                            wizard.apiKeyBrowserOpen = true
-                            wizard.showManualInput = true
+                    Text {
+                        text: "Reading your Steam session to check for an existing key..."
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+                }
+
+                // ── Key detected! Confirmation ──
+                Rectangle {
+                    visible: wizard.detectedApiKey !== "" && !wizard.showManualInput
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: apiKeyConfirmCol.height + 32
+                    radius: 12
+                    color: Qt.rgba(ThemeManager.getColor("accent").r,
+                                   ThemeManager.getColor("accent").g,
+                                   ThemeManager.getColor("accent").b, 0.1)
+                    border.color: ThemeManager.getColor("accent")
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: apiKeyConfirmCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 16
+                        spacing: 12
+
+                        Text {
+                            text: "Found your API key!"
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: ThemeManager.getColor("accent")
+                        }
+
+                        Text {
+                            text: "Is this your API key?"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        // Show masked key
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 40
+                            radius: 8
+                            color: ThemeManager.getColor("hover")
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: {
+                                    var k = wizard.detectedApiKey
+                                    if (k.length > 12)
+                                        return k.substring(0, 8) + "..." + k.substring(k.length - 4)
+                                    return k
+                                }
+                                font.pixelSize: ThemeManager.getFontSize("medium")
+                                font.family: "monospace"
+                                color: ThemeManager.getColor("accent")
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 10
+
+                            Rectangle {
+                                Layout.preferredWidth: yesKeyLabel.width + 32
+                                Layout.preferredHeight: 40
+                                radius: 8
+                                color: ThemeManager.getColor("accent")
+
+                                Text {
+                                    id: yesKeyLabel
+                                    anchors.centerIn: parent
+                                    text: "Yes, use this key"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: true
+                                    color: "white"
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        GameManager.setSteamApiKey(wizard.detectedApiKey)
+                                        wizard.currentStep = 3
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.preferredWidth: noKeyLabel.width + 32
+                                Layout.preferredHeight: 40
+                                radius: 8
+                                color: "transparent"
+                                border.color: Qt.rgba(1, 1, 1, 0.15)
+                                border.width: 1
+
+                                Text {
+                                    id: noKeyLabel
+                                    anchors.centerIn: parent
+                                    text: "No, enter manually"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("textSecondary")
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        wizard.detectedApiKey = ""
+                                        wizard.showManualInput = true
+                                        manualKeyInput.forceActiveFocus()
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // After browser is open — show paste field
+                // ── Manual fallback (shown after scrape fails or user clicks "No") ──
                 ColumnLayout {
-                    visible: wizard.apiKeyBrowserOpen
+                    visible: wizard.showManualInput && wizard.detectedApiKey === ""
                     spacing: 10
                     Layout.fillWidth: true
 
+                    // Error message from auto-detection
                     Text {
-                        text: "Paste your API key below:"
+                        visible: wizard.apiKeyScrapeErrorMsg !== ""
+                        text: wizard.apiKeyScrapeErrorMsg
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: "#ff6b6b"
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        text: "A browser has been opened to the Steam API key page.\nRegister a key if you don't have one, then paste it below:"
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
 
                     Rectangle {
@@ -528,7 +666,9 @@ Rectangle {
                             clip: true
                             onAccepted: {
                                 if (text.trim().length >= 20) {
-                                    wizard.detectedApiKey = text.trim()
+                                    var key = text.trim()
+                                    GameManager.setSteamApiKey(key)
+                                    wizard.currentStep = 3
                                 }
                             }
                         }
@@ -545,96 +685,61 @@ Rectangle {
                         }
                     }
 
-                    // Confirmation when key is detected/entered
+                    // Save button
                     Rectangle {
-                        visible: wizard.detectedApiKey !== "" || manualKeyInput.text.trim().length >= 20
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 60
+                        visible: manualKeyInput.text.trim().length >= 20
+                        Layout.preferredWidth: saveManualKeyLabel.width + 32
+                        Layout.preferredHeight: 40
                         radius: 8
-                        color: Qt.rgba(ThemeManager.getColor("accent").r,
-                                       ThemeManager.getColor("accent").g,
-                                       ThemeManager.getColor("accent").b, 0.1)
-                        border.color: ThemeManager.getColor("accent")
+                        color: ThemeManager.getColor("accent")
+
+                        Text {
+                            id: saveManualKeyLabel
+                            anchors.centerIn: parent
+                            text: "Save Key"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: "white"
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                var key = manualKeyInput.text.trim()
+                                GameManager.setSteamApiKey(key)
+                                wizard.currentStep = 3
+                            }
+                        }
+                    }
+
+                    // Retry auto-detect button
+                    Rectangle {
+                        Layout.preferredWidth: retryDetectLabel.width + 32
+                        Layout.preferredHeight: 36
+                        radius: 8
+                        color: "transparent"
+                        border.color: Qt.rgba(1, 1, 1, 0.12)
                         border.width: 1
 
-                        RowLayout {
+                        Text {
+                            id: retryDetectLabel
+                            anchors.centerIn: parent
+                            text: "Retry auto-detect"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+
+                        MouseArea {
                             anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 10
-
-                            Text {
-                                text: "Is this your API key?"
-                                font.pixelSize: ThemeManager.getFontSize("small")
-                                font.family: ThemeManager.getFont("body")
-                                color: ThemeManager.getColor("textPrimary")
-                            }
-
-                            Text {
-                                text: {
-                                    var k = wizard.detectedApiKey || manualKeyInput.text.trim()
-                                    if (k.length > 12)
-                                        return k.substring(0, 8) + "..." + k.substring(k.length - 4)
-                                    return k
-                                }
-                                font.pixelSize: ThemeManager.getFontSize("small")
-                                font.family: "monospace"
-                                color: ThemeManager.getColor("accent")
-                                Layout.fillWidth: true
-                            }
-
-                            Rectangle {
-                                Layout.preferredWidth: yesKeyLabel.width + 24
-                                Layout.preferredHeight: 32
-                                radius: 6
-                                color: ThemeManager.getColor("accent")
-
-                                Text {
-                                    id: yesKeyLabel
-                                    anchors.centerIn: parent
-                                    text: "Yes"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    font.bold: true
-                                    color: "white"
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        var key = wizard.detectedApiKey || manualKeyInput.text.trim()
-                                        GameManager.setSteamApiKey(key)
-                                        wizard.currentStep = 3
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.preferredWidth: noKeyLabel.width + 24
-                                Layout.preferredHeight: 32
-                                radius: 6
-                                color: "transparent"
-                                border.color: Qt.rgba(1, 1, 1, 0.15)
-                                border.width: 1
-
-                                Text {
-                                    id: noKeyLabel
-                                    anchors.centerIn: parent
-                                    text: "No"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        wizard.detectedApiKey = ""
-                                        manualKeyInput.text = ""
-                                        manualKeyInput.forceActiveFocus()
-                                    }
-                                }
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                wizard.showManualInput = false
+                                wizard.apiKeyScrapeErrorMsg = ""
+                                wizard.apiKeyScraping = true
+                                GameManager.scrapeApiKeyFromPage()
                             }
                         }
                     }
@@ -672,7 +777,7 @@ Rectangle {
                         }
                     }
 
-                    // Skip button (if user already has key or wants to skip)
+                    // Skip button
                     Rectangle {
                         visible: !GameManager.hasSteamApiKey() || GameManager.getSteamApiKey() === "__setup_pending__"
                         Layout.preferredWidth: skipApiLabel.width + 32
@@ -695,7 +800,6 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                // Clear the pending marker if set
                                 if (GameManager.getSteamApiKey() === "__setup_pending__")
                                     GameManager.setSteamApiKey("")
                                 wizard.currentStep = 3
