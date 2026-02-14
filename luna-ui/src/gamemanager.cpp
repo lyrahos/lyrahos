@@ -15,6 +15,7 @@
 #include <QFileSystemWatcher>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <memory>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -566,16 +567,22 @@ void GameManager::installGame(int gameId) {
         m_steamCmdProcesses.remove(appId);
         m_downloadProgressCache.remove(appId);
 
-        if (exitCode == 0 && status == QProcess::NormalExit) {
-            qDebug() << "SteamCMD finished successfully for appId:" << appId;
+        // SteamCMD exit codes are unreliable (often exits 5 on success).
+        // Check for the app manifest file — its existence is the real proof
+        // that the game was downloaded successfully.
+        QString manifestPath = primarySteamApps + "/appmanifest_" + appId + ".acf";
+        bool manifestExists = QFile::exists(manifestPath);
+
+        if (manifestExists || (exitCode == 0 && status == QProcess::NormalExit)) {
+            qDebug() << "SteamCMD finished for appId:" << appId
+                     << "(exit code:" << exitCode << ", manifest:" << manifestExists << ")";
 
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
             game.isInstalled = true;
             game.launchCommand = "steam steam://rungameid/" + appId;
 
-            // Try to find the install path from the manifest
-            QString manifestPath = primarySteamApps + "/appmanifest_" + appId + ".acf";
+            // Read the install path from the manifest
             QFile manifest(manifestPath);
             if (manifest.open(QIODevice::ReadOnly)) {
                 QTextStream in(&manifest);
@@ -596,7 +603,7 @@ void GameManager::installGame(int gameId) {
             qDebug() << "SteamCMD failed for appId:" << appId
                      << "exit code:" << exitCode << "status:" << status;
             m_activeDownloads.remove(appId);
-            emit installError(appId, "Installation failed (steamcmd exit code " + QString::number(exitCode) + ")");
+            emit installError(appId, "Installation failed — check your credentials and try again.");
             // Emit progress -1 to clear the UI progress bar
             emit downloadProgressChanged(appId, -1.0);
         }
@@ -953,7 +960,11 @@ void GameManager::loginSteamCmd() {
     QStringList args;
     args << "+login" << username << "+quit";
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this]() {
+    // Track whether we saw a successful login in stdout, because
+    // SteamCMD's exit codes are unreliable (often exits 5 even on success).
+    auto loginOk = std::make_shared<bool>(false);
+
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, loginOk]() {
         QString output = QString::fromUtf8(m_steamCmdSetupProc->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
             QString trimmed = line.trimmed();
@@ -971,24 +982,35 @@ void GameManager::loginSteamCmd() {
                 emit steamCmdSetupCredentialNeeded("steamguard");
                 continue;
             }
-            // Successful login
+            // Successful login — SteamCMD prints these on a valid session
             if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
                 trimmed.contains("Waiting for user info", Qt::CaseInsensitive)) {
-                // Don't emit yet — wait for process to finish cleanly
+                *loginOk = true;
+            }
+            // Login failure messages from SteamCMD itself
+            if (trimmed.contains("FAILED login", Qt::CaseInsensitive) ||
+                trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
+                trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
+                *loginOk = false;
             }
         }
     });
 
     connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOk](int exitCode, QProcess::ExitStatus) {
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
 
-        if (exitCode == 0) {
-            qDebug() << "SteamCMD setup login successful";
+        // Trust the stdout "Logged in OK" over the exit code, because
+        // SteamCMD frequently exits with code 5 even after a successful
+        // login+quit sequence.
+        if (*loginOk || exitCode == 0) {
+            qDebug() << "SteamCMD setup login successful (exit code:" << exitCode << ")";
             emit steamCmdSetupLoginSuccess();
         } else {
-            emit steamCmdSetupLoginError("SteamCMD login failed (exit code " + QString::number(exitCode) + ")");
+            qDebug() << "SteamCMD setup login failed, exit code:" << exitCode;
+            emit steamCmdSetupLoginError(
+                "Login failed. Check your password or Steam Guard code and try again.");
         }
     });
 
