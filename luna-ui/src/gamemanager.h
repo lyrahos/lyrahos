@@ -64,6 +64,7 @@ public:
     Q_INVOKABLE void provideSteamCmdSetupCredential(const QString& credential);
     Q_INVOKABLE void cancelSteamCmdSetup();
     Q_INVOKABLE bool isSteamSetupComplete();
+    Q_INVOKABLE void ensureSteamRunning();
 
 signals:
     void gamesUpdated();
@@ -117,6 +118,7 @@ private:
     void handleSteamCmdOutput(const QString& appId, QProcess *proc);
     void ensureSteamCmd(int gameId);
     QString findSteamCmdBin() const;
+    QString steamCmdDataDir() const;
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
     QString steamApiKeyPath() const;

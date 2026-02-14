@@ -84,6 +84,14 @@ void Database::createTables() {
                "'steam steam://rungameid/', 'steam -silent steam://rungameid/') "
                "WHERE launch_command LIKE 'steam steam://rungameid/%'");
 
+    // Migration: add -nofriendsui -nochatui flags to suppress friends list
+    // and chat windows that appear alongside game launches.
+    query.exec("UPDATE games SET launch_command = REPLACE(launch_command, "
+               "'steam -silent steam://rungameid/', "
+               "'steam -silent -nofriendsui -nochatui steam://rungameid/') "
+               "WHERE launch_command LIKE 'steam -silent steam://rungameid/%' "
+               "AND launch_command NOT LIKE '%nofriendsui%'");
+
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
     query.exec("CREATE TRIGGER games_fts_insert AFTER INSERT ON games BEGIN "
