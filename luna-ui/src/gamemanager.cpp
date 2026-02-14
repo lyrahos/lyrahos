@@ -536,15 +536,17 @@ void GameManager::installGame(int gameId) {
 
     // Build steamcmd arguments:
     // steamcmd runs headlessly — no GUI dialogs, no window management needed.
+    // Do NOT use +force_install_dir — it sets the exact dir for game files
+    // (no subdirectory), which breaks manifest paths. Instead, let SteamCMD
+    // install to its default location (steamcmd/steamapps/common/GameName/)
+    // and we symlink the result into Steam's library afterward.
     // +@sSteamCmdForcePlatformType linux  → ensure Linux depots
-    // +force_install_dir <path>           → install into Steam's library
     // +login <user>                       → use cached credentials
     // +app_update <appid> validate        → download & verify game files
     // +quit                               → exit when done
     QProcess *proc = new QProcess(this);
     QStringList args;
     args << "+@sSteamCmdForcePlatformType" << "linux"
-         << "+force_install_dir" << primarySteamApps + "/common"
          << "+login" << username
          << "+app_update" << game.appId << "validate"
          << "+quit";
@@ -571,58 +573,45 @@ void GameManager::installGame(int gameId) {
         // Check for the app manifest file — its existence is the real proof
         // that the game was downloaded successfully.
         //
-        // SteamCMD writes the manifest to its own steamapps/ directory,
-        // NOT the Steam client's. We need to check both locations and
-        // copy the manifest to the Steam client's directory so that
-        // "steam steam://rungameid/<appid>" can find the game.
+        // SteamCMD installs games to its own steamapps/ directory
+        // (e.g. ~/.steam/steamcmd/steamapps/common/GameName/).
+        // We need to:
+        //   1. Find the manifest in SteamCMD's steamapps
+        //   2. Read "installdir" to get the game folder name
+        //   3. Symlink the game folder into Steam's steamapps/common/
+        //   4. Copy the manifest to Steam's steamapps/
+        // This lets "steam steam://rungameid/<appid>" find the game.
         QString manifestName = "appmanifest_" + appId + ".acf";
-        QString clientManifest = primarySteamApps + "/" + manifestName;
-        bool manifestExists = QFile::exists(clientManifest);
 
-        // If not in Steam client's dir, look in SteamCMD's own steamapps/
+        // Search SteamCMD's steamapps directories for the manifest
+        QFileInfo cmdInfo(steamcmdBin);
+        QStringList searchDirs = {
+            cmdInfo.absolutePath() + "/steamapps",
+            QDir::homePath() + "/.steam/steamcmd/steamapps",
+        };
         QString steamcmdManifest;
-        if (!manifestExists) {
-            // SteamCMD's steamapps dir is relative to the steamcmd binary
-            QFileInfo cmdInfo(steamcmdBin);
-            QStringList searchDirs = {
-                cmdInfo.absolutePath() + "/steamapps",
-                QDir::homePath() + "/.steam/steamcmd/steamapps",
-                QDir::homePath() + "/.local/share/Steam/steamapps",
-            };
-            for (const QString& dir : searchDirs) {
-                QString path = dir + "/" + manifestName;
-                if (QFile::exists(path)) {
-                    steamcmdManifest = path;
-                    manifestExists = true;
-                    qDebug() << "Found manifest in SteamCMD dir:" << path;
-                    break;
-                }
+        QString steamcmdSteamApps;
+        for (const QString& dir : searchDirs) {
+            QString path = dir + "/" + manifestName;
+            if (QFile::exists(path)) {
+                steamcmdManifest = path;
+                steamcmdSteamApps = dir;
+                qDebug() << "Found manifest in SteamCMD dir:" << path;
+                break;
             }
         }
+
+        // Also check if it's already in Steam's dir (unlikely but possible)
+        QString clientManifest = primarySteamApps + "/" + manifestName;
+        bool manifestExists = QFile::exists(clientManifest) || !steamcmdManifest.isEmpty();
 
         if (manifestExists || (exitCode == 0 && status == QProcess::NormalExit)) {
             qDebug() << "SteamCMD finished for appId:" << appId
                      << "(exit code:" << exitCode << ", manifest:" << manifestExists << ")";
 
-            // If the manifest is in SteamCMD's dir but not the Steam client's,
-            // copy it so the Steam client recognizes the installed game.
-            QString manifestToRead = clientManifest;
-            if (!steamcmdManifest.isEmpty() && !QFile::exists(clientManifest)) {
-                if (QFile::copy(steamcmdManifest, clientManifest)) {
-                    qDebug() << "Copied manifest to Steam client dir:" << clientManifest;
-                    manifestToRead = clientManifest;
-                } else {
-                    qDebug() << "Warning: could not copy manifest to" << clientManifest;
-                    manifestToRead = steamcmdManifest;
-                }
-            }
-
-            // Update the database: mark as installed
-            Game game = m_db->getGameById(gameId);
-            game.isInstalled = true;
-            game.launchCommand = "steam steam://rungameid/" + appId;
-
-            // Read the install path from the manifest
+            // Read the install directory name from the manifest
+            QString manifestToRead = steamcmdManifest.isEmpty() ? clientManifest : steamcmdManifest;
+            QString installDir;
             QFile manifest(manifestToRead);
             if (manifest.open(QIODevice::ReadOnly)) {
                 QTextStream in(&manifest);
@@ -630,8 +619,44 @@ void GameManager::installGame(int gameId) {
                 QRegularExpression installDirRe("\"installdir\"\\s+\"([^\"]+)\"");
                 auto match = installDirRe.match(content);
                 if (match.hasMatch()) {
-                    game.installPath = primarySteamApps + "/common/" + match.captured(1);
+                    installDir = match.captured(1);
                 }
+            }
+
+            // If the game was installed by SteamCMD (not already in Steam's dir),
+            // symlink the game folder into Steam's library and copy the manifest.
+            if (!steamcmdManifest.isEmpty() && !installDir.isEmpty()) {
+                QString srcGameDir = steamcmdSteamApps + "/common/" + installDir;
+                QString dstGameDir = primarySteamApps + "/common/" + installDir;
+
+                // Create the common/ directory if it doesn't exist
+                QDir().mkpath(primarySteamApps + "/common");
+
+                // Symlink the game directory into Steam's library
+                if (QFile::exists(srcGameDir) && !QFile::exists(dstGameDir)) {
+                    if (QFile::link(srcGameDir, dstGameDir)) {
+                        qDebug() << "Symlinked game into Steam library:" << srcGameDir << "->" << dstGameDir;
+                    } else {
+                        qDebug() << "Warning: could not symlink" << srcGameDir << "to" << dstGameDir;
+                    }
+                }
+
+                // Copy the manifest to Steam's steamapps/
+                if (!QFile::exists(clientManifest)) {
+                    if (QFile::copy(steamcmdManifest, clientManifest)) {
+                        qDebug() << "Copied manifest to Steam client dir:" << clientManifest;
+                    } else {
+                        qDebug() << "Warning: could not copy manifest to" << clientManifest;
+                    }
+                }
+            }
+
+            // Update the database: mark as installed
+            Game game = m_db->getGameById(gameId);
+            game.isInstalled = true;
+            game.launchCommand = "steam steam://rungameid/" + appId;
+            if (!installDir.isEmpty()) {
+                game.installPath = primarySteamApps + "/common/" + installDir;
             }
 
             m_db->updateGame(game);
@@ -751,8 +776,21 @@ double GameManager::getDownloadProgress(const QString& appId) {
         return m_downloadProgressCache.value(appId);
     }
 
-    // Fall back to reading .acf manifest files
-    for (const QString& dir : getSteamAppsDirs()) {
+    // Fall back to reading .acf manifest files from Steam + SteamCMD dirs
+    QStringList progressDirs = getSteamAppsDirs();
+    // Also check SteamCMD's steamapps for downloads in progress
+    QString steamcmdBin = findSteamCmdBin();
+    if (!steamcmdBin.isEmpty()) {
+        QFileInfo cmdInfo(steamcmdBin);
+        QString cmdApps = cmdInfo.absolutePath() + "/steamapps";
+        if (QDir(cmdApps).exists() && !progressDirs.contains(cmdApps))
+            progressDirs.append(cmdApps);
+    }
+    QString localCmdApps = QDir::homePath() + "/.steam/steamcmd/steamapps";
+    if (QDir(localCmdApps).exists() && !progressDirs.contains(localCmdApps))
+        progressDirs.append(localCmdApps);
+
+    for (const QString& dir : progressDirs) {
         QString manifestPath = dir + "/appmanifest_" + appId + ".acf";
         QFile file(manifestPath);
         if (!file.open(QIODevice::ReadOnly)) continue;
