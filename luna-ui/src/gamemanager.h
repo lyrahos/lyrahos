@@ -90,6 +90,8 @@ private:
     void monitorGameProcess();
     void checkDownloadProgress();
     void handleSteamCmdOutput(const QString& appId, QProcess *proc);
+    void ensureSteamCmd(int gameId);
+    QString findSteamCmdBin() const;
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
     QString steamApiKeyPath() const;

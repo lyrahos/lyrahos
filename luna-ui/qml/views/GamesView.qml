@@ -753,7 +753,7 @@ Rectangle {
                                 Text {
                                     text: GameManager.isSteamCmdAvailable()
                                           ? "SteamCMD ready — games install in the background"
-                                          : "SteamCMD not found — install steamcmd to enable background downloads"
+                                          : "SteamCMD not found — it will be downloaded automatically when you install a game"
                                     font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textSecondary")

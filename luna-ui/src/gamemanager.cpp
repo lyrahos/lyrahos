@@ -410,8 +410,55 @@ QStringList GameManager::getSteamAppsDirs() const {
     return dirs;
 }
 
+QString GameManager::findSteamCmdBin() const {
+    // 1. Check PATH (system-installed via pacman/AUR)
+    QString inPath = QStandardPaths::findExecutable("steamcmd");
+    if (!inPath.isEmpty()) return inPath;
+
+    // 2. Check local download location (~/.steam/steamcmd/steamcmd.sh)
+    QString localBin = QDir::homePath() + "/.steam/steamcmd/steamcmd.sh";
+    if (QFile::exists(localBin)) return localBin;
+
+    return QString();
+}
+
 bool GameManager::isSteamCmdAvailable() {
-    return !QStandardPaths::findExecutable("steamcmd").isEmpty();
+    return !findSteamCmdBin().isEmpty();
+}
+
+void GameManager::ensureSteamCmd(int gameId) {
+    // Auto-download steamcmd from Valve's CDN if not found anywhere.
+    // This runs a short script that downloads and extracts the tarball
+    // into ~/.steam/steamcmd/, then retries the install.
+    QString destDir = QDir::homePath() + "/.steam/steamcmd";
+
+    QProcess *dlProc = new QProcess(this);
+    QString script = QString(
+        "mkdir -p '%1' && "
+        "cd '%1' && "
+        "curl -sqL 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz' | tar zxf - && "
+        "echo 'STEAMCMD_READY'"
+    ).arg(destDir);
+
+    connect(dlProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, dlProc, gameId, destDir](int exitCode, QProcess::ExitStatus) {
+        dlProc->deleteLater();
+
+        QString output = QString::fromUtf8(dlProc->readAllStandardOutput());
+        if (exitCode == 0 && output.contains("STEAMCMD_READY")) {
+            qDebug() << "SteamCMD auto-downloaded to" << destDir;
+            // Retry the install now that steamcmd is available
+            installGame(gameId);
+        } else {
+            QString err = QString::fromUtf8(dlProc->readAllStandardError()).trimmed();
+            Game game = m_db->getGameById(gameId);
+            emit installError(game.appId,
+                "Failed to download steamcmd: " + (err.isEmpty() ? "unknown error" : err));
+        }
+    });
+
+    dlProc->start("sh", QStringList() << "-c" << script);
+    qDebug() << "Auto-downloading steamcmd to" << destDir;
 }
 
 QString GameManager::getSteamUsername() {
@@ -455,10 +502,11 @@ void GameManager::installGame(int gameId) {
     // Already downloading?
     if (m_activeDownloads.contains(game.appId)) return;
 
-    // Check steamcmd availability
-    QString steamcmdBin = QStandardPaths::findExecutable("steamcmd");
+    // Find steamcmd (system PATH or local download)
+    QString steamcmdBin = findSteamCmdBin();
     if (steamcmdBin.isEmpty()) {
-        emit installError(game.appId, "steamcmd is not installed. Please install it to download games.");
+        // Auto-download from Valve's CDN, then retry
+        ensureSteamCmd(gameId);
         return;
     }
 
