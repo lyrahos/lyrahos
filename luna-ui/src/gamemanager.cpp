@@ -315,6 +315,47 @@ void GameManager::connectToWifi(const QString& ssid, const QString& password) {
     proc->start("nmcli", args);
 }
 
+QString GameManager::getConnectedWifi() {
+    QProcess proc;
+    // nmcli -t -f NAME connection show --active shows active connections
+    proc.start("nmcli", {"-t", "-f", "NAME,TYPE", "connection", "show", "--active"});
+    proc.waitForFinished(5000);
+
+    QString output = proc.readAllStandardOutput();
+    for (const QString& line : output.split('\n')) {
+        if (line.trimmed().isEmpty()) continue;
+        // Format: "ConnectionName:802-11-wireless"
+        int sep = line.lastIndexOf(':');
+        if (sep < 0) continue;
+        QString name = line.left(sep);
+        QString type = line.mid(sep + 1);
+        if (type.contains("wireless")) {
+            return name;
+        }
+    }
+    return QString();
+}
+
+void GameManager::disconnectWifi() {
+    QString ssid = getConnectedWifi();
+    if (ssid.isEmpty()) {
+        emit wifiDisconnectResult(false, "No Wi-Fi connection active");
+        return;
+    }
+
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        QString msg = success
+            ? "Disconnected"
+            : QString(proc->readAllStandardError()).trimmed();
+        emit wifiDisconnectResult(success, msg);
+        proc->deleteLater();
+    });
+    proc->start("nmcli", {"connection", "down", ssid});
+}
+
 // ── Steam API key management ──
 
 QString GameManager::steamApiKeyPath() const {
