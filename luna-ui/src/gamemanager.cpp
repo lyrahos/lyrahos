@@ -93,14 +93,18 @@ void GameManager::launchGame(int gameId) {
     // Get appropriate backend and launch
     StoreBackend* backend = getBackendForGame(game);
     if (backend) {
-        // FIX #7: Prepend gamemoderun to the launch command instead of calling it separately.
-        // GameMode optimizes CPU governor, I/O priority, etc. for the running game.
-        // The backend's launchGame handles the actual execution; for games that
-        // use a direct executable, wrap with gamemoderun in the launch command.
-        backend->launchGame(game);
-        emit gameLaunched(gameId);
-        // Start monitoring for game exit
-        m_processMonitor->start(1000);
+        bool launched = backend->launchGame(game);
+        if (launched) {
+            emit gameLaunched(gameId, game.title);
+            // Start monitoring for game exit
+            m_processMonitor->start(1000);
+        } else {
+            emit gameLaunchError(gameId, game.title,
+                "Failed to start the game. The executable may be missing or corrupted.");
+        }
+    } else {
+        emit gameLaunchError(gameId, game.title,
+            "No compatible launcher found for this game.");
     }
 }
 

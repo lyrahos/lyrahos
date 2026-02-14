@@ -67,7 +67,8 @@ public:
 
 signals:
     void gamesUpdated();
-    void gameLaunched(int gameId);
+    void gameLaunched(int gameId, QString gameTitle);
+    void gameLaunchError(int gameId, QString gameTitle, QString error);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
     void wifiConnectResult(bool success, const QString& message);
