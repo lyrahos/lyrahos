@@ -37,6 +37,7 @@ qt_add_qml_module(luna-ui
         qml/components/HeroSection.qml
         qml/components/SearchBar.qml
         qml/components/GameDetailView.qml
+        qml/components/SteamSetupWizard.qml
 )
 
 target_link_libraries(luna-ui PRIVATE
