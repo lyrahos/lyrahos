@@ -562,7 +562,7 @@ void GameManager::installGame(int gameId) {
 
     // Handle process completion
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, proc, appId = game.appId, gameId, primarySteamApps](int exitCode, QProcess::ExitStatus status) {
+            this, [this, proc, appId = game.appId, gameId, primarySteamApps, steamcmdBin](int exitCode, QProcess::ExitStatus status) {
         proc->deleteLater();
         m_steamCmdProcesses.remove(appId);
         m_downloadProgressCache.remove(appId);
@@ -570,12 +570,52 @@ void GameManager::installGame(int gameId) {
         // SteamCMD exit codes are unreliable (often exits 5 on success).
         // Check for the app manifest file — its existence is the real proof
         // that the game was downloaded successfully.
-        QString manifestPath = primarySteamApps + "/appmanifest_" + appId + ".acf";
-        bool manifestExists = QFile::exists(manifestPath);
+        //
+        // SteamCMD writes the manifest to its own steamapps/ directory,
+        // NOT the Steam client's. We need to check both locations and
+        // copy the manifest to the Steam client's directory so that
+        // "steam steam://rungameid/<appid>" can find the game.
+        QString manifestName = "appmanifest_" + appId + ".acf";
+        QString clientManifest = primarySteamApps + "/" + manifestName;
+        bool manifestExists = QFile::exists(clientManifest);
+
+        // If not in Steam client's dir, look in SteamCMD's own steamapps/
+        QString steamcmdManifest;
+        if (!manifestExists) {
+            // SteamCMD's steamapps dir is relative to the steamcmd binary
+            QFileInfo cmdInfo(steamcmdBin);
+            QStringList searchDirs = {
+                cmdInfo.absolutePath() + "/steamapps",
+                QDir::homePath() + "/.steam/steamcmd/steamapps",
+                QDir::homePath() + "/.local/share/Steam/steamapps",
+            };
+            for (const QString& dir : searchDirs) {
+                QString path = dir + "/" + manifestName;
+                if (QFile::exists(path)) {
+                    steamcmdManifest = path;
+                    manifestExists = true;
+                    qDebug() << "Found manifest in SteamCMD dir:" << path;
+                    break;
+                }
+            }
+        }
 
         if (manifestExists || (exitCode == 0 && status == QProcess::NormalExit)) {
             qDebug() << "SteamCMD finished for appId:" << appId
                      << "(exit code:" << exitCode << ", manifest:" << manifestExists << ")";
+
+            // If the manifest is in SteamCMD's dir but not the Steam client's,
+            // copy it so the Steam client recognizes the installed game.
+            QString manifestToRead = clientManifest;
+            if (!steamcmdManifest.isEmpty() && !QFile::exists(clientManifest)) {
+                if (QFile::copy(steamcmdManifest, clientManifest)) {
+                    qDebug() << "Copied manifest to Steam client dir:" << clientManifest;
+                    manifestToRead = clientManifest;
+                } else {
+                    qDebug() << "Warning: could not copy manifest to" << clientManifest;
+                    manifestToRead = steamcmdManifest;
+                }
+            }
 
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
@@ -583,7 +623,7 @@ void GameManager::installGame(int gameId) {
             game.launchCommand = "steam steam://rungameid/" + appId;
 
             // Read the install path from the manifest
-            QFile manifest(manifestPath);
+            QFile manifest(manifestToRead);
             if (manifest.open(QIODevice::ReadOnly)) {
                 QTextStream in(&manifest);
                 QString content = in.readAll();
@@ -847,6 +887,12 @@ void GameManager::openApiKeyInBrowser() {
     // Enable remote debugging so scrapeApiKeyFromPage() can read the DOM.
     m_apiKeyBrowserType = "";
     QVector<BrowserOption> browsers = {
+        {"brave",            {"--kiosk", "--no-first-run",
+                              "--window-size=" + geom, "--window-position=0,0",
+                              "--remote-debugging-port=9222", url}},
+        {"brave-browser",    {"--kiosk", "--no-first-run",
+                              "--window-size=" + geom, "--window-position=0,0",
+                              "--remote-debugging-port=9222", url}},
         {"chromium",         {"--kiosk", "--no-first-run",
                               "--window-size=" + geom, "--window-position=0,0",
                               "--remote-debugging-port=9222", url}},
