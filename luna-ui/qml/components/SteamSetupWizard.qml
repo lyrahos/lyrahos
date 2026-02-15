@@ -53,6 +53,14 @@ Rectangle {
         }
 
         function onSteamCmdSetupCredentialNeeded(promptType) {
+            // If we already sent the password and are showing "approve on
+            // phone", don't switch to the email-code screen.  SteamCMD
+            // always prints a "Steam Guard" / "Two-factor" line even when
+            // the mobile-app push flow is used.  Switching screens here
+            // confuses users who authenticated via the app (no email code).
+            if (promptType === "steamguard" && wizard.steamCmdAwaitingGuard) {
+                return
+            }
             wizard.steamCmdPromptType = promptType
             wizard.steamCmdWaiting = false
             wizard.steamCmdAwaitingGuard = false
@@ -90,6 +98,7 @@ Rectangle {
         steamCmdError = ""
         setupCredInput.text = ""
         manualKeyInput.text = ""
+        guardFallbackInput.text = ""
     }
 
     function open() {
@@ -1017,7 +1026,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Password sent. Open the Steam mobile app on your phone and approve the login request.\n\nIf you use email-based Steam Guard, wait for the code prompt below."
+                        text: "Password sent. Open the Steam mobile app on your phone and approve the login request."
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
@@ -1036,6 +1045,91 @@ Rectangle {
                             loops: Animation.Infinite
                             NumberAnimation { to: 0.4; duration: 1000 }
                             NumberAnimation { to: 1.0; duration: 1000 }
+                        }
+                    }
+
+                    // Email-based Steam Guard fallback
+                    Text {
+                        text: "Using email-based Steam Guard instead? Enter the code below:"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.topMargin: 6
+                    }
+
+                    RowLayout {
+                        spacing: 10
+                        Layout.fillWidth: true
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 44
+                            radius: 8
+                            color: ThemeManager.getColor("hover")
+                            border.color: guardFallbackInput.activeFocus
+                                          ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: guardFallbackInput.activeFocus ? 2 : 0
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                            TextInput {
+                                id: guardFallbackInput
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                verticalAlignment: TextInput.AlignVCenter
+                                font.pixelSize: ThemeManager.getFontSize("medium")
+                                font.family: "monospace"
+                                color: ThemeManager.getColor("textPrimary")
+                                clip: true
+                                onAccepted: {
+                                    if (text.length > 0) {
+                                        GameManager.provideSteamCmdSetupCredential(text)
+                                        text = ""
+                                        wizard.steamCmdAwaitingGuard = false
+                                        wizard.steamCmdWaiting = true
+                                    }
+                                }
+                            }
+
+                            Text {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                verticalAlignment: Text.AlignVCenter
+                                visible: guardFallbackInput.text === "" && !guardFallbackInput.activeFocus
+                                text: "Enter email code..."
+                                font.pixelSize: ThemeManager.getFontSize("medium")
+                                font.family: ThemeManager.getFont("body")
+                                color: ThemeManager.getColor("textSecondary")
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: submitFallbackLabel.width + 24
+                            Layout.preferredHeight: 44
+                            radius: 8
+                            color: ThemeManager.getColor("primary")
+
+                            Text {
+                                id: submitFallbackLabel
+                                anchors.centerIn: parent
+                                text: "Submit"
+                                font.pixelSize: ThemeManager.getFontSize("small")
+                                font.family: ThemeManager.getFont("body")
+                                font.bold: true
+                                color: "white"
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (guardFallbackInput.text.length > 0) {
+                                        GameManager.provideSteamCmdSetupCredential(guardFallbackInput.text)
+                                        guardFallbackInput.text = ""
+                                        wizard.steamCmdAwaitingGuard = false
+                                        wizard.steamCmdWaiting = true
+                                    }
+                                }
+                            }
                         }
                     }
                 }
