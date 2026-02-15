@@ -83,7 +83,7 @@ Game SteamBackend::parseAppManifest(const QString& manifestPath) {
         game.installPath = installMatch.captured(1);
     }
 
-    game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
+    game.launchCommand = "steam -silent steam://rungameid/" + game.appId;
     game.isInstalled = true;
 
     QString gridPath = QDir::homePath() + "/.local/share/Steam/appcache/librarycache/" + game.appId + "_library_600x900.jpg";
@@ -120,10 +120,9 @@ bool SteamBackend::launchGame(const Game& game) {
         return QProcess::startDetached("xdg-open", QStringList() << url);
     }
 
-    // Steam not running — launch it with suppression flags + the game URL
+    // Steam not running — launch it silently with the game URL
     return QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nofriendsui" << "-nochatui"
-        << url);
+        << "-silent" << url);
 }
 
 QString SteamBackend::getLoggedInSteamId() const {
@@ -210,7 +209,7 @@ QVector<Game> SteamBackend::parseOwnedGamesResponse(const QByteArray& jsonData) 
         game.playTimeHours = obj["playtime_forever"].toInt() / 60;
 
         if (game.isInstalled) {
-            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
+            game.launchCommand = "steam -silent steam://rungameid/" + game.appId;
         }
         // Uninstalled games have no launchCommand — installation is
         // handled by GameManager::installGame() via steamcmd.

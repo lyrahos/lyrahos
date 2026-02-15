@@ -82,7 +82,7 @@ void GameManager::launchGame(int gameId) {
     // Safety: if a stale steam://install/ command is in the database for a game
     // that's marked installed, fix it before launching.
     if (game.storeSource == "steam" && game.launchCommand.contains("steam://install/")) {
-        game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
+        game.launchCommand = "steam -silent steam://rungameid/" + game.appId;
         m_db->updateGame(game);
     }
 
@@ -211,14 +211,15 @@ void GameManager::ensureSteamRunning() {
     suppressSteamHardwareSurvey();
 
     qDebug() << "Pre-starting Steam silently in background...";
-    // Suppress Steam's overlay UI (the "Preparing to launch..." dialog)
-    // and hardware survey popups via environment variables.
+    // Suppress Steam's overlay drawing via environment variable.
     // NOTE: Do NOT set STEAM_NO_CEFHOST — it prevents Steam from fully
-    // initializing its network stack, causing "no internet" errors when
-    // launching games. Only suppress UI elements, not internals.
+    // initializing its network stack, causing "no internet" errors.
+    // NOTE: Do NOT use -nofriendsui/-nochatui — on modern Steam these
+    // prevent the client backend (CM connection) from fully initializing,
+    // causing "no internet" errors when launching games even though
+    // the web store (CEF) works fine.
     qputenv("SteamNoOverlayUIDrawing", "1");
-    QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nofriendsui" << "-nochatui");
+    QProcess::startDetached("steam", QStringList() << "-silent");
 }
 
 void GameManager::suppressSteamHardwareSurvey() {
@@ -831,7 +832,7 @@ void GameManager::installGame(int gameId) {
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
             game.isInstalled = true;
-            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + appId;
+            game.launchCommand = "steam -silent steam://rungameid/" + appId;
             if (!installDir.isEmpty()) {
                 game.installPath = primarySteamApps + "/common/" + installDir;
             }
@@ -1038,7 +1039,7 @@ void GameManager::checkDownloadProgress() {
                         Game game = m_db->getGameById(gameId);
                         if (!game.isInstalled) {
                             game.isInstalled = true;
-                            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + appId;
+                            game.launchCommand = "steam -silent steam://rungameid/" + appId;
                             m_db->updateGame(game);
                             emit downloadComplete(appId, gameId);
                             qDebug() << "ACF watcher: download complete:" << game.title;
