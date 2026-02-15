@@ -7,6 +7,7 @@
 %packages
 @kde-desktop-environment
 @development-tools
+qt6-qtwebengine
 gamescope
 steam
 heroic-games-launcher-bin    # FIX #32: Consistent package name with outline
