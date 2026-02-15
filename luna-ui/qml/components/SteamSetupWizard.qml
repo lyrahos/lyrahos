@@ -92,20 +92,27 @@ Rectangle {
 
     function open() {
         reset()
-        // If Steam is already available (logged in), skip to step 2
+        // Smart step skipping: jump to the first incomplete step.
+        // This prevents forcing the user through already-completed steps
+        // (e.g., re-entering an API key they already saved).
         if (GameManager.isSteamAvailable()) {
             // Start downloading SteamCMD in the background so it's ready
             // by the time the user reaches step 3.
             if (!GameManager.isSteamCmdAvailable()) {
                 GameManager.downloadSteamCmd()
             }
-            // If API key also already set, skip to step 3
-            if (GameManager.hasSteamApiKey()) {
+            if (GameManager.hasSteamApiKey() && GameManager.isSteamCmdAvailable()) {
+                // Everything is done — show the "done" step
+                currentStep = 4
+            } else if (GameManager.hasSteamApiKey()) {
+                // API key saved, just need SteamCMD
                 currentStep = 3
             } else {
+                // Need API key
                 currentStep = 2
             }
         }
+        // If Steam is not available (not logged in), stay at step 0
         visible = true
     }
 
@@ -443,7 +450,12 @@ Rectangle {
                                 // then restarts luna-ui. On restart, the wizard
                                 // should auto-advance to step 2 if Steam is available.
                                 // We save a flag so the wizard knows to reopen.
-                                GameManager.setSteamApiKey("__setup_pending__")
+                                // IMPORTANT: Only set the marker if no real key exists.
+                                // If the user already has an API key (re-running setup
+                                // for a different reason), don't overwrite it.
+                                if (!GameManager.hasSteamApiKey()) {
+                                    GameManager.setSteamApiKey("__setup_pending__")
+                                }
                                 GameManager.launchSteamLogin()
                             }
                         }
@@ -1370,11 +1382,11 @@ Rectangle {
             onTriggered: {
                 apiKeyWebView.runJavaScript(
                     "(function() {" +
-                    "  var els = document.querySelectorAll('#bodyContents_ex p, p, td, code, div');" +
-                    "  for (var i = 0; i < els.length; i++) {" +
-                    "    var text = els[i].textContent.trim();" +
-                    "    if (/^[A-F0-9]{32}$/.test(text)) return text;" +
-                    "  }" +
+                    "  var text = document.body.innerText || '';" +
+                    "  var m = text.match(/Key[:\\s]+([A-Fa-f0-9]{32})/);" +
+                    "  if (m) return m[1].toUpperCase();" +
+                    "  m = text.match(/([A-Fa-f0-9]{32})/);" +
+                    "  if (m) return m[1].toUpperCase();" +
                     "  return null;" +
                     "})()",
                     function(result) {

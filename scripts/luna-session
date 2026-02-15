@@ -134,11 +134,23 @@ while true; do
         [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
 
         # Suppress the hardware survey dialog before Steam starts.
-        # Write a future date into Steam's registry so it skips the prompt.
+        # Surgically inject survey keys into registry.vdf WITHOUT
+        # overwriting the entire file (which would destroy Steam's
+        # login state, cookies, and other settings).
         STEAM_REG="$HOME/.steam/registry.vdf"
         mkdir -p "$HOME/.steam"
         if ! grep -q "SurveyDateVersion" "$STEAM_REG" 2>/dev/null; then
-            cat > "$STEAM_REG" << 'REGEOF'
+            if [ -s "$STEAM_REG" ] && grep -q '"Steam"' "$STEAM_REG"; then
+                # File exists with a "Steam" section — inject survey keys
+                # right after the opening brace of the "Steam" block.
+                # VDF format: "Steam"\n{ — we add lines after the {.
+                sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
+\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
+\t\t\t\t\t"SurveyDateVersion"\t\t"999"
+}}' "$STEAM_REG"
+            else
+                # No existing file or no Steam section — safe to create
+                cat > "$STEAM_REG" << 'REGEOF'
 "Registry"
 {
 	"HKLM"
@@ -157,6 +169,7 @@ while true; do
 	}
 }
 REGEOF
+            fi
             echo "luna-inner: wrote hardware survey suppression to $STEAM_REG" >> "$LUNA_LOG"
         fi
 

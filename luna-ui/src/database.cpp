@@ -201,11 +201,24 @@ Game Database::getGameByStoreAndAppId(const QString& storeSource, const QString&
 int Database::addOrUpdateGame(const Game& game) {
     Game existing = getGameByStoreAndAppId(game.storeSource, game.appId);
     if (existing.id > 0) {
-        // Update existing game, but preserve user data (favorites, hidden, last_played)
+        // Update existing game, but preserve user data and install state.
+        // A library scan or API fetch may temporarily fail to see a game's
+        // manifest (e.g. Steam client restart cleaning up SteamCMD copies)
+        // — never downgrade isInstalled from true to false here.
+        // Uninstallation must be an explicit operation, not a scan side-effect.
         Game updated = game;
         updated.id = existing.id;
         updated.isFavorite = existing.isFavorite;
         updated.isHidden = existing.isHidden;
+        if (existing.isInstalled && !game.isInstalled) {
+            updated.isInstalled = true;
+        }
+        if (existing.isInstalled && !existing.installPath.isEmpty() && game.installPath.isEmpty()) {
+            updated.installPath = existing.installPath;
+        }
+        if (existing.isInstalled && !existing.launchCommand.isEmpty() && game.launchCommand.isEmpty()) {
+            updated.launchCommand = existing.launchCommand;
+        }
         if (existing.lastPlayed > 0) {
             updated.lastPlayed = existing.lastPlayed;
         }

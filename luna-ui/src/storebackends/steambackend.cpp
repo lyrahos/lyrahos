@@ -12,6 +12,52 @@
 #include <QSet>
 #include <QDebug>
 
+// Steam tools, runtimes, and redistributables that aren't actual games.
+// Filter these from the library so only playable games show up.
+static bool isSteamTool(const QString& appId, const QString& name) {
+    // Known non-game appIds (Proton versions, runtimes, redistributables)
+    static const QSet<QString> toolAppIds = {
+        "228980",   // Steamworks Common Redistributables
+        "1007",     // Steam Client
+        "1070560",  // Steam Linux Runtime
+        "1391110",  // Steam Linux Runtime - Soldier
+        "1628350",  // Steam Linux Runtime - Sniper
+        "1493710",  // Proton Experimental
+        "2180100",  // Proton Hotfix
+        "858280",   // Proton 3.7
+        "930400",   // Proton 3.16
+        "961940",   // Proton 4.2
+        "1054830",  // Proton 4.11
+        "1113280",  // Proton 5.0
+        "1245040",  // Proton 5.13
+        "1420170",  // Proton 6.3
+        "1580130",  // Proton 7.0
+        "2348590",  // Proton 8.0
+        "2805730",  // Proton 9.0
+        "1887720",  // Proton EasyAntiCheat Runtime
+        "1161040",  // Proton BattlEye Runtime
+        "250820",   // SteamVR
+        "1974050",  // Proton Next
+    };
+
+    if (toolAppIds.contains(appId))
+        return true;
+
+    // Name-based filtering for tools we might not know the appId of
+    // (e.g., future Proton versions)
+    QString lower = name.toLower();
+    if (lower.startsWith("proton ") || lower == "proton experimental")
+        return true;
+    if (lower.contains("steam linux runtime"))
+        return true;
+    if (lower.contains("steamworks common redistributable"))
+        return true;
+    if (lower == "steamvr")
+        return true;
+
+    return false;
+}
+
 bool SteamBackend::isAvailable() const {
     return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
 }
@@ -25,7 +71,7 @@ QVector<Game> SteamBackend::scanLibrary() {
         QStringList manifests = steamapps.entryList(QStringList() << "appmanifest_*.acf", QDir::Files);
         for (const QString& manifest : manifests) {
             Game game = parseAppManifest(steamapps.absoluteFilePath(manifest));
-            if (!game.title.isEmpty()) {
+            if (!game.title.isEmpty() && !isSteamTool(game.appId, game.title)) {
                 games.append(game);
             }
         }
@@ -54,6 +100,17 @@ QVector<QString> SteamBackend::getLibraryFolders() {
         auto match = matches.next();
         folders.append(match.captured(1));
     }
+
+    // Also include SteamCMD's data directory. SteamCMD installs games
+    // to ~/.steam/steamcmd/ which is NOT listed in libraryfolders.vdf.
+    // After relog, the Steam client may remove the symlinked manifests
+    // we copied into its library, making SteamCMD-installed games
+    // invisible. Including SteamCMD's path ensures they're always found.
+    QString steamCmdDir = QDir::homePath() + "/.steam/steamcmd";
+    if (QDir(steamCmdDir + "/steamapps").exists() && !folders.contains(steamCmdDir)) {
+        folders.append(steamCmdDir);
+    }
+
     return folders;
 }
 
@@ -417,9 +474,19 @@ QSet<QString> SteamBackend::getInstalledAppIds() const {
     QRegularExpression pathRe("\"path\"\\s+\"([^\"]+)\"");
     auto pathMatches = pathRe.globalMatch(vdfContent);
 
+    QVector<QString> folders;
     while (pathMatches.hasNext()) {
         auto pathMatch = pathMatches.next();
-        QString folder = pathMatch.captured(1);
+        folders.append(pathMatch.captured(1));
+    }
+
+    // Include SteamCMD's directory (not listed in libraryfolders.vdf)
+    QString steamCmdDir = QDir::homePath() + "/.steam/steamcmd";
+    if (QDir(steamCmdDir + "/steamapps").exists() && !folders.contains(steamCmdDir)) {
+        folders.append(steamCmdDir);
+    }
+
+    for (const QString& folder : folders) {
         QDir steamapps(folder + "/steamapps");
         QStringList manifests = steamapps.entryList(
             QStringList() << "appmanifest_*.acf", QDir::Files);
@@ -474,7 +541,7 @@ QVector<Game> SteamBackend::parseOwnedGamesResponse(const QByteArray& jsonData) 
             qDebug() << "[steam-artwork] api" << game.appId << game.title << "-> CDN fallback:" << game.coverArtUrl;
         }
 
-        if (!game.title.isEmpty()) {
+        if (!game.title.isEmpty() && !isSteamTool(game.appId, game.title)) {
             games.append(game);
         }
     }
