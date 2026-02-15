@@ -1,8 +1,10 @@
 #include "steambackend.h"
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -98,20 +100,105 @@ Game SteamBackend::parseAppManifest(const QString& manifestPath) {
     return game;
 }
 
-bool SteamBackend::launchGame(const Game& game) {
-    // Use xdg-open to send the steam:// protocol URL to the
-    // already-running Steam process. This avoids spawning a new
-    // steam process which would open UI windows (friends list,
-    // hardware survey, etc.) even with -silent flags.
-    // Steam must already be running (ensureSteamRunning() does this).
-    QString url = "steam://rungameid/" + game.appId;
+// ═══════════════════════════════════════════════════════════════════
+// Game launching — direct executable to bypass Steam's launch dialog
+// ═══════════════════════════════════════════════════════════════════
 
-    // Suppress Steam's "Preparing to launch..." overlay dialog.
-    // Luna UI shows its own loading circle instead.
+bool SteamBackend::launchGame(const Game& game) {
+    // Try to run the game executable directly, bypassing Steam's
+    // "Preparing to launch..." popup. Falls back to steam:// protocol
+    // if we can't find the executable.
+    QString gameDir = findGameDirectory(game.appId);
+    if (!gameDir.isEmpty()) {
+        QString steamRoot = QDir::homePath() + "/.local/share/Steam";
+
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("SteamAppId", game.appId);
+        env.insert("SteamGameId", game.appId);
+        env.insert("SteamNoOverlayUIDrawing", "1");
+        env.insert("STEAM_COMPAT_CLIENT_INSTALL_PATH", steamRoot);
+
+        if (isProtonGame(game.appId)) {
+            bool ok = launchProtonGame(game, gameDir, env);
+            if (ok) return true;
+        } else {
+            bool ok = launchNativeGame(game, gameDir, env);
+            if (ok) return true;
+        }
+    }
+
+    qDebug() << "[steam-launch] direct launch failed, falling back to steam:// protocol for" << game.appId;
+    return steamProtocolLaunch(game);
+}
+
+bool SteamBackend::launchNativeGame(const Game& game, const QString& gameDir,
+                                     QProcessEnvironment env) {
+    QString exe = findNativeExecutable(gameDir);
+    if (exe.isEmpty()) {
+        qDebug() << "[steam-launch] no native executable found in" << gameDir;
+        return false;
+    }
+
+    qDebug() << "[steam-launch] native direct launch:" << exe;
+
+    // Use Steam runtime if available (provides the libraries many games need)
+    QString runtimeRunner = QDir::homePath() +
+        "/.local/share/Steam/ubuntu12_32/steam-runtime/run.sh";
+
+    QProcess proc;
+    proc.setProcessEnvironment(env);
+    proc.setWorkingDirectory(gameDir);
+
+    if (QFile::exists(runtimeRunner)) {
+        proc.setProgram(runtimeRunner);
+        proc.setArguments(QStringList() << exe);
+    } else {
+        proc.setProgram(exe);
+    }
+
+    return proc.startDetached();
+}
+
+bool SteamBackend::launchProtonGame(const Game& game, const QString& gameDir,
+                                     QProcessEnvironment env) {
+    QString exe = findProtonExecutable(gameDir);
+    if (exe.isEmpty()) {
+        qDebug() << "[steam-launch] no .exe found in" << gameDir;
+        return false;
+    }
+
+    QString protonBin = findProtonBinary();
+    if (protonBin.isEmpty()) {
+        qDebug() << "[steam-launch] no Proton installation found";
+        return false;
+    }
+
+    // Find the compatdata path for this game's Wine prefix
+    QString compatData = findCompatDataPath(game.appId);
+    if (compatData.isEmpty()) {
+        qDebug() << "[steam-launch] no compatdata for" << game.appId;
+        return false;
+    }
+
+    qDebug() << "[steam-launch] proton direct launch:" << protonBin << "run" << exe;
+
+    env.insert("STEAM_COMPAT_DATA_PATH", compatData);
+
+    QProcess proc;
+    proc.setProcessEnvironment(env);
+    proc.setWorkingDirectory(gameDir);
+    proc.setProgram(protonBin);
+    proc.setArguments(QStringList() << "run" << exe);
+
+    return proc.startDetached();
+}
+
+bool SteamBackend::steamProtocolLaunch(const Game& game) {
+    // Fallback: use steam:// protocol (shows the "Preparing to launch" popup
+    // but works for all games regardless of launch configuration complexity)
+    QString url = "steam://rungameid/" + game.appId;
     qputenv("SteamNoOverlayUIDrawing", "1");
 
-    // Check if Steam is running — if so, use xdg-open for a clean
-    // protocol-only handoff with no extra windows.
     QProcess pgrep;
     pgrep.start("pgrep", QStringList() << "-x" << "steam");
     pgrep.waitForFinished(2000);
@@ -120,10 +207,169 @@ bool SteamBackend::launchGame(const Game& game) {
         return QProcess::startDetached("xdg-open", QStringList() << url);
     }
 
-    // Steam not running — launch it silently with the game URL
     return QProcess::startDetached("steam", QStringList()
         << "-silent" << url);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Helpers for finding game executables and directories
+// ═══════════════════════════════════════════════════════════════════
+
+QString SteamBackend::findGameDirectory(const QString& appId) {
+    // Search all library folders for this game's manifest, then resolve
+    // the install directory from it. More robust than using the stored
+    // installPath since it always reads the live manifest.
+    QVector<QString> folders = getLibraryFolders();
+    for (const QString& folder : folders) {
+        QString manifestPath = folder + "/steamapps/appmanifest_" + appId + ".acf";
+        if (!QFile::exists(manifestPath)) continue;
+
+        QFile file(manifestPath);
+        if (!file.open(QIODevice::ReadOnly)) continue;
+
+        QTextStream in(&file);
+        QString content = in.readAll();
+
+        QRegularExpression installRe("\"installdir\"\\s+\"([^\"]+)\"");
+        auto match = installRe.match(content);
+        if (match.hasMatch()) {
+            QString dir = folder + "/steamapps/common/" + match.captured(1);
+            if (QDir(dir).exists()) return dir;
+        }
+    }
+    return QString();
+}
+
+bool SteamBackend::isProtonGame(const QString& appId) {
+    QVector<QString> folders = getLibraryFolders();
+    for (const QString& folder : folders) {
+        if (QDir(folder + "/steamapps/compatdata/" + appId).exists())
+            return true;
+    }
+    return false;
+}
+
+QString SteamBackend::findNativeExecutable(const QString& gameDir) {
+    QDir dir(gameDir);
+
+    // 1. Prefer known launch script names
+    static const QStringList preferredScripts = {
+        "start_game.sh", "run.sh", "start.sh", "launch.sh", "game.sh"
+    };
+    for (const QString& name : preferredScripts) {
+        QString path = dir.absoluteFilePath(name);
+        if (QFile::exists(path)) return path;
+    }
+
+    // 2. Any .sh script in root
+    QStringList shFiles = dir.entryList(QStringList() << "*.sh",
+        QDir::Files | QDir::Executable);
+    if (!shFiles.isEmpty()) {
+        return dir.absoluteFilePath(shFiles.first());
+    }
+
+    // 3. Look for ELF binaries in root (skip shared libs)
+    QStringList allFiles = dir.entryList(QDir::Files | QDir::Executable);
+    for (const QString& file : allFiles) {
+        if (file.endsWith(".so") || file.endsWith(".sh") ||
+            file.startsWith("lib") || file.contains(".so."))
+            continue;
+
+        QString fullPath = dir.absoluteFilePath(file);
+        QFile f(fullPath);
+        if (f.open(QIODevice::ReadOnly)) {
+            QByteArray magic = f.read(4);
+            if (magic.size() >= 4 &&
+                magic[0] == 0x7f && magic[1] == 'E' &&
+                magic[2] == 'L' && magic[3] == 'F') {
+                return fullPath;
+            }
+        }
+    }
+
+    // 4. Check bin/ subdirectory
+    QDir binDir(gameDir + "/bin");
+    if (binDir.exists()) {
+        QStringList binFiles = binDir.entryList(QDir::Files | QDir::Executable);
+        for (const QString& file : binFiles) {
+            if (file.endsWith(".so") || file.startsWith("lib")) continue;
+            QString fullPath = binDir.absoluteFilePath(file);
+            QFile f(fullPath);
+            if (f.open(QIODevice::ReadOnly)) {
+                QByteArray magic = f.read(4);
+                if (magic.size() >= 4 &&
+                    magic[0] == 0x7f && magic[1] == 'E' &&
+                    magic[2] == 'L' && magic[3] == 'F') {
+                    return fullPath;
+                }
+            }
+        }
+    }
+
+    return QString();
+}
+
+QString SteamBackend::findProtonExecutable(const QString& gameDir) {
+    QDir dir(gameDir);
+    QStringList exeFiles = dir.entryList(QStringList() << "*.exe",
+        QDir::Files, QDir::Size | QDir::Reversed);
+
+    // Skip known non-game executables
+    static const QStringList skipExes = {
+        "UnityCrashHandler64.exe", "UnityCrashHandler32.exe",
+        "CrashReportClient.exe", "CrashHandler.exe",
+        "unins000.exe", "Uninstall.exe",
+        "dxsetup.exe", "DXSETUP.exe", "vcredist_x64.exe", "vcredist_x86.exe"
+    };
+
+    // Return the largest non-skipped exe (main game binary is usually biggest)
+    for (const QString& exe : exeFiles) {
+        bool skip = false;
+        for (const QString& s : skipExes) {
+            if (exe.compare(s, Qt::CaseInsensitive) == 0) { skip = true; break; }
+        }
+        if (!skip) return dir.absoluteFilePath(exe);
+    }
+
+    return QString();
+}
+
+QString SteamBackend::findProtonBinary() {
+    QVector<QString> folders = getLibraryFolders();
+
+    for (const QString& folder : folders) {
+        QString commonDir = folder + "/steamapps/common";
+        QDir common(commonDir);
+
+        // Prefer Proton Experimental (most commonly used)
+        QString experimental = commonDir + "/Proton - Experimental/proton";
+        if (QFile::exists(experimental)) return experimental;
+
+        // Fall back to numbered versions (highest first)
+        QStringList protonDirs = common.entryList(
+            QStringList() << "Proton *", QDir::Dirs,
+            QDir::Name | QDir::Reversed);
+
+        for (const QString& d : protonDirs) {
+            QString protonScript = commonDir + "/" + d + "/proton";
+            if (QFile::exists(protonScript)) return protonScript;
+        }
+    }
+    return QString();
+}
+
+QString SteamBackend::findCompatDataPath(const QString& appId) {
+    QVector<QString> folders = getLibraryFolders();
+    for (const QString& folder : folders) {
+        QString path = folder + "/steamapps/compatdata/" + appId;
+        if (QDir(path).exists()) return path;
+    }
+    return QString();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Utility methods
+// ═══════════════════════════════════════════════════════════════════
 
 QString SteamBackend::getLoggedInSteamId() const {
     QString loginUsersPath = QDir::homePath() + "/.local/share/Steam/config/loginusers.vdf";
