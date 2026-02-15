@@ -27,6 +27,7 @@ Rectangle {
     property string steamCmdPromptType: ""  // "password" or "steamguard"
     property bool steamCmdWaiting: false
     property bool steamCmdAwaitingGuard: false  // true after password submitted, before guard prompt
+    property bool steamCmdVerifyingGuard: false // true after guard code submitted, waiting for result
     property string steamCmdError: ""
 
     // Click blocker
@@ -56,6 +57,7 @@ Rectangle {
             wizard.steamCmdPromptType = promptType
             wizard.steamCmdWaiting = false
             wizard.steamCmdAwaitingGuard = false
+            wizard.steamCmdVerifyingGuard = false
             wizard.steamCmdError = ""
             setupCredInput.text = ""
             if (promptType === "password") {
@@ -66,6 +68,7 @@ Rectangle {
         function onSteamCmdSetupLoginSuccess() {
             wizard.steamCmdWaiting = false
             wizard.steamCmdAwaitingGuard = false
+            wizard.steamCmdVerifyingGuard = false
             wizard.steamCmdError = ""
             wizard.currentStep = 4
             GameManager.scanAllStores()
@@ -75,6 +78,7 @@ Rectangle {
         function onSteamCmdSetupLoginError(error) {
             wizard.steamCmdWaiting = false
             wizard.steamCmdAwaitingGuard = false
+            wizard.steamCmdVerifyingGuard = false
             wizard.steamCmdError = error
         }
     }
@@ -887,14 +891,30 @@ Rectangle {
 
                 // Waiting spinner text (only shown before password prompt, not after)
                 Text {
-                    visible: wizard.steamCmdWaiting && wizard.steamCmdPromptType === "" && !wizard.steamCmdAwaitingGuard
+                    visible: wizard.steamCmdWaiting && wizard.steamCmdPromptType === "" && !wizard.steamCmdAwaitingGuard && !wizard.steamCmdVerifyingGuard
                     text: "Starting SteamCMD..."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
                     color: ThemeManager.getColor("primary")
 
                     SequentialAnimation on opacity {
-                        running: wizard.steamCmdWaiting
+                        running: wizard.steamCmdWaiting && !wizard.steamCmdVerifyingGuard
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.4; duration: 800 }
+                        NumberAnimation { to: 1.0; duration: 800 }
+                    }
+                }
+
+                // Post-guard-code: logging in message
+                Text {
+                    visible: wizard.steamCmdVerifyingGuard
+                    text: "Logging in..."
+                    font.pixelSize: ThemeManager.getFontSize("medium")
+                    font.family: ThemeManager.getFont("body")
+                    color: ThemeManager.getColor("primary")
+
+                    SequentialAnimation on opacity {
+                        running: wizard.steamCmdVerifyingGuard
                         loops: Animation.Infinite
                         NumberAnimation { to: 0.4; duration: 800 }
                         NumberAnimation { to: 1.0; duration: 800 }
@@ -1057,7 +1077,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "SteamCMD needs a code to finish logging in.\n\nSteam Mobile App: open the app and look for the 6-digit code in the Steam Guard section.\n\nEmail-based Steam Guard: check your email for the code from Steam."
+                        text: "SteamCMD needs a code to finish logging in.\n\nSteam Mobile App: open the app and look for the 5-character code in the Steam Guard section.\n\nEmail-based Steam Guard: check your email for the 5-character code from Steam."
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
@@ -1095,6 +1115,7 @@ Rectangle {
                                         text = ""
                                         wizard.steamCmdPromptType = ""
                                         wizard.steamCmdWaiting = true
+                                        wizard.steamCmdVerifyingGuard = true
                                     }
                                 }
                             }
@@ -1136,6 +1157,7 @@ Rectangle {
                                         guardCodeInput.text = ""
                                         wizard.steamCmdPromptType = ""
                                         wizard.steamCmdWaiting = true
+                                        wizard.steamCmdVerifyingGuard = true
                                     }
                                 }
                             }
