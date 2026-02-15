@@ -66,6 +66,8 @@ Rectangle {
             wizard.steamCmdAwaitingGuard = false
             wizard.steamCmdError = ""
             wizard.currentStep = 4
+            GameManager.scanAllStores()
+            GameManager.fetchSteamOwnedGames()
         }
 
         function onSteamCmdSetupLoginError(error) {
