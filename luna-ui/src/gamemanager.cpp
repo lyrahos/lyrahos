@@ -223,45 +223,86 @@ void GameManager::ensureSteamRunning() {
 }
 
 void GameManager::suppressSteamHardwareSurvey() {
-    // Write a future SurveyDate and high SurveyDateVersion to Steam's
+    // Inject a future SurveyDate and high SurveyDateVersion into Steam's
     // registry.vdf so the hardware survey dialog never appears.
     // Steam checks this file on startup; if the date is in the future,
     // it skips the survey prompt entirely.
+    //
+    // IMPORTANT: We must modify the existing file, NOT truncate it.
+    // After the user logs into Steam (step 1), Steam writes a full
+    // registry.vdf with hundreds of settings. Truncating it would
+    // destroy all of Steam's state and ironically trigger the survey.
     QString registryPath = QDir::homePath() + "/.steam/registry.vdf";
 
-    // If the file already contains our marker, skip
-    QFile checkFile(registryPath);
-    if (checkFile.open(QIODevice::ReadOnly)) {
-        QString content = QString::fromUtf8(checkFile.readAll());
-        if (content.contains("\"SurveyDateVersion\"")) {
-            return;  // Already suppressed
+    QDir().mkpath(QDir::homePath() + "/.steam");
+    QString content;
+
+    QFile readFile(registryPath);
+    if (readFile.open(QIODevice::ReadOnly)) {
+        content = QString::fromUtf8(readFile.readAll());
+        readFile.close();
+    }
+
+    // If the file already has our suppression values, nothing to do
+    if (content.contains("\"SurveyDate\"\t\t\"2030-01-01\"") &&
+        content.contains("\"SurveyDateVersion\"")) {
+        return;
+    }
+
+    if (content.isEmpty()) {
+        // No registry.vdf yet — write a minimal one (pre-first-login)
+        content =
+            "\"Registry\"\n"
+            "{\n"
+            "\t\"HKLM\"\n"
+            "\t{\n"
+            "\t\t\"Software\"\n"
+            "\t\t{\n"
+            "\t\t\t\"Valve\"\n"
+            "\t\t\t{\n"
+            "\t\t\t\t\"Steam\"\n"
+            "\t\t\t\t{\n"
+            "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+            "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
+            "\t\t\t\t}\n"
+            "\t\t\t}\n"
+            "\t\t}\n"
+            "\t}\n"
+            "}\n";
+    } else {
+        // Existing file — update or inject entries without destroying it.
+        // Replace existing SurveyDate value if present
+        QRegularExpression dateRe("\"SurveyDate\"\\s+\"[^\"]*\"");
+        if (content.contains(dateRe)) {
+            content.replace(dateRe, "\"SurveyDate\"\t\t\"2030-01-01\"");
+        }
+
+        QRegularExpression verRe("\"SurveyDateVersion\"\\s+\"[^\"]*\"");
+        if (content.contains(verRe)) {
+            content.replace(verRe, "\"SurveyDateVersion\"\t\t\"999\"");
+        }
+
+        // If neither entry exists, inject them into the HKLM/Software/Valve/Steam block.
+        // Find the "Steam" section under HKLM by looking for the pattern.
+        if (!content.contains("\"SurveyDate\"")) {
+            // Look for "Steam" block opening brace under Valve
+            QRegularExpression steamBlockRe(
+                "(\"Steam\"\\s*\\n\\s*\\{\\s*\\n)");
+            auto match = steamBlockRe.match(content);
+            if (match.hasMatch()) {
+                int insertPos = match.capturedEnd();
+                QString entries =
+                    "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+                    "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n";
+                content.insert(insertPos, entries);
+            }
         }
     }
 
-    // Write the full registry file with survey suppression
-    // This is a minimal registry.vdf that Steam merges with its own data.
-    QDir().mkpath(QDir::homePath() + "/.steam");
-    QFile file(registryPath);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QTextStream out(&file);
-        out << "\"Registry\"\n"
-            << "{\n"
-            << "\t\"HKLM\"\n"
-            << "\t{\n"
-            << "\t\t\"Software\"\n"
-            << "\t\t{\n"
-            << "\t\t\t\"Valve\"\n"
-            << "\t\t\t{\n"
-            << "\t\t\t\t\"Steam\"\n"
-            << "\t\t\t\t{\n"
-            << "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
-            << "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
-            << "\t\t\t\t}\n"
-            << "\t\t\t}\n"
-            << "\t\t}\n"
-            << "\t}\n"
-            << "}\n";
-        qDebug() << "Wrote hardware survey suppression to" << registryPath;
+    QFile writeFile(registryPath);
+    if (writeFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        writeFile.write(content.toUtf8());
+        qDebug() << "Updated hardware survey suppression in" << registryPath;
     }
 }
 
