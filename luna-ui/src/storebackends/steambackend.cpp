@@ -106,6 +106,10 @@ bool SteamBackend::launchGame(const Game& game) {
     // Steam must already be running (ensureSteamRunning() does this).
     QString url = "steam://rungameid/" + game.appId;
 
+    // Suppress Steam's "Preparing to launch..." overlay dialog.
+    // Luna UI shows its own loading circle instead.
+    qputenv("SteamNoOverlayUIDrawing", "1");
+
     // Check if Steam is running — if so, use xdg-open for a clean
     // protocol-only handoff with no extra windows.
     QProcess pgrep;

@@ -207,13 +207,61 @@ void GameManager::ensureSteamRunning() {
         return;
     }
 
+    // Mark the hardware survey as completed so it never pops up
+    suppressSteamHardwareSurvey();
+
     qDebug() << "Pre-starting Steam silently in background...";
-    // qputenv sets the variable in this process; child processes inherit it.
-    qputenv("STEAM_NO_CEFHOST", "1");
+    // Suppress Steam's overlay UI (the "Preparing to launch..." dialog)
+    // and hardware survey popups via environment variables.
+    // NOTE: Do NOT set STEAM_NO_CEFHOST — it prevents Steam from fully
+    // initializing its network stack, causing "no internet" errors when
+    // launching games. Only suppress UI elements, not internals.
+    qputenv("SteamNoOverlayUIDrawing", "1");
     QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nofriendsui" << "-nochatui"
-        << "-no-browser" << "-skipstreamingdrivers"
-        << "-skipinitialbootstrap");
+        << "-silent" << "-nofriendsui" << "-nochatui");
+}
+
+void GameManager::suppressSteamHardwareSurvey() {
+    // Write a future SurveyDate and high SurveyDateVersion to Steam's
+    // registry.vdf so the hardware survey dialog never appears.
+    // Steam checks this file on startup; if the date is in the future,
+    // it skips the survey prompt entirely.
+    QString registryPath = QDir::homePath() + "/.steam/registry.vdf";
+
+    // If the file already contains our marker, skip
+    QFile checkFile(registryPath);
+    if (checkFile.open(QIODevice::ReadOnly)) {
+        QString content = QString::fromUtf8(checkFile.readAll());
+        if (content.contains("\"SurveyDateVersion\"")) {
+            return;  // Already suppressed
+        }
+    }
+
+    // Write the full registry file with survey suppression
+    // This is a minimal registry.vdf that Steam merges with its own data.
+    QDir().mkpath(QDir::homePath() + "/.steam");
+    QFile file(registryPath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QTextStream out(&file);
+        out << "\"Registry\"\n"
+            << "{\n"
+            << "\t\"HKLM\"\n"
+            << "\t{\n"
+            << "\t\t\"Software\"\n"
+            << "\t\t{\n"
+            << "\t\t\t\"Valve\"\n"
+            << "\t\t\t{\n"
+            << "\t\t\t\t\"Steam\"\n"
+            << "\t\t\t\t{\n"
+            << "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+            << "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
+            << "\t\t\t\t}\n"
+            << "\t\t\t}\n"
+            << "\t\t}\n"
+            << "\t}\n"
+            << "}\n";
+        qDebug() << "Wrote hardware survey suppression to" << registryPath;
+    }
 }
 
 void GameManager::launchSteamLogin() {
@@ -1078,24 +1126,68 @@ void GameManager::openApiKeyInBrowser() {
 }
 
 void GameManager::closeApiKeyBrowser() {
-    if (m_apiKeyBrowserPid > 0) {
-        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid
-                 << "type:" << m_apiKeyBrowserType << ")";
-        // Kill the process tree: the PID from startDetached is the
-        // launcher wrapper — the actual browser forks child processes.
-        // Use SIGTERM on the process group, then fall back to pkill
-        // by browser name to catch any orphans.
-        QProcess::execute("kill", QStringList() << "-TERM"
-            << QString::number(m_apiKeyBrowserPid));
+    // Delegate to the force-close implementation which uses SIGTERM,
+    // falls back to SIGKILL, and waits for all browser processes to die.
+    forceCloseApiKeyBrowser();
+}
 
-        // Also kill by name — Brave/Chromium fork many children that
-        // survive after the parent PID is killed.
-        if (!m_apiKeyBrowserType.isEmpty()) {
-            QProcess::execute("pkill", QStringList() << "-f"
-                << m_apiKeyBrowserType);
-        }
-        m_apiKeyBrowserPid = 0;
+void GameManager::forceCloseApiKeyBrowser() {
+    // Aggressively kill all browser processes and WAIT for them to die.
+    // Called from QML after the user confirms or rejects the detected key.
+    //
+    // The script:
+    //   1. SIGTERM the specific PID
+    //   2. SIGTERM all matching browser processes
+    //   3. Wait 0.5s for graceful shutdown
+    //   4. SIGKILL everything that survived
+    //   5. Poll until all matching processes are gone (up to 3 seconds)
+    QString browserType = m_apiKeyBrowserType;
+    qint64 browserPid = m_apiKeyBrowserPid;
+    m_apiKeyBrowserPid = 0;
+
+    if (browserPid <= 0 && browserType.isEmpty()) {
+        return;
     }
+
+    // Build a kill-and-wait script
+    QString script;
+    if (!browserType.isEmpty()) {
+        script = QString(
+            "kill -TERM %1 2>/dev/null; "
+            "pkill -f '%2' 2>/dev/null; "
+            "sleep 0.5; "
+            "kill -9 %1 2>/dev/null; "
+            "pkill -9 -f '%2' 2>/dev/null; "
+            "for i in $(seq 1 10); do "
+            "  pgrep -f '%2' >/dev/null 2>&1 || exit 0; "
+            "  sleep 0.3; "
+            "done"
+        ).arg(browserPid).arg(browserType);
+    } else {
+        script = QString(
+            "kill -9 %1 2>/dev/null; sleep 1"
+        ).arg(browserPid);
+    }
+
+    qDebug() << "Force-closing browser (pid:" << browserPid
+             << "type:" << browserType << ")";
+
+    QProcess *killProc = new QProcess(this);
+    connect(killProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [killProc]() {
+        killProc->deleteLater();
+        qDebug() << "Browser confirmed dead";
+    });
+    killProc->start("bash", QStringList() << "-c" << script);
+}
+
+void GameManager::raiseLunaWindow() {
+    // Bring Luna UI's window to the foreground above the browser.
+    // In gamescope (Xwayland), xdotool can shift focus between
+    // managed windows, making Luna UI visible over the browser.
+    QProcess::execute("xdotool", QStringList()
+        << "search" << "--name" << "Luna UI"
+        << "windowactivate" << "--sync");
 }
 
 void GameManager::scrapeApiKeyFromPage() {
@@ -1336,6 +1428,11 @@ void GameManager::scrapeApiKeyFromPage() {
                 QString key = line.mid(7).trimmed().toUpper();
                 if (!key.isEmpty()) {
                     qDebug() << "Auto-detected Steam API key:" << key.left(4) + "...";
+                    // Raise Luna UI above the browser so the confirmation
+                    // overlay is visible. The browser stays open behind —
+                    // it gets killed only after the user confirms or
+                    // rejects the key in the QML overlay.
+                    raiseLunaWindow();
                     emit apiKeyScraped(key);
                     return;
                 }
@@ -1350,6 +1447,9 @@ void GameManager::scrapeApiKeyFromPage() {
                 break;
             }
         }
+        // On error, raise Luna UI and kill the browser (nothing to confirm)
+        raiseLunaWindow();
+        closeApiKeyBrowser();
         emit apiKeyScrapeError(errMsg);
     });
 

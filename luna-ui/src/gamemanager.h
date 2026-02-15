@@ -128,6 +128,9 @@ private:
     QVariantList gamesToVariantList(const QVector<Game>& games);
     QString steamApiKeyPath() const;
     QStringList getSteamAppsDirs() const;
+    void suppressSteamHardwareSurvey();
+    void forceCloseApiKeyBrowser();
+    void raiseLunaWindow();
 };
 
 #endif

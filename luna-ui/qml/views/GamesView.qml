@@ -1616,8 +1616,14 @@ Rectangle {
         }
 
         function onGameLaunched(gameId, gameTitle) {
-            // No overlay on successful launch — let the game start
-            // silently without showing a popup over the UI.
+            // Show Luna's loading circle while the game starts.
+            // This replaces Steam's "Preparing to launch..." dialog
+            // (suppressed via SteamNoOverlayUIDrawing env var).
+            launchOverlay.gameTitle = gameTitle
+            launchOverlay.isError = false
+            launchOverlay.errorMessage = ""
+            launchOverlay.visible = true
+            launchDismissTimer.start()
         }
 
         function onGameLaunchError(gameId, gameTitle, error) {
