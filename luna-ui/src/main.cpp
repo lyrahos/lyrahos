@@ -2,6 +2,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTimer>
+#include <QtWebEngineQuick>
 #include "thememanager.h"
 #include "gamemanager.h"
 #include "database.h"
@@ -9,6 +10,9 @@
 #include "artworkmanager.h"
 
 int main(int argc, char *argv[]) {
+    // Must be called before QGuiApplication for WebEngineView to work
+    QtWebEngineQuick::initialize();
+
     QGuiApplication app(argc, argv);
     app.setApplicationName("Luna UI");
     app.setOrganizationName("Lyrah OS");

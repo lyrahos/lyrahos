@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtWebEngine
 
 // Full-screen modal wizard for first-time Steam setup.
 // Step 1: Intro explaining the multi-login process
@@ -35,15 +36,12 @@ Rectangle {
     Connections {
         target: GameManager
 
+        // Legacy signal handlers (kept for compatibility but no longer
+        // used — the embedded WebEngineView handles API key detection
+        // directly via JavaScript polling).
         function onApiKeyScraped(key) {
             wizard.apiKeyScraping = false
-            wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
-            // The browser is already confirmed dead by the time this signal
-            // fires (gamemanager.cpp kills it and waits before emitting).
-            // Show the confirmation overlay immediately — Luna UI is
-            // guaranteed to be the foreground window at this point.
-            wizard.apiKeyBrowserOpen = false
             apiKeyConfirmOverlay.overlayKey = key
             apiKeyConfirmOverlay.visible = true
         }
@@ -51,8 +49,6 @@ Rectangle {
         function onApiKeyScrapeError(error) {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = error
-            // Browser is already dead (killed by C++ before emitting).
-            wizard.apiKeyBrowserOpen = false
             wizard.showManualInput = true
         }
 
@@ -472,7 +468,8 @@ Rectangle {
                 }
 
                 Text {
-                    text: "Luna needs a free Steam API key to detect all your games (including uninstalled ones).\n\nA browser will open to the Steam API key page. Once the page loads and shows your key, Luna will read it automatically and close the browser."
+                    visible: !wizard.apiKeyBrowserOpen && wizard.detectedApiKey === "" && !wizard.showManualInput
+                    text: "Luna needs a free Steam API key to detect all your games (including uninstalled ones).\n\nClick below to open the Steam API key page. You may need to log in to Steam first. Once the page shows your key, Luna will detect it automatically."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
                     color: ThemeManager.getColor("textSecondary")
@@ -480,9 +477,9 @@ Rectangle {
                     Layout.fillWidth: true
                 }
 
-                // "Open Browser" button — only shown before scraping starts
+                // "Get API Key" button — opens the embedded browser
                 Rectangle {
-                    visible: !wizard.apiKeyScraping && wizard.detectedApiKey === "" && !wizard.showManualInput
+                    visible: !wizard.apiKeyBrowserOpen && wizard.detectedApiKey === "" && !wizard.showManualInput
                     Layout.preferredWidth: openBrowserLabel.width + 40
                     Layout.preferredHeight: 44
                     radius: 8
@@ -491,7 +488,7 @@ Rectangle {
                     Text {
                         id: openBrowserLabel
                         anchors.centerIn: parent
-                        text: "Open Browser"
+                        text: "Get API Key"
                         font.pixelSize: ThemeManager.getFontSize("medium")
                         font.family: ThemeManager.getFont("body")
                         font.bold: true
@@ -502,40 +499,9 @@ Rectangle {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            GameManager.openApiKeyInBrowser()
                             wizard.apiKeyBrowserOpen = true
-                            wizard.apiKeyScraping = true
-                            wizard.apiKeyScrapeErrorMsg = ""
-                            GameManager.scrapeApiKeyFromPage()
+                            apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
                         }
-                    }
-                }
-
-                // ── Auto-detection in progress ──
-                ColumnLayout {
-                    visible: wizard.apiKeyScraping
-                    spacing: 8
-                    Layout.fillWidth: true
-
-                    Text {
-                        text: "Searching for your API key..."
-                        font.pixelSize: ThemeManager.getFontSize("medium")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("primary")
-
-                        SequentialAnimation on opacity {
-                            running: wizard.apiKeyScraping
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.4; duration: 800 }
-                            NumberAnimation { to: 1.0; duration: 800 }
-                        }
-                    }
-
-                    Text {
-                        text: "Looking for your API key on the page..."
-                        font.pixelSize: ThemeManager.getFontSize("small")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
                     }
                 }
 
@@ -618,7 +584,8 @@ Rectangle {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        GameManager.closeApiKeyBrowser()
+                                        apiKeyWebView.url = "about:blank"
+                                        wizard.apiKeyBrowserOpen = false
                                         GameManager.setSteamApiKey(wizard.detectedApiKey)
                                         wizard.currentStep = 3
                                     }
@@ -674,7 +641,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: "A browser has been opened to the Steam API key page.\nCopy the key and paste it below:"
+                        text: "Visit steamcommunity.com/dev/apikey in a browser,\ncopy your key, and paste it below:"
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
                         color: ThemeManager.getColor("textSecondary")
@@ -776,8 +743,8 @@ Rectangle {
                             onClicked: {
                                 wizard.showManualInput = false
                                 wizard.apiKeyScrapeErrorMsg = ""
-                                wizard.apiKeyScraping = true
-                                GameManager.scrapeApiKeyFromPage()
+                                wizard.apiKeyBrowserOpen = true
+                                apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
                             }
                         }
                     }
@@ -1316,11 +1283,115 @@ Rectangle {
         }
     }
 
-    // ── API Key confirmation overlay (inline, not a separate Window) ──
-    // Shown while the browser is still open behind Luna UI.
-    // Luna UI is raised to the foreground via xdotool before
-    // the apiKeyScraped signal fires. The browser is only killed
-    // when the user clicks "Yes" or "No".
+    // ── Embedded browser for Steam API key page ──
+    // Loads the Steam API key page inside Luna UI. A JS timer polls
+    // the DOM for the 32-char hex key. When found, the confirmation
+    // overlay appears directly on top — no window management needed.
+    Rectangle {
+        id: apiKeyBrowser
+        visible: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
+        anchors.fill: parent
+        z: 250
+        color: ThemeManager.getColor("background")
+
+        // Header bar
+        Rectangle {
+            id: browserHeader
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 50
+            color: ThemeManager.getColor("surface")
+            z: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: "Steam API Key"
+                font.pixelSize: ThemeManager.getFontSize("medium")
+                font.bold: true
+                font.family: ThemeManager.getFont("heading")
+                color: ThemeManager.getColor("textPrimary")
+            }
+
+            // "Enter Manually" button
+            Rectangle {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 14
+                width: manualEntryLabel.width + 28
+                height: 34
+                radius: 8
+                color: "transparent"
+                border.color: Qt.rgba(1, 1, 1, 0.15)
+                border.width: 1
+
+                Text {
+                    id: manualEntryLabel
+                    anchors.centerIn: parent
+                    text: "Enter Manually"
+                    font.pixelSize: ThemeManager.getFontSize("small")
+                    font.family: ThemeManager.getFont("body")
+                    color: ThemeManager.getColor("textSecondary")
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        wizard.apiKeyBrowserOpen = false
+                        apiKeyPollTimer.stop()
+                        apiKeyWebView.url = "about:blank"
+                        wizard.showManualInput = true
+                    }
+                }
+            }
+        }
+
+        WebEngineView {
+            id: apiKeyWebView
+            anchors.top: browserHeader.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            url: "about:blank"
+
+            onLoadingChanged: function(loadRequest) {
+                if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                    apiKeyPollTimer.start()
+                }
+            }
+        }
+
+        // Poll the page for a 32-char hex API key every 2 seconds
+        Timer {
+            id: apiKeyPollTimer
+            interval: 2000
+            repeat: true
+            onTriggered: {
+                apiKeyWebView.runJavaScript(
+                    "(function() {" +
+                    "  var els = document.querySelectorAll('#bodyContents_ex p, p, td, code, div');" +
+                    "  for (var i = 0; i < els.length; i++) {" +
+                    "    var text = els[i].textContent.trim();" +
+                    "    if (/^[A-F0-9]{32}$/.test(text)) return text;" +
+                    "  }" +
+                    "  return null;" +
+                    "})()",
+                    function(result) {
+                        if (result && result.length === 32) {
+                            apiKeyPollTimer.stop()
+                            apiKeyConfirmOverlay.overlayKey = result
+                            apiKeyConfirmOverlay.visible = true
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    // ── API Key confirmation overlay ──
+    // Appears on top of the embedded browser when a key is detected.
+    // The browser stays visible behind the semi-transparent backdrop.
     Rectangle {
         id: apiKeyConfirmOverlay
         visible: false
@@ -1404,9 +1475,8 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                // Close the browser now that the key is confirmed
-                                GameManager.closeApiKeyBrowser()
                                 apiKeyConfirmOverlay.visible = false
+                                apiKeyWebView.url = "about:blank"
                                 GameManager.setSteamApiKey(apiKeyConfirmOverlay.overlayKey)
                                 wizard.detectedApiKey = apiKeyConfirmOverlay.overlayKey
                                 wizard.apiKeyBrowserOpen = false
@@ -1434,9 +1504,8 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                // Close the browser since user rejected the key
-                                GameManager.closeApiKeyBrowser()
                                 apiKeyConfirmOverlay.visible = false
+                                apiKeyWebView.url = "about:blank"
                                 wizard.detectedApiKey = ""
                                 wizard.apiKeyBrowserOpen = false
                                 wizard.showManualInput = true

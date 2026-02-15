@@ -3,6 +3,7 @@
 
 #include "../storebackend.h"
 #include <QJsonArray>
+#include <QProcessEnvironment>
 
 class SteamBackend : public StoreBackend {
 public:
@@ -23,6 +24,21 @@ public:
 private:
     QVector<QString> getLibraryFolders();
     Game parseAppManifest(const QString& manifestPath);
+
+    // Direct launch helpers (bypass Steam's "Preparing to launch" popup)
+    bool launchNativeGame(const Game& game, const QString& gameDir,
+                          QProcessEnvironment env);
+    bool launchProtonGame(const Game& game, const QString& gameDir,
+                          QProcessEnvironment env);
+    bool steamProtocolLaunch(const Game& game);
+
+    // Executable/directory discovery
+    QString findGameDirectory(const QString& appId);
+    bool isProtonGame(const QString& appId);
+    QString findNativeExecutable(const QString& gameDir);
+    QString findProtonExecutable(const QString& gameDir);
+    QString findProtonBinary();
+    QString findCompatDataPath(const QString& appId);
 };
 
 #endif
