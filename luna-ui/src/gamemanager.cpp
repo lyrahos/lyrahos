@@ -213,6 +213,12 @@ void GameManager::ensureSteamRunning() {
         return;
     }
 
+    // Kill any straggling Steam sub-processes (steamwebhelper, etc.)
+    // left over from a previous session. If any survive with the
+    // hardware survey queued, they'll show it when we start a new
+    // Steam instance that inherits the backend.
+    QProcess::execute("pkill", QStringList() << "-f" << "steamwebhelper");
+
     // Mark the hardware survey as completed so it never pops up
     suppressSteamHardwareSurvey();
 
@@ -238,77 +244,89 @@ void GameManager::suppressSteamHardwareSurvey() {
     // After the user logs into Steam (step 1), Steam writes a full
     // registry.vdf with hundreds of settings. Truncating it would
     // destroy all of Steam's state and ironically trigger the survey.
-    QString registryPath = QDir::homePath() + "/.steam/registry.vdf";
+    //
+    // Write to BOTH possible registry.vdf locations. On some distros
+    // ~/.steam is a symlink to ~/.local/share/Steam (same file), but
+    // on others they're separate directories. Steam reads from its
+    // own data dir so we must cover both.
+    QStringList registryPaths = {
+        QDir::homePath() + "/.steam/registry.vdf",
+        QDir::homePath() + "/.local/share/Steam/registry.vdf"
+    };
 
     QDir().mkpath(QDir::homePath() + "/.steam");
-    QString content;
+    QDir().mkpath(QDir::homePath() + "/.local/share/Steam");
 
-    QFile readFile(registryPath);
-    if (readFile.open(QIODevice::ReadOnly)) {
-        content = QString::fromUtf8(readFile.readAll());
-        readFile.close();
-    }
+    for (const QString& registryPath : registryPaths) {
+        QString content;
 
-    // If the file already has our suppression values, nothing to do
-    if (content.contains("\"SurveyDate\"\t\t\"2030-01-01\"") &&
-        content.contains("\"SurveyDateVersion\"")) {
-        return;
-    }
-
-    if (content.isEmpty()) {
-        // No registry.vdf yet — write a minimal one (pre-first-login)
-        content =
-            "\"Registry\"\n"
-            "{\n"
-            "\t\"HKLM\"\n"
-            "\t{\n"
-            "\t\t\"Software\"\n"
-            "\t\t{\n"
-            "\t\t\t\"Valve\"\n"
-            "\t\t\t{\n"
-            "\t\t\t\t\"Steam\"\n"
-            "\t\t\t\t{\n"
-            "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
-            "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
-            "\t\t\t\t}\n"
-            "\t\t\t}\n"
-            "\t\t}\n"
-            "\t}\n"
-            "}\n";
-    } else {
-        // Existing file — update or inject entries without destroying it.
-        // Replace existing SurveyDate value if present
-        QRegularExpression dateRe("\"SurveyDate\"\\s+\"[^\"]*\"");
-        if (content.contains(dateRe)) {
-            content.replace(dateRe, "\"SurveyDate\"\t\t\"2030-01-01\"");
+        QFile readFile(registryPath);
+        if (readFile.open(QIODevice::ReadOnly)) {
+            content = QString::fromUtf8(readFile.readAll());
+            readFile.close();
         }
 
-        QRegularExpression verRe("\"SurveyDateVersion\"\\s+\"[^\"]*\"");
-        if (content.contains(verRe)) {
-            content.replace(verRe, "\"SurveyDateVersion\"\t\t\"999\"");
+        // If the file already has our suppression values, skip it
+        if (content.contains("\"SurveyDate\"\t\t\"2030-01-01\"") &&
+            content.contains("\"SurveyDateVersion\"")) {
+            continue;
         }
 
-        // If neither entry exists, inject them into the HKLM/Software/Valve/Steam block.
-        // Find the "Steam" section under HKLM by looking for the pattern.
-        if (!content.contains("\"SurveyDate\"")) {
-            // Look for "Steam" block opening brace under Valve
-            QRegularExpression steamBlockRe(
-                "(\"Steam\"\\s*\\n\\s*\\{\\s*\\n)");
-            auto match = steamBlockRe.match(content);
-            if (match.hasMatch()) {
-                int insertPos = match.capturedEnd();
-                QString entries =
-                    "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
-                    "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n";
-                content.insert(insertPos, entries);
+        if (content.isEmpty()) {
+            // No registry.vdf yet — write a minimal one (pre-first-login)
+            content =
+                "\"Registry\"\n"
+                "{\n"
+                "\t\"HKLM\"\n"
+                "\t{\n"
+                "\t\t\"Software\"\n"
+                "\t\t{\n"
+                "\t\t\t\"Valve\"\n"
+                "\t\t\t{\n"
+                "\t\t\t\t\"Steam\"\n"
+                "\t\t\t\t{\n"
+                "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+                "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
+                "\t\t\t\t}\n"
+                "\t\t\t}\n"
+                "\t\t}\n"
+                "\t}\n"
+                "}\n";
+        } else {
+            // Existing file — update or inject entries without destroying it.
+            // Replace existing SurveyDate value if present
+            QRegularExpression dateRe("\"SurveyDate\"\\s+\"[^\"]*\"");
+            if (content.contains(dateRe)) {
+                content.replace(dateRe, "\"SurveyDate\"\t\t\"2030-01-01\"");
+            }
+
+            QRegularExpression verRe("\"SurveyDateVersion\"\\s+\"[^\"]*\"");
+            if (content.contains(verRe)) {
+                content.replace(verRe, "\"SurveyDateVersion\"\t\t\"999\"");
+            }
+
+            // If neither entry exists, inject them into the HKLM/Software/Valve/Steam block.
+            if (!content.contains("\"SurveyDate\"")) {
+                QRegularExpression steamBlockRe(
+                    "(\"Steam\"\\s*\\n\\s*\\{\\s*\\n)");
+                auto match = steamBlockRe.match(content);
+                if (match.hasMatch()) {
+                    int insertPos = match.capturedEnd();
+                    QString entries =
+                        "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+                        "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n";
+                    content.insert(insertPos, entries);
+                }
             }
         }
-    }
 
-    QFile writeFile(registryPath);
-    if (writeFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        writeFile.write(content.toUtf8());
-        qDebug() << "Updated hardware survey suppression in" << registryPath;
+        QFile writeFile(registryPath);
+        if (writeFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            writeFile.write(content.toUtf8());
+            writeFile.flush();
+            writeFile.close();
+            qDebug() << "Updated hardware survey suppression in" << registryPath;
+        }
     }
 }
 
