@@ -25,6 +25,7 @@ Rectangle {
     // Sub-states for step 3 (SteamCMD)
     property string steamCmdPromptType: ""  // "password" or "steamguard"
     property bool steamCmdWaiting: false
+    property bool steamCmdAwaitingGuard: false  // true after password submitted, before guard prompt
     property string steamCmdError: ""
 
     // Click blocker
@@ -38,22 +39,19 @@ Rectangle {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
-            // Kill the browser first so Luna UI comes back to the foreground,
-            // then show the confirmation overlay after a short delay so
-            // gamescope has time to clean up the browser window and refocus
-            // Luna before the overlay renders.
-            GameManager.closeApiKeyBrowser()
+            // The browser is already confirmed dead by the time this signal
+            // fires (gamemanager.cpp kills it and waits before emitting).
+            // Show the confirmation overlay immediately — Luna UI is
+            // guaranteed to be the foreground window at this point.
             wizard.apiKeyBrowserOpen = false
             apiKeyConfirmOverlay.overlayKey = key
-            apiKeyConfirmTimer.start()
+            apiKeyConfirmOverlay.visible = true
         }
 
         function onApiKeyScrapeError(error) {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = error
-            // Close the browser so the manual input form is visible
-            // (in gamescope the browser covers Luna entirely).
-            GameManager.closeApiKeyBrowser()
+            // Browser is already dead (killed by C++ before emitting).
             wizard.apiKeyBrowserOpen = false
             wizard.showManualInput = true
         }
@@ -61,6 +59,7 @@ Rectangle {
         function onSteamCmdSetupCredentialNeeded(promptType) {
             wizard.steamCmdPromptType = promptType
             wizard.steamCmdWaiting = false
+            wizard.steamCmdAwaitingGuard = false
             wizard.steamCmdError = ""
             setupCredInput.text = ""
             setupCredInput.forceActiveFocus()
@@ -68,12 +67,14 @@ Rectangle {
 
         function onSteamCmdSetupLoginSuccess() {
             wizard.steamCmdWaiting = false
+            wizard.steamCmdAwaitingGuard = false
             wizard.steamCmdError = ""
             wizard.currentStep = 4
         }
 
         function onSteamCmdSetupLoginError(error) {
             wizard.steamCmdWaiting = false
+            wizard.steamCmdAwaitingGuard = false
             wizard.steamCmdError = error
         }
     }
@@ -87,6 +88,7 @@ Rectangle {
         showManualInput = false
         steamCmdPromptType = ""
         steamCmdWaiting = false
+        steamCmdAwaitingGuard = false
         steamCmdError = ""
         setupCredInput.text = ""
         manualKeyInput.text = ""
@@ -900,9 +902,9 @@ Rectangle {
                     }
                 }
 
-                // Waiting spinner text
+                // Waiting spinner text (only shown before password prompt, not after)
                 Text {
-                    visible: wizard.steamCmdWaiting && wizard.steamCmdPromptType === ""
+                    visible: wizard.steamCmdWaiting && wizard.steamCmdPromptType === "" && !wizard.steamCmdAwaitingGuard
                     text: "Starting SteamCMD..."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
@@ -965,9 +967,10 @@ Rectangle {
                                     GameManager.provideSteamCmdSetupCredential(text)
                                     text = ""
                                     if (wizard.steamCmdPromptType === "password") {
-                                        // After password, expect Steam Guard next
+                                        // After password, show "approve on your phone" message
                                         wizard.steamCmdPromptType = ""
-                                        wizard.steamCmdWaiting = true
+                                        wizard.steamCmdAwaitingGuard = true
+                                        wizard.steamCmdWaiting = false
                                     }
                                 }
                             }
@@ -1008,10 +1011,50 @@ Rectangle {
                                 if (setupCredInput.text.length > 0) {
                                     GameManager.provideSteamCmdSetupCredential(setupCredInput.text)
                                     setupCredInput.text = ""
+                                    // After password, show "approve on your phone" message
                                     wizard.steamCmdPromptType = ""
-                                    wizard.steamCmdWaiting = true
+                                    wizard.steamCmdAwaitingGuard = true
+                                    wizard.steamCmdWaiting = false
                                 }
                             }
+                        }
+                    }
+                }
+
+                // ── Post-password: approve on your phone message ──
+                ColumnLayout {
+                    visible: wizard.steamCmdAwaitingGuard && wizard.steamCmdPromptType === ""
+                    spacing: 10
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Approve the login in your Steam app"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                    }
+
+                    Text {
+                        text: "Password sent. Open the Steam mobile app on your phone and approve the login request.\n\nIf you use email-based Steam Guard, wait for the code prompt below."
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        text: "Waiting for approval..."
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("primary")
+
+                        SequentialAnimation on opacity {
+                            running: wizard.steamCmdAwaitingGuard
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.4; duration: 1000 }
+                            NumberAnimation { to: 1.0; duration: 1000 }
                         }
                     }
                 }
@@ -1273,18 +1316,10 @@ Rectangle {
         }
     }
 
-    // Delay showing the confirmation overlay so gamescope has time
-    // to tear down the browser window and refocus Luna UI.
-    Timer {
-        id: apiKeyConfirmTimer
-        interval: 400
-        repeat: false
-        onTriggered: apiKeyConfirmOverlay.visible = true
-    }
-
     // ── API Key confirmation overlay (inline, not a separate Window) ──
-    // Shown after the browser is killed and Luna UI is back in focus.
-    // Using an inline Rectangle avoids gamescope stretching issues.
+    // Shown immediately after the browser is confirmed dead by the C++
+    // backend (forceCloseApiKeyBrowser waits until all browser processes
+    // exit before emitting apiKeyScraped). No delay timer needed.
     Rectangle {
         id: apiKeyConfirmOverlay
         visible: false

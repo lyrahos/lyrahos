@@ -133,6 +133,33 @@ while true; do
         STEAM_LIB_MTIME=""
         [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
 
+        # Suppress the hardware survey dialog before Steam starts.
+        # Write a future date into Steam's registry so it skips the prompt.
+        STEAM_REG="$HOME/.steam/registry.vdf"
+        mkdir -p "$HOME/.steam"
+        if ! grep -q "SurveyDateVersion" "$STEAM_REG" 2>/dev/null; then
+            cat > "$STEAM_REG" << 'REGEOF'
+"Registry"
+{
+	"HKLM"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"SurveyDate"		"2030-01-01"
+					"SurveyDateVersion"		"999"
+				}
+			}
+		}
+	}
+}
+REGEOF
+            echo "luna-inner: wrote hardware survey suppression to $STEAM_REG" >> "$LUNA_LOG"
+        fi
+
         echo "luna-inner: launching Steam for login at $(date)" >> "$LUNA_LOG"
         # Use -gamepadui (Steam Deck UI) so the login screen renders at
         # the full gamescope Xwayland resolution instead of opening a small

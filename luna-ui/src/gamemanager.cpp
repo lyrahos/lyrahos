@@ -207,13 +207,61 @@ void GameManager::ensureSteamRunning() {
         return;
     }
 
+    // Mark the hardware survey as completed so it never pops up
+    suppressSteamHardwareSurvey();
+
     qDebug() << "Pre-starting Steam silently in background...";
-    // qputenv sets the variable in this process; child processes inherit it.
-    qputenv("STEAM_NO_CEFHOST", "1");
+    // Suppress Steam's overlay UI (the "Preparing to launch..." dialog)
+    // and hardware survey popups via environment variables.
+    // NOTE: Do NOT set STEAM_NO_CEFHOST — it prevents Steam from fully
+    // initializing its network stack, causing "no internet" errors when
+    // launching games. Only suppress UI elements, not internals.
+    qputenv("SteamNoOverlayUIDrawing", "1");
     QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nofriendsui" << "-nochatui"
-        << "-no-browser" << "-skipstreamingdrivers"
-        << "-skipinitialbootstrap");
+        << "-silent" << "-nofriendsui" << "-nochatui");
+}
+
+void GameManager::suppressSteamHardwareSurvey() {
+    // Write a future SurveyDate and high SurveyDateVersion to Steam's
+    // registry.vdf so the hardware survey dialog never appears.
+    // Steam checks this file on startup; if the date is in the future,
+    // it skips the survey prompt entirely.
+    QString registryPath = QDir::homePath() + "/.steam/registry.vdf";
+
+    // If the file already contains our marker, skip
+    QFile checkFile(registryPath);
+    if (checkFile.open(QIODevice::ReadOnly)) {
+        QString content = QString::fromUtf8(checkFile.readAll());
+        if (content.contains("\"SurveyDateVersion\"")) {
+            return;  // Already suppressed
+        }
+    }
+
+    // Write the full registry file with survey suppression
+    // This is a minimal registry.vdf that Steam merges with its own data.
+    QDir().mkpath(QDir::homePath() + "/.steam");
+    QFile file(registryPath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QTextStream out(&file);
+        out << "\"Registry\"\n"
+            << "{\n"
+            << "\t\"HKLM\"\n"
+            << "\t{\n"
+            << "\t\t\"Software\"\n"
+            << "\t\t{\n"
+            << "\t\t\t\"Valve\"\n"
+            << "\t\t\t{\n"
+            << "\t\t\t\t\"Steam\"\n"
+            << "\t\t\t\t{\n"
+            << "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+            << "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
+            << "\t\t\t\t}\n"
+            << "\t\t\t}\n"
+            << "\t\t}\n"
+            << "\t}\n"
+            << "}\n";
+        qDebug() << "Wrote hardware survey suppression to" << registryPath;
+    }
 }
 
 void GameManager::launchSteamLogin() {
@@ -1098,6 +1146,75 @@ void GameManager::closeApiKeyBrowser() {
     }
 }
 
+void GameManager::forceCloseApiKeyBrowser() {
+    // Aggressively kill all browser processes and WAIT for them to die
+    // before emitting the pending API key signal. This ensures Luna UI
+    // is the foreground window when the confirmation overlay appears.
+    //
+    // The script:
+    //   1. SIGTERM the specific PID
+    //   2. SIGTERM all matching browser processes
+    //   3. Wait 0.5s for graceful shutdown
+    //   4. SIGKILL everything that survived
+    //   5. Poll until all matching processes are gone (up to 3 seconds)
+    QString browserType = m_apiKeyBrowserType;
+    qint64 browserPid = m_apiKeyBrowserPid;
+    m_apiKeyBrowserPid = 0;
+
+    if (browserPid <= 0 && browserType.isEmpty()) {
+        // No browser to kill — emit immediately
+        if (!m_pendingApiKey.isEmpty()) {
+            emit apiKeyScraped(m_pendingApiKey);
+            m_pendingApiKey.clear();
+        } else if (!m_pendingApiKeyError.isEmpty()) {
+            emit apiKeyScrapeError(m_pendingApiKeyError);
+            m_pendingApiKeyError.clear();
+        }
+        return;
+    }
+
+    // Build a kill-and-wait script
+    QString script;
+    if (!browserType.isEmpty()) {
+        script = QString(
+            "kill -TERM %1 2>/dev/null; "
+            "pkill -f '%2' 2>/dev/null; "
+            "sleep 0.5; "
+            "kill -9 %1 2>/dev/null; "
+            "pkill -9 -f '%2' 2>/dev/null; "
+            "for i in $(seq 1 10); do "
+            "  pgrep -f '%2' >/dev/null 2>&1 || exit 0; "
+            "  sleep 0.3; "
+            "done"
+        ).arg(browserPid).arg(browserType);
+    } else {
+        script = QString(
+            "kill -9 %1 2>/dev/null; sleep 1"
+        ).arg(browserPid);
+    }
+
+    qDebug() << "Force-closing browser (pid:" << browserPid
+             << "type:" << browserType << ")";
+
+    QProcess *killProc = new QProcess(this);
+    connect(killProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, killProc](int, QProcess::ExitStatus) {
+        killProc->deleteLater();
+        qDebug() << "Browser confirmed dead, emitting pending signal";
+
+        if (!m_pendingApiKey.isEmpty()) {
+            QString key = m_pendingApiKey;
+            m_pendingApiKey.clear();
+            emit apiKeyScraped(key);
+        } else if (!m_pendingApiKeyError.isEmpty()) {
+            QString err = m_pendingApiKeyError;
+            m_pendingApiKeyError.clear();
+            emit apiKeyScrapeError(err);
+        }
+    });
+    killProc->start("bash", QStringList() << "-c" << script);
+}
+
 void GameManager::scrapeApiKeyFromPage() {
     // Scrape the Steam API key from the browser that openApiKeyInBrowser()
     // launched.  We connect to the browser's Chrome DevTools Protocol
@@ -1336,7 +1453,12 @@ void GameManager::scrapeApiKeyFromPage() {
                 QString key = line.mid(7).trimmed().toUpper();
                 if (!key.isEmpty()) {
                     qDebug() << "Auto-detected Steam API key:" << key.left(4) + "...";
-                    emit apiKeyScraped(key);
+                    // Don't emit yet! Kill the browser first, then emit
+                    // after it's confirmed dead. This ensures Luna UI is
+                    // the foreground window when the overlay appears.
+                    m_pendingApiKey = key;
+                    m_pendingApiKeyError.clear();
+                    forceCloseApiKeyBrowser();
                     return;
                 }
             }
@@ -1350,7 +1472,10 @@ void GameManager::scrapeApiKeyFromPage() {
                 break;
             }
         }
-        emit apiKeyScrapeError(errMsg);
+        // Don't emit yet — kill browser first, then emit error
+        m_pendingApiKeyError = errMsg;
+        m_pendingApiKey.clear();
+        forceCloseApiKeyBrowser();
     });
 
     proc->start("bash", QStringList() << "-c" << script);

@@ -128,6 +128,12 @@ private:
     QVariantList gamesToVariantList(const QVector<Game>& games);
     QString steamApiKeyPath() const;
     QStringList getSteamAppsDirs() const;
+    void suppressSteamHardwareSurvey();
+    void forceCloseApiKeyBrowser();
+
+    // Pending API key state (used to defer signal until browser is confirmed dead)
+    QString m_pendingApiKey;
+    QString m_pendingApiKeyError;
 };
 
 #endif
