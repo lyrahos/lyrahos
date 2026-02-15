@@ -39,18 +39,22 @@ Rectangle {
             wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
             // Kill the browser first so Luna UI comes back to the foreground,
-            // then show the confirmation overlay inline (no separate Window
-            // needed — gamescope stretches all Windows to fullscreen anyway).
+            // then show the confirmation overlay after a short delay so
+            // gamescope has time to clean up the browser window and refocus
+            // Luna before the overlay renders.
             GameManager.closeApiKeyBrowser()
             wizard.apiKeyBrowserOpen = false
             apiKeyConfirmOverlay.overlayKey = key
-            apiKeyConfirmOverlay.visible = true
+            apiKeyConfirmTimer.start()
         }
 
         function onApiKeyScrapeError(error) {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = error
-            // Leave the browser open so the user can copy the key manually
+            // Close the browser so the manual input form is visible
+            // (in gamescope the browser covers Luna entirely).
+            GameManager.closeApiKeyBrowser()
+            wizard.apiKeyBrowserOpen = false
             wizard.showManualInput = true
         }
 
@@ -1267,6 +1271,15 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // Delay showing the confirmation overlay so gamescope has time
+    // to tear down the browser window and refocus Luna UI.
+    Timer {
+        id: apiKeyConfirmTimer
+        interval: 400
+        repeat: false
+        onTriggered: apiKeyConfirmOverlay.visible = true
     }
 
     // ── API Key confirmation overlay (inline, not a separate Window) ──

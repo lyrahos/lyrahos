@@ -42,6 +42,12 @@ Rectangle {
                 wifiStatus = "Failed: " + message
             }
         }
+        function onWifiNetworksScanned(networks) {
+            wifiScanning = false
+            settingsWifiModel.clear()
+            for (var i = 0; i < networks.length; i++)
+                settingsWifiModel.append(networks[i])
+        }
     }
 
     // Refresh connection status periodically
@@ -192,10 +198,7 @@ Rectangle {
                                     settingsWifiPasswordField.text = ""
                                     wifiScanning = true
                                     settingsWifiModel.clear()
-                                    var networks = GameManager.getWifiNetworks()
-                                    for (var i = 0; i < networks.length; i++)
-                                        settingsWifiModel.append(networks[i])
-                                    wifiScanning = false
+                                    GameManager.scanWifiNetworks()
                                 }
                             }
                         }
@@ -235,6 +238,7 @@ Rectangle {
                         }
 
                         Rectangle {
+                            visible: !wifiScanning
                             Layout.preferredWidth: settingsRefreshLabel.width + 24
                             Layout.preferredHeight: 32
                             radius: 8
@@ -257,11 +261,73 @@ Rectangle {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
+                                    wifiScanning = true
                                     settingsWifiModel.clear()
-                                    var networks = GameManager.getWifiNetworks()
-                                    for (var i = 0; i < networks.length; i++)
-                                        settingsWifiModel.append(networks[i])
+                                    GameManager.scanWifiNetworks()
                                 }
+                            }
+                        }
+                    }
+
+                    // Scanning spinner
+                    RowLayout {
+                        visible: wifiScanning
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 48
+                        spacing: 12
+
+                        Item {
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 24
+                            Layout.alignment: Qt.AlignVCenter
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 22
+                                height: 22
+                                radius: 11
+                                color: "transparent"
+                                border.width: 3
+                                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                Rectangle {
+                                    width: 22
+                                    height: 22
+                                    radius: 11
+                                    color: "transparent"
+                                    border.width: 3
+                                    border.color: "transparent"
+
+                                    Rectangle {
+                                        width: 8
+                                        height: 3
+                                        radius: 1.5
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                    }
+
+                                    RotationAnimation on rotation {
+                                        from: 0; to: 360
+                                        duration: 1000
+                                        loops: Animation.Infinite
+                                        running: wifiScanning
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "Scanning for networks..."
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+
+                            SequentialAnimation on opacity {
+                                running: wifiScanning
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.4; duration: 600 }
+                                NumberAnimation { to: 1.0; duration: 600 }
                             }
                         }
                     }

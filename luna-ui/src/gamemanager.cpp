@@ -297,6 +297,38 @@ QVariantList GameManager::getWifiNetworks() {
     return networks;
 }
 
+void GameManager::scanWifiNetworks() {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int, QProcess::ExitStatus) {
+        QVariantList networks;
+        QString output = proc->readAllStandardOutput();
+        QSet<QString> seen;
+        for (const QString& line : output.split('\n')) {
+            if (line.trimmed().isEmpty()) continue;
+            int first = line.indexOf(':');
+            int second = line.indexOf(':', first + 1);
+            if (first < 1 || second < 0) continue;
+
+            QString ssid = line.left(first);
+            QString signal = line.mid(first + 1, second - first - 1);
+            QString security = line.mid(second + 1);
+
+            if (ssid.isEmpty() || seen.contains(ssid)) continue;
+            seen.insert(ssid);
+
+            QVariantMap network;
+            network["ssid"] = ssid;
+            network["signal"] = signal.toInt();
+            network["security"] = security;
+            networks.append(network);
+        }
+        emit wifiNetworksScanned(networks);
+        proc->deleteLater();
+    });
+    proc->start("nmcli", {"-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "yes"});
+}
+
 void GameManager::connectToWifi(const QString& ssid, const QString& password) {
     QProcess *proc = new QProcess(this);
     QStringList args = {"device", "wifi", "connect", ssid};

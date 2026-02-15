@@ -34,6 +34,7 @@ public:
     Q_INVOKABLE int getGameCount();
     Q_INVOKABLE bool isNetworkAvailable();
     Q_INVOKABLE QVariantList getWifiNetworks();
+    Q_INVOKABLE void scanWifiNetworks();
     Q_INVOKABLE void connectToWifi(const QString& ssid, const QString& password);
     Q_INVOKABLE QString getConnectedWifi();
     Q_INVOKABLE void disconnectWifi();
@@ -76,6 +77,7 @@ signals:
     void scanComplete(int gamesFound);
     void wifiConnectResult(bool success, const QString& message);
     void wifiDisconnectResult(bool success, const QString& message);
+    void wifiNetworksScanned(QVariantList networks);
     void steamOwnedGamesFetched(int gamesFound);
     void steamOwnedGamesFetchError(const QString& error);
     void downloadStarted(QString appId, int gameId);

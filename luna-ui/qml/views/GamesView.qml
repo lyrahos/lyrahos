@@ -202,6 +202,11 @@ Rectangle {
 
                 Connections {
                     target: GameManager
+                    function onWifiNetworksScanned(networks) {
+                        wifiListModel.clear()
+                        for (var i = 0; i < networks.length; i++)
+                            wifiListModel.append(networks[i])
+                    }
                     function onWifiConnectResult(success, message) {
                         gameStoresTab.wifiConnecting = false
                         if (success) {
@@ -276,9 +281,7 @@ Rectangle {
                                 gameStoresTab.wifiStatus = ""
                                 gameStoresTab.showWifiPanel = true
                                 wifiListModel.clear()
-                                var networks = GameManager.getWifiNetworks()
-                                for (var i = 0; i < networks.length; i++)
-                                    wifiListModel.append(networks[i])
+                                GameManager.scanWifiNetworks()
                             }
                         }
                     }
@@ -366,9 +369,7 @@ Rectangle {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         wifiListModel.clear()
-                                        var networks = GameManager.getWifiNetworks()
-                                        for (var i = 0; i < networks.length; i++)
-                                            wifiListModel.append(networks[i])
+                                        GameManager.scanWifiNetworks()
                                     }
                                 }
 
@@ -1615,11 +1616,8 @@ Rectangle {
         }
 
         function onGameLaunched(gameId, gameTitle) {
-            launchOverlay.gameTitle = gameTitle
-            launchOverlay.isError = false
-            launchOverlay.errorMessage = ""
-            launchOverlay.visible = true
-            launchDismissTimer.restart()
+            // No overlay on successful launch — let the game start
+            // silently without showing a popup over the UI.
         }
 
         function onGameLaunchError(gameId, gameTitle, error) {
