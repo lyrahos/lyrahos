@@ -5,6 +5,8 @@
 #include <QCache>
 #include <QSet>
 #include <QFile>
+#include <QStringList>
+#include <QUrl>
 
 class QNetworkAccessManager;
 
@@ -24,7 +26,9 @@ private:
     QSet<int> m_pending;  // downloads in flight
     QFile m_logFile;
     QString cacheDir();
-    void downloadArtwork(int gameId, const QString& url);
+    void downloadArtwork(int gameId, const QString& url,
+                         const QStringList& fallbacks = {});
+    static QStringList steamFallbackUrls(const QString& failedUrl);
     void log(const QString& msg);
 };
 
