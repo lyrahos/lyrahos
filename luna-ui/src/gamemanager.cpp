@@ -1829,16 +1829,21 @@ void GameManager::loginSteamCmd() {
             // SteamCMD needs to finish saving the login token to disk.
             // Start a timeout; if we see the "Steam>" prompt we'll
             // quit sooner.
-            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive)) {
+            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
+                trimmed.contains("OK", Qt::CaseSensitive) && trimmed.length() < 10) {
                 *loginOk = true;
                 if (!quitTimer->isActive()) {
                     qDebug() << "[steamcmd-setup] login OK, waiting for token save...";
                     quitTimer->start();
                 }
             }
-            // The Steam> prompt means SteamCMD is idle and the token
-            // has been fully written to config.vdf. Safe to quit now.
-            if (*loginOk && trimmed.startsWith("Steam>")) {
+            // The Steam> prompt means SteamCMD is idle and the login
+            // token has been written to config.vdf. If SteamCMD reached
+            // the interactive prompt, authentication succeeded — even if
+            // we never saw "Logged in OK" explicitly (modern SteamCMD
+            // versions may skip that message after guard code auth).
+            if (trimmed.startsWith("Steam>")) {
+                *loginOk = true;
                 quitTimer->stop();
                 if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
                     qDebug() << "[steamcmd-setup] Steam> prompt seen, sending quit";
