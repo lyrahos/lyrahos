@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtWebEngine
 import "../components"
 
 Rectangle {
@@ -1199,243 +1198,25 @@ Rectangle {
             Item {
                 id: gameStoreTab
 
-                property bool storeLoaded: false
-                property string currentAppId: ""
-
-                // Detect Steam app pages from URL and extract appId
-                function extractAppId(url) {
-                    var match = url.toString().match(/store\.steampowered\.com\/app\/(\d+)/)
-                    return match ? match[1] : ""
-                }
-
                 ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
+                    anchors.centerIn: parent
+                    spacing: 16
 
-                    // ── Store header bar ──
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        color: ThemeManager.getColor("surface")
-                        radius: 10
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 12
-                            spacing: 8
-
-                            // Back button
-                            Rectangle {
-                                Layout.preferredWidth: 36
-                                Layout.preferredHeight: 36
-                                radius: 8
-                                color: storeBackArea.containsMouse
-                                       ? ThemeManager.getColor("hover") : "transparent"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u2190"
-                                    font.pixelSize: 18
-                                    color: storeWebView.canGoBack
-                                           ? ThemeManager.getColor("textPrimary")
-                                           : ThemeManager.getColor("textSecondary")
-                                }
-
-                                MouseArea {
-                                    id: storeBackArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: storeWebView.canGoBack ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: if (storeWebView.canGoBack) storeWebView.goBack()
-                                }
-                            }
-
-                            // Forward button
-                            Rectangle {
-                                Layout.preferredWidth: 36
-                                Layout.preferredHeight: 36
-                                radius: 8
-                                color: storeFwdArea.containsMouse
-                                       ? ThemeManager.getColor("hover") : "transparent"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u2192"
-                                    font.pixelSize: 18
-                                    color: storeWebView.canGoForward
-                                           ? ThemeManager.getColor("textPrimary")
-                                           : ThemeManager.getColor("textSecondary")
-                                }
-
-                                MouseArea {
-                                    id: storeFwdArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: storeWebView.canGoForward ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: if (storeWebView.canGoForward) storeWebView.goForward()
-                                }
-                            }
-
-                            // Title / URL display
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 34
-                                radius: 8
-                                color: ThemeManager.getColor("hover")
-
-                                Text {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 12
-                                    anchors.rightMargin: 12
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: storeWebView.title || "Steam Store"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            // Home button
-                            Rectangle {
-                                Layout.preferredWidth: 36
-                                Layout.preferredHeight: 36
-                                radius: 8
-                                color: storeHomeArea.containsMouse
-                                       ? ThemeManager.getColor("hover") : "transparent"
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u2302"
-                                    font.pixelSize: 20
-                                    color: ThemeManager.getColor("textPrimary")
-                                }
-
-                                MouseArea {
-                                    id: storeHomeArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: storeWebView.url = "https://store.steampowered.com/"
-                                }
-                            }
-
-                            // Install button — visible when on a game's store page
-                            Rectangle {
-                                visible: gameStoreTab.currentAppId !== ""
-                                Layout.preferredWidth: installBtnLabel.width + 28
-                                Layout.preferredHeight: 36
-                                radius: 8
-                                color: ThemeManager.getColor("accent")
-
-                                Text {
-                                    id: installBtnLabel
-                                    anchors.centerIn: parent
-                                    text: "Install"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    font.bold: true
-                                    color: "white"
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        // Find the game in DB by appId, or create a stub
-                                        // and trigger install via SteamCMD
-                                        var games = GameManager.getGames()
-                                        var gameId = -1
-                                        for (var i = 0; i < games.length; i++) {
-                                            if (games[i].appId === gameStoreTab.currentAppId) {
-                                                gameId = games[i].id
-                                                break
-                                            }
-                                        }
-                                        if (gameId >= 0) {
-                                            GameManager.launchGame(gameId)
-                                        } else {
-                                            // Game not in library yet — fetch owned
-                                            // games first so it gets added, then retry
-                                            GameManager.fetchSteamOwnedGames()
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    Text {
+                        text: "Game Store"
+                        font.pixelSize: ThemeManager.getFontSize("xlarge")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.alignment: Qt.AlignHCenter
                     }
 
-                    Item { height: 4; Layout.fillWidth: true }
-
-                    // ── Embedded Steam Store browser ──
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        radius: 10
-                        color: ThemeManager.getColor("surface")
-                        clip: true
-
-                        WebEngineView {
-                            id: storeWebView
-                            anchors.fill: parent
-                            url: "about:blank"
-
-                            onUrlChanged: {
-                                gameStoreTab.currentAppId = gameStoreTab.extractAppId(url)
-                            }
-                        }
-
-                        // Placeholder before store loads
-                        ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: 16
-                            visible: !gameStoreTab.storeLoaded
-
-                            Text {
-                                text: "Game Store"
-                                font.pixelSize: ThemeManager.getFontSize("xlarge")
-                                font.family: ThemeManager.getFont("heading")
-                                font.bold: true
-                                color: ThemeManager.getColor("textPrimary")
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-
-                            Text {
-                                text: "Browse the Steam store to find and install games."
-                                font.pixelSize: ThemeManager.getFontSize("medium")
-                                font.family: ThemeManager.getFont("body")
-                                color: ThemeManager.getColor("textSecondary")
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-
-                            Rectangle {
-                                Layout.preferredWidth: openStoreLabel.width + 40
-                                Layout.preferredHeight: 44
-                                radius: 8
-                                color: ThemeManager.getColor("primary")
-                                Layout.alignment: Qt.AlignHCenter
-
-                                Text {
-                                    id: openStoreLabel
-                                    anchors.centerIn: parent
-                                    text: "Open Steam Store"
-                                    font.pixelSize: ThemeManager.getFontSize("medium")
-                                    font.family: ThemeManager.getFont("body")
-                                    font.bold: true
-                                    color: "white"
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        gameStoreTab.storeLoaded = true
-                                        storeWebView.url = "https://store.steampowered.com/"
-                                    }
-                                }
-                            }
-                        }
+                    Text {
+                        text: "Coming soon"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
                     }
                 }
             }
