@@ -130,10 +130,7 @@ private:
     QStringList getSteamAppsDirs() const;
     void suppressSteamHardwareSurvey();
     void forceCloseApiKeyBrowser();
-
-    // Pending API key state (used to defer signal until browser is confirmed dead)
-    QString m_pendingApiKey;
-    QString m_pendingApiKeyError;
+    void raiseLunaWindow();
 };
 
 #endif

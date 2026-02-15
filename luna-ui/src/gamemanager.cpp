@@ -1126,30 +1126,14 @@ void GameManager::openApiKeyInBrowser() {
 }
 
 void GameManager::closeApiKeyBrowser() {
-    if (m_apiKeyBrowserPid > 0) {
-        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid
-                 << "type:" << m_apiKeyBrowserType << ")";
-        // Kill the process tree: the PID from startDetached is the
-        // launcher wrapper — the actual browser forks child processes.
-        // Use SIGTERM on the process group, then fall back to pkill
-        // by browser name to catch any orphans.
-        QProcess::execute("kill", QStringList() << "-TERM"
-            << QString::number(m_apiKeyBrowserPid));
-
-        // Also kill by name — Brave/Chromium fork many children that
-        // survive after the parent PID is killed.
-        if (!m_apiKeyBrowserType.isEmpty()) {
-            QProcess::execute("pkill", QStringList() << "-f"
-                << m_apiKeyBrowserType);
-        }
-        m_apiKeyBrowserPid = 0;
-    }
+    // Delegate to the force-close implementation which uses SIGTERM,
+    // falls back to SIGKILL, and waits for all browser processes to die.
+    forceCloseApiKeyBrowser();
 }
 
 void GameManager::forceCloseApiKeyBrowser() {
-    // Aggressively kill all browser processes and WAIT for them to die
-    // before emitting the pending API key signal. This ensures Luna UI
-    // is the foreground window when the confirmation overlay appears.
+    // Aggressively kill all browser processes and WAIT for them to die.
+    // Called from QML after the user confirms or rejects the detected key.
     //
     // The script:
     //   1. SIGTERM the specific PID
@@ -1162,14 +1146,6 @@ void GameManager::forceCloseApiKeyBrowser() {
     m_apiKeyBrowserPid = 0;
 
     if (browserPid <= 0 && browserType.isEmpty()) {
-        // No browser to kill — emit immediately
-        if (!m_pendingApiKey.isEmpty()) {
-            emit apiKeyScraped(m_pendingApiKey);
-            m_pendingApiKey.clear();
-        } else if (!m_pendingApiKeyError.isEmpty()) {
-            emit apiKeyScrapeError(m_pendingApiKeyError);
-            m_pendingApiKeyError.clear();
-        }
         return;
     }
 
@@ -1198,21 +1174,20 @@ void GameManager::forceCloseApiKeyBrowser() {
 
     QProcess *killProc = new QProcess(this);
     connect(killProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, killProc](int, QProcess::ExitStatus) {
+            this, [killProc]() {
         killProc->deleteLater();
-        qDebug() << "Browser confirmed dead, emitting pending signal";
-
-        if (!m_pendingApiKey.isEmpty()) {
-            QString key = m_pendingApiKey;
-            m_pendingApiKey.clear();
-            emit apiKeyScraped(key);
-        } else if (!m_pendingApiKeyError.isEmpty()) {
-            QString err = m_pendingApiKeyError;
-            m_pendingApiKeyError.clear();
-            emit apiKeyScrapeError(err);
-        }
+        qDebug() << "Browser confirmed dead";
     });
     killProc->start("bash", QStringList() << "-c" << script);
+}
+
+void GameManager::raiseLunaWindow() {
+    // Bring Luna UI's window to the foreground above the browser.
+    // In gamescope (Xwayland), xdotool can shift focus between
+    // managed windows, making Luna UI visible over the browser.
+    QProcess::execute("xdotool", QStringList()
+        << "search" << "--name" << "Luna UI"
+        << "windowactivate" << "--sync");
 }
 
 void GameManager::scrapeApiKeyFromPage() {
@@ -1453,12 +1428,12 @@ void GameManager::scrapeApiKeyFromPage() {
                 QString key = line.mid(7).trimmed().toUpper();
                 if (!key.isEmpty()) {
                     qDebug() << "Auto-detected Steam API key:" << key.left(4) + "...";
-                    // Don't emit yet! Kill the browser first, then emit
-                    // after it's confirmed dead. This ensures Luna UI is
-                    // the foreground window when the overlay appears.
-                    m_pendingApiKey = key;
-                    m_pendingApiKeyError.clear();
-                    forceCloseApiKeyBrowser();
+                    // Raise Luna UI above the browser so the confirmation
+                    // overlay is visible. The browser stays open behind —
+                    // it gets killed only after the user confirms or
+                    // rejects the key in the QML overlay.
+                    raiseLunaWindow();
+                    emit apiKeyScraped(key);
                     return;
                 }
             }
@@ -1472,10 +1447,10 @@ void GameManager::scrapeApiKeyFromPage() {
                 break;
             }
         }
-        // Don't emit yet — kill browser first, then emit error
-        m_pendingApiKeyError = errMsg;
-        m_pendingApiKey.clear();
-        forceCloseApiKeyBrowser();
+        // On error, raise Luna UI and kill the browser (nothing to confirm)
+        raiseLunaWindow();
+        closeApiKeyBrowser();
+        emit apiKeyScrapeError(errMsg);
     });
 
     proc->start("bash", QStringList() << "-c" << script);

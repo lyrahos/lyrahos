@@ -1317,9 +1317,10 @@ Rectangle {
     }
 
     // ── API Key confirmation overlay (inline, not a separate Window) ──
-    // Shown immediately after the browser is confirmed dead by the C++
-    // backend (forceCloseApiKeyBrowser waits until all browser processes
-    // exit before emitting apiKeyScraped). No delay timer needed.
+    // Shown while the browser is still open behind Luna UI.
+    // Luna UI is raised to the foreground via xdotool before
+    // the apiKeyScraped signal fires. The browser is only killed
+    // when the user clicks "Yes" or "No".
     Rectangle {
         id: apiKeyConfirmOverlay
         visible: false
@@ -1403,9 +1404,12 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
+                                // Close the browser now that the key is confirmed
+                                GameManager.closeApiKeyBrowser()
                                 apiKeyConfirmOverlay.visible = false
                                 GameManager.setSteamApiKey(apiKeyConfirmOverlay.overlayKey)
                                 wizard.detectedApiKey = apiKeyConfirmOverlay.overlayKey
+                                wizard.apiKeyBrowserOpen = false
                                 wizard.currentStep = 3
                             }
                         }
@@ -1430,8 +1434,11 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
+                                // Close the browser since user rejected the key
+                                GameManager.closeApiKeyBrowser()
                                 apiKeyConfirmOverlay.visible = false
                                 wizard.detectedApiKey = ""
+                                wizard.apiKeyBrowserOpen = false
                                 wizard.showManualInput = true
                             }
                         }
