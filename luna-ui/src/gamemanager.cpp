@@ -515,6 +515,199 @@ void GameManager::disconnectWifi() {
     proc->start("nmcli", {"connection", "down", ssid});
 }
 
+// ── Bluetooth management ──
+
+void GameManager::scanBluetoothDevices() {
+    // Power on the adapter first, then scan for a few seconds
+    QProcess *powerProc = new QProcess(this);
+    connect(powerProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, powerProc](int, QProcess::ExitStatus) {
+        powerProc->deleteLater();
+
+        // Start discovery
+        QProcess::startDetached("bluetoothctl", {"scan", "on"});
+
+        // After 6 seconds, collect discovered devices
+        QTimer::singleShot(6000, this, [this]() {
+            QProcess *listProc = new QProcess(this);
+            connect(listProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, listProc](int, QProcess::ExitStatus) {
+                QVariantList devices;
+                QString output = listProc->readAllStandardOutput();
+                // bluetoothctl devices output: "Device AA:BB:CC:DD:EE:FF DeviceName"
+                for (const QString& line : output.split('\n')) {
+                    QString trimmed = line.trimmed();
+                    if (!trimmed.startsWith("Device ")) continue;
+                    // "Device " is 7 chars, MAC is 17 chars
+                    if (trimmed.length() < 25) continue;
+                    QString address = trimmed.mid(7, 17);
+                    QString name = trimmed.mid(25).trimmed();
+                    if (name.isEmpty()) name = address;
+
+                    QVariantMap dev;
+                    dev["address"] = address;
+                    dev["name"] = name;
+                    devices.append(dev);
+                }
+                // Stop scanning
+                QProcess::startDetached("bluetoothctl", {"scan", "off"});
+                emit bluetoothDevicesScanned(devices);
+                listProc->deleteLater();
+            });
+            listProc->start("bluetoothctl", {"devices"});
+        });
+    });
+    powerProc->start("bluetoothctl", {"power", "on"});
+}
+
+void GameManager::connectBluetooth(const QString& address) {
+    // Pair first (no-op if already paired), then connect
+    QProcess *pairProc = new QProcess(this);
+    connect(pairProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, pairProc, address](int, QProcess::ExitStatus) {
+        pairProc->deleteLater();
+        // Trust the device so it auto-reconnects
+        QProcess::startDetached("bluetoothctl", {"trust", address});
+
+        QProcess *connProc = new QProcess(this);
+        connect(connProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, connProc](int exitCode, QProcess::ExitStatus) {
+            bool success = (exitCode == 0);
+            QString msg = success
+                ? "Connected"
+                : QString(connProc->readAllStandardError() + connProc->readAllStandardOutput()).trimmed();
+            emit bluetoothConnectResult(success, msg);
+            connProc->deleteLater();
+        });
+        connProc->start("bluetoothctl", {"connect", address});
+    });
+    pairProc->start("bluetoothctl", {"pair", address});
+}
+
+void GameManager::disconnectBluetooth(const QString& address) {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        QString msg = success
+            ? "Disconnected"
+            : QString(proc->readAllStandardError()).trimmed();
+        emit bluetoothDisconnectResult(success, msg);
+        proc->deleteLater();
+    });
+    proc->start("bluetoothctl", {"disconnect", address});
+}
+
+QVariantList GameManager::getConnectedBluetoothDevices() {
+    QVariantList devices;
+    // List all known devices, then check which are connected
+    QProcess listProc;
+    listProc.start("bluetoothctl", {"devices", "Connected"});
+    listProc.waitForFinished(3000);
+
+    QString output = listProc.readAllStandardOutput();
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (!trimmed.startsWith("Device ")) continue;
+        if (trimmed.length() < 25) continue;
+        QString address = trimmed.mid(7, 17);
+        QString name = trimmed.mid(25).trimmed();
+        if (name.isEmpty()) name = address;
+
+        QVariantMap dev;
+        dev["address"] = address;
+        dev["name"] = name;
+        devices.append(dev);
+    }
+    return devices;
+}
+
+// ── Audio device management ──
+
+QVariantList GameManager::getAudioOutputDevices() {
+    QVariantList devices;
+    QProcess proc;
+    // pactl list sinks gives detailed info; parse Name and Description
+    proc.start("pactl", {"list", "sinks"});
+    proc.waitForFinished(3000);
+
+    QString output = proc.readAllStandardOutput();
+    QVariantMap current;
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("Name:")) {
+            current = QVariantMap();
+            current["name"] = trimmed.mid(5).trimmed();
+        } else if (trimmed.startsWith("Description:") && current.contains("name")) {
+            current["description"] = trimmed.mid(12).trimmed();
+            devices.append(current);
+        }
+    }
+    return devices;
+}
+
+QVariantList GameManager::getAudioInputDevices() {
+    QVariantList devices;
+    QProcess proc;
+    proc.start("pactl", {"list", "sources"});
+    proc.waitForFinished(3000);
+
+    QString output = proc.readAllStandardOutput();
+    QVariantMap current;
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("Name:")) {
+            current = QVariantMap();
+            current["name"] = trimmed.mid(5).trimmed();
+            // Skip monitor sources (they echo output audio, not real mics)
+        } else if (trimmed.startsWith("Description:") && current.contains("name")) {
+            QString name = current["name"].toString();
+            // Filter out .monitor sources — they're not real inputs
+            if (!name.contains(".monitor")) {
+                current["description"] = trimmed.mid(12).trimmed();
+                devices.append(current);
+            }
+        }
+    }
+    return devices;
+}
+
+QString GameManager::getDefaultAudioOutput() {
+    QProcess proc;
+    proc.start("pactl", {"get-default-sink"});
+    proc.waitForFinished(3000);
+    return QString(proc.readAllStandardOutput()).trimmed();
+}
+
+QString GameManager::getDefaultAudioInput() {
+    QProcess proc;
+    proc.start("pactl", {"get-default-source"});
+    proc.waitForFinished(3000);
+    return QString(proc.readAllStandardOutput()).trimmed();
+}
+
+void GameManager::setAudioOutputDevice(const QString& name) {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        emit audioOutputSet(success, success ? "Output changed" : QString(proc->readAllStandardError()).trimmed());
+        proc->deleteLater();
+    });
+    proc->start("pactl", {"set-default-sink", name});
+}
+
+void GameManager::setAudioInputDevice(const QString& name) {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        emit audioInputSet(success, success ? "Input changed" : QString(proc->readAllStandardError()).trimmed());
+        proc->deleteLater();
+    });
+    proc->start("pactl", {"set-default-source", name});
+}
+
 // ── Steam API key management ──
 
 QString GameManager::steamApiKeyPath() const {
