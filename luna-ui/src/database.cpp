@@ -48,6 +48,10 @@ void Database::createTables() {
                "metadata TEXT"
                ")");
 
+    // Unique index on store_source + app_id to prevent duplicate entries
+    query.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_games_store_app "
+               "ON games(store_source, app_id)");
+
     query.exec("CREATE TABLE IF NOT EXISTS game_sessions ("
                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                "game_id INTEGER NOT NULL,"
@@ -60,6 +64,33 @@ void Database::createTables() {
     // FTS5 for fast search
     query.exec("CREATE VIRTUAL TABLE IF NOT EXISTS games_fts USING fts5("
                "title, tags, metadata, content='games', content_rowid='id')");
+
+    // Migration: clear stale steam://install/ launch commands.
+    // These were set by the old install flow; installation is now handled
+    // by steamcmd via GameManager::installGame(), not via launch_command.
+    query.exec("UPDATE games SET launch_command = '' "
+               "WHERE store_source = 'steam' AND is_installed = 0 "
+               "AND launch_command LIKE 'steam steam://install/%'");
+
+    // Migration: fix games hidden by uninitialized isHidden garbage values.
+    // The Game struct previously had uninitialized bool members, so games
+    // added via the Steam API could have random non-zero is_hidden values.
+    // There is no UI to hide games, so all hidden games are from this bug.
+    query.exec("UPDATE games SET is_hidden = 0 WHERE is_hidden != 0");
+
+    // Migration: add -silent flag to Steam launch commands so the Steam
+    // client UI doesn't show when launching games.
+    query.exec("UPDATE games SET launch_command = REPLACE(launch_command, "
+               "'steam steam://rungameid/', 'steam -silent steam://rungameid/') "
+               "WHERE launch_command LIKE 'steam steam://rungameid/%'");
+
+    // Migration: add -nofriendsui -nochatui flags to suppress friends list
+    // and chat windows that appear alongside game launches.
+    query.exec("UPDATE games SET launch_command = REPLACE(launch_command, "
+               "'steam -silent steam://rungameid/', "
+               "'steam -silent -nofriendsui -nochatui steam://rungameid/') "
+               "WHERE launch_command LIKE 'steam -silent steam://rungameid/%' "
+               "AND launch_command NOT LIKE '%nofriendsui%'");
 
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
@@ -156,8 +187,40 @@ Game Database::getGameById(int gameId) {
     return Game{}; // Return empty game if not found
 }
 
+Game Database::getGameByStoreAndAppId(const QString& storeSource, const QString& appId) {
+    QSqlQuery query;
+    query.prepare("SELECT * FROM games WHERE store_source = ? AND app_id = ?");
+    query.addBindValue(storeSource);
+    query.addBindValue(appId);
+    if (query.exec() && query.next()) {
+        return gameFromQuery(query);
+    }
+    return Game{};
+}
+
+int Database::addOrUpdateGame(const Game& game) {
+    Game existing = getGameByStoreAndAppId(game.storeSource, game.appId);
+    if (existing.id > 0) {
+        // Update existing game, but preserve user data (favorites, hidden, last_played)
+        Game updated = game;
+        updated.id = existing.id;
+        updated.isFavorite = existing.isFavorite;
+        updated.isHidden = existing.isHidden;
+        if (existing.lastPlayed > 0) {
+            updated.lastPlayed = existing.lastPlayed;
+        }
+        if (existing.playTimeHours > game.playTimeHours) {
+            updated.playTimeHours = existing.playTimeHours;
+        }
+        updateGame(updated);
+        return existing.id;
+    }
+    return addGame(game);
+}
+
 QVector<Game> Database::getAllGames() {
-    QSqlQuery query("SELECT * FROM games WHERE is_hidden = 0 AND is_installed = 1 ORDER BY title ASC");
+    // Show all owned games: installed first, then uninstalled, alphabetical within each group
+    QSqlQuery query("SELECT * FROM games WHERE is_hidden = 0 ORDER BY is_installed DESC, title ASC");
     QVector<Game> games;
     while (query.next()) {
         games.append(gameFromQuery(query));

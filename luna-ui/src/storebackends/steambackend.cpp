@@ -4,6 +4,11 @@
 #include <QTextStream>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QSet>
+#include <QDebug>
 
 bool SteamBackend::isAvailable() const {
     return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
@@ -78,17 +83,152 @@ Game SteamBackend::parseAppManifest(const QString& manifestPath) {
         game.installPath = installMatch.captured(1);
     }
 
-    game.launchCommand = "steam steam://rungameid/" + game.appId;
+    game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
     game.isInstalled = true;
 
     QString gridPath = QDir::homePath() + "/.local/share/Steam/appcache/librarycache/" + game.appId + "_library_600x900.jpg";
     if (QFile::exists(gridPath)) {
         game.coverArtUrl = gridPath;
+        qDebug() << "[steam-artwork] installed" << game.appId << game.title << "-> local cache:" << gridPath;
+    } else {
+        game.coverArtUrl = "https://steamcdn-a.akamaihd.net/steam/apps/" + game.appId + "/library_600x900_2x.jpg";
+        qDebug() << "[steam-artwork] installed" << game.appId << game.title << "-> local cache MISSING, using CDN:" << game.coverArtUrl;
     }
 
     return game;
 }
 
 bool SteamBackend::launchGame(const Game& game) {
-    return QProcess::startDetached("steam", QStringList() << "steam://rungameid/" + game.appId);
+    // Use xdg-open to send the steam:// protocol URL to the
+    // already-running Steam process. This avoids spawning a new
+    // steam process which would open UI windows (friends list,
+    // hardware survey, etc.) even with -silent flags.
+    // Steam must already be running (ensureSteamRunning() does this).
+    QString url = "steam://rungameid/" + game.appId;
+
+    // Check if Steam is running — if so, use xdg-open for a clean
+    // protocol-only handoff with no extra windows.
+    QProcess pgrep;
+    pgrep.start("pgrep", QStringList() << "-x" << "steam");
+    pgrep.waitForFinished(2000);
+
+    if (pgrep.exitCode() == 0) {
+        return QProcess::startDetached("xdg-open", QStringList() << url);
+    }
+
+    // Steam not running — launch it with suppression flags + the game URL
+    return QProcess::startDetached("steam", QStringList()
+        << "-silent" << "-nofriendsui" << "-nochatui"
+        << url);
+}
+
+QString SteamBackend::getLoggedInSteamId() const {
+    QString loginUsersPath = QDir::homePath() + "/.local/share/Steam/config/loginusers.vdf";
+    QFile file(loginUsersPath);
+    if (!file.open(QIODevice::ReadOnly)) return QString();
+
+    QTextStream in(&file);
+    QString content = in.readAll();
+
+    // loginusers.vdf structure:
+    //   "users" { "76561198012345678" { "MostRecent" "1" ... } }
+    // Find all Steam64 IDs (17-digit numbers) and pick the one with MostRecent=1
+    QRegularExpression userBlockRe(
+        "\"(7656119\\d{10})\"\\s*\\{([^}]+)\\}");
+    auto matches = userBlockRe.globalMatch(content);
+
+    QString fallbackId;
+    while (matches.hasNext()) {
+        auto match = matches.next();
+        QString steamId = match.captured(1);
+        QString block = match.captured(2);
+
+        if (fallbackId.isEmpty()) {
+            fallbackId = steamId;
+        }
+
+        if (block.contains("\"MostRecent\"") &&
+            block.contains("\"1\"")) {
+            return steamId;
+        }
+    }
+
+    return fallbackId;
+}
+
+QSet<QString> SteamBackend::getInstalledAppIds() const {
+    QSet<QString> ids;
+    // Use a const-safe copy of getLibraryFolders logic
+    QString vdfPath = QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf";
+    QFile vdfFile(vdfPath);
+    if (!vdfFile.open(QIODevice::ReadOnly)) return ids;
+
+    QTextStream vdfIn(&vdfFile);
+    QString vdfContent = vdfIn.readAll();
+    QRegularExpression pathRe("\"path\"\\s+\"([^\"]+)\"");
+    auto pathMatches = pathRe.globalMatch(vdfContent);
+
+    while (pathMatches.hasNext()) {
+        auto pathMatch = pathMatches.next();
+        QString folder = pathMatch.captured(1);
+        QDir steamapps(folder + "/steamapps");
+        QStringList manifests = steamapps.entryList(
+            QStringList() << "appmanifest_*.acf", QDir::Files);
+        for (const QString& manifest : manifests) {
+            QRegularExpression idRe("appmanifest_(\\d+)\\.acf");
+            auto idMatch = idRe.match(manifest);
+            if (idMatch.hasMatch()) {
+                ids.insert(idMatch.captured(1));
+            }
+        }
+    }
+    return ids;
+}
+
+QVector<Game> SteamBackend::parseOwnedGamesResponse(const QByteArray& jsonData) const {
+    QVector<Game> games;
+    QSet<QString> installedIds = getInstalledAppIds();
+
+    QJsonDocument doc = QJsonDocument::fromJson(jsonData);
+    if (doc.isNull()) return games;
+
+    QJsonObject root = doc.object();
+    QJsonObject response = root["response"].toObject();
+    QJsonArray gamesArray = response["games"].toArray();
+
+    for (const QJsonValue& val : gamesArray) {
+        QJsonObject obj = val.toObject();
+        Game game;
+        game.storeSource = "steam";
+        game.appId = QString::number(obj["appid"].toInt());
+        game.title = obj["name"].toString();
+        game.isInstalled = installedIds.contains(game.appId);
+        game.playTimeHours = obj["playtime_forever"].toInt() / 60;
+
+        if (game.isInstalled) {
+            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
+        }
+        // Uninstalled games have no launchCommand — installation is
+        // handled by GameManager::installGame() via steamcmd.
+
+        // Use local cover art cache if available, otherwise use Steam CDN URL
+        QString localGrid = QDir::homePath() +
+            "/.local/share/Steam/appcache/librarycache/" +
+            game.appId + "_library_600x900.jpg";
+        if (QFile::exists(localGrid)) {
+            game.coverArtUrl = localGrid;
+            qDebug() << "[steam-artwork] api" << game.appId << game.title << "-> local cache:" << localGrid;
+        } else {
+            game.coverArtUrl =
+                "https://steamcdn-a.akamaihd.net/steam/apps/" +
+                game.appId + "/library_600x900_2x.jpg";
+            qDebug() << "[steam-artwork] api" << game.appId << game.title << "-> CDN fallback:" << game.coverArtUrl;
+        }
+
+        if (!game.title.isEmpty()) {
+            games.append(game);
+        }
+    }
+
+    return games;
 }

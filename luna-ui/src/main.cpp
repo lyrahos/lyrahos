@@ -6,6 +6,7 @@
 #include "gamemanager.h"
 #include "database.h"
 #include "controllermanager.h"
+#include "artworkmanager.h"
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
@@ -22,11 +23,13 @@ int main(int argc, char *argv[]) {
     GameManager gameManager(&db);
     ControllerManager controllerManager;
     controllerManager.initialize();
+    ArtworkManager artworkManager;
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
     engine.rootContext()->setContextProperty("ControllerManager", &controllerManager);
+    engine.rootContext()->setContextProperty("ArtworkManager", &artworkManager);
 
     // RESOURCE_PREFIX / in CMakeLists.txt places QML files at :/LunaUI/...
     engine.load(QUrl(QStringLiteral("qrc:/LunaUI/qml/Main.qml")));

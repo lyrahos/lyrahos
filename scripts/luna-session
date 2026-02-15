@@ -140,6 +140,21 @@ while true; do
         steam -gamepadui >> "$STEAM_LOG" 2>&1 &
         STEAM_PID=$!
 
+        # Give Steam time to fully start up before checking for login.
+        # Steam touches libraryfolders.vdf during its own bootstrap
+        # (even before showing the login screen), which would
+        # false-trigger the mtime check and kill Steam instantly.
+        echo "luna-inner: waiting 30s for Steam to start up..." >> "$LUNA_LOG"
+        for _startup in $(seq 1 15); do
+            kill -0 "$STEAM_PID" 2>/dev/null || break
+            sleep 2
+        done
+
+        # Re-snapshot the mtime AFTER Steam's startup, so we only
+        # detect actual login activity from this point forward.
+        STEAM_LIB_MTIME=""
+        [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
+
         # Wait for login: libraryfolders.vdf appears or is updated,
         # then shut Steam down and return to luna-ui.
         while kill -0 "$STEAM_PID" 2>/dev/null; do

@@ -3,8 +3,13 @@
 
 #include <QObject>
 #include <QVector>
+#include <QHash>
 #include <QTimer>
 #include <QVariantList>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QFileSystemWatcher>
+#include <QProcess>
 #include "database.h"
 #include "storebackend.h"
 
@@ -29,14 +34,64 @@ public:
     Q_INVOKABLE int getGameCount();
     Q_INVOKABLE bool isNetworkAvailable();
     Q_INVOKABLE QVariantList getWifiNetworks();
+    Q_INVOKABLE void scanWifiNetworks();
     Q_INVOKABLE void connectToWifi(const QString& ssid, const QString& password);
+    Q_INVOKABLE QString getConnectedWifi();
+    Q_INVOKABLE void disconnectWifi();
+
+    // Steam API key & owned games
+    Q_INVOKABLE QString getSteamApiKey();
+    Q_INVOKABLE void setSteamApiKey(const QString& key);
+    Q_INVOKABLE bool hasSteamApiKey();
+    Q_INVOKABLE QString getDetectedSteamId();
+    Q_INVOKABLE void fetchSteamOwnedGames();
+    Q_INVOKABLE void openSteamApiKeyPage();
+
+    // SteamCMD-based game installation
+    Q_INVOKABLE void installGame(int gameId);
+    Q_INVOKABLE bool isDownloading(const QString& appId);
+    Q_INVOKABLE double getDownloadProgress(const QString& appId);
+    Q_INVOKABLE void cancelDownload(const QString& appId);
+    Q_INVOKABLE bool isSteamCmdAvailable();
+    Q_INVOKABLE QString getSteamUsername();
+
+    // SteamCMD credential input (for interactive login)
+    Q_INVOKABLE void provideSteamCmdCredential(const QString& appId, const QString& credential);
+
+    // Steam Setup Wizard — guided first-time setup
+    Q_INVOKABLE void openApiKeyInBrowser();
+    Q_INVOKABLE void closeApiKeyBrowser();
+    Q_INVOKABLE void scrapeApiKeyFromPage();
+    Q_INVOKABLE void downloadSteamCmd();
+    Q_INVOKABLE void loginSteamCmd();
+    Q_INVOKABLE void provideSteamCmdSetupCredential(const QString& credential);
+    Q_INVOKABLE void cancelSteamCmdSetup();
+    Q_INVOKABLE bool isSteamSetupComplete();
+    Q_INVOKABLE void ensureSteamRunning();
 
 signals:
     void gamesUpdated();
-    void gameLaunched(int gameId);
+    void gameLaunched(int gameId, QString gameTitle);
+    void gameLaunchError(int gameId, QString gameTitle, QString error);
     void gameExited(int gameId);
     void scanComplete(int gamesFound);
     void wifiConnectResult(bool success, const QString& message);
+    void wifiDisconnectResult(bool success, const QString& message);
+    void wifiNetworksScanned(QVariantList networks);
+    void steamOwnedGamesFetched(int gamesFound);
+    void steamOwnedGamesFetchError(const QString& error);
+    void downloadStarted(QString appId, int gameId);
+    void downloadProgressChanged(QString appId, double progress);
+    void downloadComplete(QString appId, int gameId);
+    void installError(QString appId, QString error);
+    void steamCmdCredentialNeeded(QString appId, QString promptType);
+
+    // Setup wizard signals
+    void apiKeyScraped(QString key);
+    void apiKeyScrapeError(QString error);
+    void steamCmdSetupCredentialNeeded(QString promptType);
+    void steamCmdSetupLoginSuccess();
+    void steamCmdSetupLoginError(QString error);
 
 private:
     Database *m_db;
@@ -44,11 +99,35 @@ private:
     int m_activeSessionId = -1;
     int m_activeGameId = -1;
     QTimer *m_processMonitor;
+    QNetworkAccessManager *m_networkManager;
+
+    // Download tracking: appId → gameId
+    QHash<QString, int> m_activeDownloads;
+    // SteamCMD processes: appId → QProcess*
+    QHash<QString, QProcess*> m_steamCmdProcesses;
+    // Download progress cache: appId → progress (0.0-1.0)
+    QHash<QString, double> m_downloadProgressCache;
+    QTimer *m_downloadMonitor;
+    QFileSystemWatcher *m_acfWatcher;
+
+    // SteamCMD setup (login-only) process
+    QProcess *m_steamCmdSetupProc = nullptr;
+
+    // Browser process launched for API key page
+    qint64 m_apiKeyBrowserPid = 0;
+    QString m_apiKeyBrowserType;
 
     void registerBackends();
     void monitorGameProcess();
+    void checkDownloadProgress();
+    void handleSteamCmdOutput(const QString& appId, QProcess *proc);
+    void ensureSteamCmd(int gameId);
+    QString findSteamCmdBin() const;
+    QString steamCmdDataDir() const;
     StoreBackend* getBackendForGame(const Game& game);
     QVariantList gamesToVariantList(const QVector<Game>& games);
+    QString steamApiKeyPath() const;
+    QStringList getSteamAppsDirs() const;
 };
 
 #endif
