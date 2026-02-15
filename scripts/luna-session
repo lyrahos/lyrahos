@@ -53,10 +53,12 @@ export VKD3D_CONFIG=dxr
 # Signal files written by luna-ui before it exits:
 #   luna-switch-to-desktop  → user wants KDE, exit to SDDM
 #   luna-launch-steam       → user wants Steam login
+#   luna-logout             → user wants to log out (return to SDDM)
 SWITCH_SIGNAL="/tmp/luna-switch-to-desktop"
 STEAM_SIGNAL="/tmp/luna-launch-steam"
+LOGOUT_SIGNAL="/tmp/luna-logout"
 GAMESCOPE_OK="/tmp/luna-gamescope-ok"
-rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$GAMESCOPE_OK"
+rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$LOGOUT_SIGNAL" "$GAMESCOPE_OK"
 
 # Log everything for diagnostics.
 # Primary: file log (always works).  Secondary: systemd journal.
@@ -67,10 +69,19 @@ echo "luna-session: starting at $(date)"
 echo "luna-session: KWIN_DRM_DEVICES=${KWIN_DRM_DEVICES:-<unset>} LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-<unset>}"
 echo "luna-session: render nodes: $(ls /dev/dri/renderD* 2>/dev/null || echo 'NONE')"
 
+# ── Helper: handle logout (return to SDDM) ──
+try_logout() {
+    if [ -f "$LOGOUT_SIGNAL" ]; then
+        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$LOGOUT_SIGNAL" "$GAMESCOPE_OK"
+        echo "luna-session: logging out, returning to SDDM..."
+        exit 0
+    fi
+}
+
 # ── Helper: handle desktop switch ──
 try_desktop_switch() {
     if [ -f "$SWITCH_SIGNAL" ]; then
-        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$GAMESCOPE_OK"
+        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$LOGOUT_SIGNAL" "$GAMESCOPE_OK"
         echo "luna-session: switching to Desktop Mode..."
         export XDG_CURRENT_DESKTOP=KDE
         export QT_QPA_PLATFORM=wayland
@@ -88,6 +99,7 @@ cat > "$GAMESCOPE_INNER" << 'INNER_EOF'
 #!/bin/bash
 SWITCH="/tmp/luna-switch-to-desktop"
 STEAM="/tmp/luna-launch-steam"
+LOGOUT="/tmp/luna-logout"
 LUNA_LOG="/tmp/luna-session.log"
 
 # Signal that gamescope started successfully and the inner script ran
@@ -279,6 +291,7 @@ gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope exited ($rc)"
 
+try_logout
 try_desktop_switch
 
 # Did the inner script run? If so, gamescope was working and the
@@ -299,6 +312,7 @@ gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope retry exited ($rc)"
 
+try_logout
 try_desktop_switch
 
 if [ -f "$GAMESCOPE_OK" ]; then
@@ -337,6 +351,7 @@ while true; do
     kwin_wayland --no-lockscreen --no-global-shortcuts -- /usr/bin/luna-ui
     rc=$?
 
+    try_logout
     try_desktop_switch
 
     if [ -f "$STEAM_SIGNAL" ]; then
