@@ -82,7 +82,15 @@ Rectangle {
                     return coverArt
                 return ""
             }
-            fillMode: Image.PreserveAspectCrop
+            // Landscape fallback images (e.g. header.jpg 460x215) look
+            // terrible with AspectCrop in a portrait card — they zoom in
+            // to ~3x showing only a tiny slice.  Detect the aspect ratio
+            // once loaded and use AspectFit for landscape art so the full
+            // image is visible at a reasonable size.
+            fillMode: (implicitWidth > 0 && implicitHeight > 0
+                       && implicitWidth / implicitHeight > 1.2)
+                      ? Image.PreserveAspectFit
+                      : Image.PreserveAspectCrop
             visible: status === Image.Ready
             opacity: isInstalled ? 1.0 : (downloadProgress >= 0 ? 0.7 : 0.5)
             asynchronous: true
