@@ -295,20 +295,35 @@ int GameManager::getGameCount() {
 }
 
 bool GameManager::isNetworkAvailable() {
+    // Fast path: check for any non-loopback interface with an IP address.
+    // Accept both IPv4 and IPv6, and don't require the IsRunning flag —
+    // many wireless drivers (especially on gaming handhelds) don't report
+    // it correctly even when fully connected.
     const auto interfaces = QNetworkInterface::allInterfaces();
     for (const auto &iface : interfaces) {
         if (iface.flags().testFlag(QNetworkInterface::IsUp) &&
-            iface.flags().testFlag(QNetworkInterface::IsRunning) &&
             !iface.flags().testFlag(QNetworkInterface::IsLoopBack)) {
             const auto entries = iface.addressEntries();
             for (const auto &entry : entries) {
-                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol &&
-                    !entry.ip().isLoopback()) {
+                if (!entry.ip().isLoopback() && !entry.ip().isNull()) {
                     return true;
                 }
             }
         }
     }
+
+    // Fallback: ask NetworkManager directly (always present on Lyrah OS).
+    // This catches edge cases where QNetworkInterface doesn't see
+    // addresses yet (e.g. WiFi just connected, DHCP still pending).
+    QProcess nmcli;
+    nmcli.start("nmcli", QStringList() << "networking" << "connectivity" << "check");
+    if (nmcli.waitForFinished(3000)) {
+        QString state = QString::fromUtf8(nmcli.readAllStandardOutput()).trimmed();
+        if (state == "full" || state == "limited" || state == "portal") {
+            return true;
+        }
+    }
+
     return false;
 }
 
