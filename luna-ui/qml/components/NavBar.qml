@@ -16,8 +16,8 @@ Rectangle {
 
     readonly property var sections: [
         { name: "Games",    section: "Games" },
-        { name: "App Store", section: "Store" },
-        { name: "Apps",     section: "Media" },
+        { name: "Browse Apps", section: "Store" },
+        { name: "My Apps",    section: "Media" },
         { name: "Settings", section: "Settings" }
     ]
 
