@@ -1370,11 +1370,11 @@ Rectangle {
             onTriggered: {
                 apiKeyWebView.runJavaScript(
                     "(function() {" +
-                    "  var els = document.querySelectorAll('#bodyContents_ex p, p, td, code, div');" +
-                    "  for (var i = 0; i < els.length; i++) {" +
-                    "    var text = els[i].textContent.trim();" +
-                    "    if (/^[A-F0-9]{32}$/.test(text)) return text;" +
-                    "  }" +
+                    "  var text = document.body.innerText || '';" +
+                    "  var m = text.match(/Key[:\\s]+([A-Fa-f0-9]{32})/);" +
+                    "  if (m) return m[1].toUpperCase();" +
+                    "  m = text.match(/([A-Fa-f0-9]{32})/);" +
+                    "  if (m) return m[1].toUpperCase();" +
                     "  return null;" +
                     "})()",
                     function(result) {
