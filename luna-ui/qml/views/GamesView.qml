@@ -1212,8 +1212,12 @@ Rectangle {
         GameManager.ensureSteamRunning()
 
         // Check if we're returning from a Steam login (step 1 of wizard).
-        // The wizard sets "__setup_pending__" as API key before launching Steam.
-        if (GameManager.getSteamApiKey() === "__setup_pending__") {
+        // Two scenarios:
+        // A) User had no API key yet: marker is "__setup_pending__" → clear and resume wizard
+        // B) User already had a saved key (re-ran setup): key is preserved, but we
+        //    still need to detect the "just returned from Steam login" state.
+        var currentKey = GameManager.getSteamApiKey()
+        if (currentKey === "__setup_pending__") {
             GameManager.setSteamApiKey("")  // Clear the marker
             if (GameManager.isSteamAvailable()) {
                 // Steam login succeeded — jump to API key step

@@ -16,6 +16,7 @@
 #include <QTextStream>
 #include <QRegularExpression>
 #include <memory>
+#include <unistd.h>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -184,8 +185,13 @@ bool GameManager::isSteamInstalled() {
 }
 
 bool GameManager::isSteamAvailable() {
-    // Steam is "available" if the user has logged in (library data exists)
-    return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
+    // Steam is "available" if the user has logged in (library data exists).
+    // Check both common Linux Steam paths — the canonical data directory
+    // and the ~/.steam/steam symlink/directory — because the layout varies
+    // between distros and bootstrap methods.
+    QString home = QDir::homePath();
+    return QFile::exists(home + "/.local/share/Steam/steamapps/libraryfolders.vdf")
+        || QFile::exists(home + "/.steam/steam/steamapps/libraryfolders.vdf");
 }
 
 void GameManager::launchSteam() {
@@ -511,6 +517,10 @@ void GameManager::setSteamApiKey(const QString& key) {
     QFile file(steamApiKeyPath());
     if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         file.write(key.trimmed().toUtf8());
+        // Ensure the key is flushed to disk immediately so it survives
+        // unexpected session termination (e.g., SDDM logout).
+        file.flush();
+        fsync(file.handle());
     }
 }
 
