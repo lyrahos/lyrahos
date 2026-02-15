@@ -3,7 +3,42 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 Rectangle {
+    id: settingsRoot
     color: "transparent"
+    focus: true
+
+    // Controller / keyboard row navigation
+    // 0 = Wi-Fi, 1 = Switch to Desktop, 2 = Log Out, 3 = Theme
+    property int focusedRow: 0
+    readonly property int rowCount: 4
+
+    Keys.onUpPressed: {
+        if (focusedRow > 0) focusedRow--
+    }
+    Keys.onDownPressed: {
+        if (focusedRow < rowCount - 1) focusedRow++
+    }
+    Keys.onReturnPressed: activateRow(focusedRow)
+    Keys.onEnterPressed: activateRow(focusedRow)
+
+    function activateRow(row) {
+        switch (row) {
+        case 0:
+            wifiExpanded = !wifiExpanded
+            if (wifiExpanded) {
+                wifiStatus = ""
+                selectedSsid = ""
+                settingsWifiPasswordField.text = ""
+                wifiScanning = true
+                settingsWifiModel.clear()
+                GameManager.scanWifiNetworks()
+            }
+            break
+        case 1: switchToDesktop(); break
+        case 2: GameManager.logout(); break
+        // case 3: theme — placeholder, no action yet
+        }
+    }
 
     // WiFi state
     property string connectedSsid: ""
@@ -77,6 +112,11 @@ Rectangle {
             Layout.preferredHeight: wifiCol.height + 32
             radius: 12
             color: ThemeManager.getColor("surface")
+            border.color: focusedRow === 0
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: focusedRow === 0 ? 2 : 0
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
 
             ColumnLayout {
                 id: wifiCol
@@ -556,13 +596,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: switchArea.containsMouse
+            border.color: (switchArea.containsMouse || focusedRow === 1)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: switchArea.containsMouse ? 2 : 0
-
-            focus: true
-            Keys.onReturnPressed: switchToDesktop()
-            Keys.onEnterPressed: switchToDesktop()
+            border.width: (switchArea.containsMouse || focusedRow === 1) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -571,6 +607,7 @@ Rectangle {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
                     spacing: 4
 
                     Text {
@@ -591,6 +628,7 @@ Rectangle {
                 Rectangle {
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 40
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 20
                     color: ThemeManager.getColor("primary")
 
@@ -608,6 +646,7 @@ Rectangle {
                 id: switchArea
                 anchors.fill: parent
                 hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
                 onClicked: switchToDesktop()
             }
 
@@ -620,9 +659,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: logoutArea.containsMouse
+            border.color: (logoutArea.containsMouse || focusedRow === 2)
                           ? "#ff6b6b" : "transparent"
-            border.width: logoutArea.containsMouse ? 2 : 0
+            border.width: (logoutArea.containsMouse || focusedRow === 2) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -631,6 +670,7 @@ Rectangle {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
                     spacing: 4
 
                     Text {
@@ -651,15 +691,18 @@ Rectangle {
                 Rectangle {
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 40
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 20
-                    color: logoutArea.containsMouse ? "#ff6b6b" : Qt.rgba(1, 0.42, 0.42, 0.15)
+                    color: (logoutArea.containsMouse || focusedRow === 2)
+                           ? "#ff6b6b" : Qt.rgba(1, 0.42, 0.42, 0.15)
 
                     Text {
                         anchors.centerIn: parent
                         text: "\u23FB"
                         font.pixelSize: 18
                         font.bold: true
-                        color: logoutArea.containsMouse ? "white" : "#ff6b6b"
+                        color: (logoutArea.containsMouse || focusedRow === 2)
+                               ? "white" : "#ff6b6b"
                     }
 
                     Behavior on color { ColorAnimation { duration: 150 } }
@@ -683,6 +726,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
+            border.color: focusedRow === 3
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: focusedRow === 3 ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -701,6 +747,8 @@ Rectangle {
                     color: ThemeManager.getColor("textSecondary")
                 }
             }
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
         }
 
         Item { Layout.fillHeight: true }
