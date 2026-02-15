@@ -102,6 +102,47 @@ STEAM="/tmp/luna-launch-steam"
 LOGOUT="/tmp/luna-logout"
 LUNA_LOG="/tmp/luna-session.log"
 
+# ── Helper: suppress hardware survey in ALL registry.vdf locations ──
+# Steam may read from ~/.steam/ or ~/.local/share/Steam/ depending on
+# distro layout and whether ~/.steam is a symlink. Cover both.
+suppress_hardware_survey() {
+    local _paths="$HOME/.steam/registry.vdf $HOME/.local/share/Steam/registry.vdf"
+    mkdir -p "$HOME/.steam" "$HOME/.local/share/Steam"
+    for _reg in $_paths; do
+        if grep -q '"SurveyDate".*"2030-01-01"' "$_reg" 2>/dev/null; then
+            continue
+        fi
+        if [ -s "$_reg" ] && grep -q '"Steam"' "$_reg"; then
+            sed -i '/"SurveyDate"/d; /"SurveyDateVersion"/d' "$_reg"
+            sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
+\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
+\t\t\t\t\t"SurveyDateVersion"\t\t"999"
+}}' "$_reg"
+        else
+            cat > "$_reg" << 'REGEOF'
+"Registry"
+{
+	"HKLM"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"SurveyDate"		"2030-01-01"
+					"SurveyDateVersion"		"999"
+				}
+			}
+		}
+	}
+}
+REGEOF
+        fi
+        echo "suppress_hardware_survey: updated $_reg" >> "$LUNA_LOG"
+    done
+}
+
 # Signal that gamescope started successfully and the inner script ran
 touch /tmp/luna-gamescope-ok
 
@@ -146,54 +187,7 @@ while true; do
         [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
 
         # Suppress the hardware survey dialog before Steam starts.
-        # Surgically inject/update survey keys in registry.vdf WITHOUT
-        # overwriting the entire file (which would destroy Steam's
-        # login state, cookies, and other settings).
-        #
-        # IMPORTANT: Check for our SPECIFIC future date, not just key
-        # existence. After the first Steam session, Steam overwrites
-        # registry.vdf with its own real SurveyDate/SurveyDateVersion
-        # values. If we only check for key existence, we'd skip
-        # injection and the survey would pop up on the next login.
-        STEAM_REG="$HOME/.steam/registry.vdf"
-        mkdir -p "$HOME/.steam"
-        if ! grep -q '"SurveyDate".*"2030-01-01"' "$STEAM_REG" 2>/dev/null; then
-            if [ -s "$STEAM_REG" ] && grep -q '"Steam"' "$STEAM_REG"; then
-                # File exists with a "Steam" section — update or inject.
-                # First, remove any existing survey keys that Steam wrote
-                # (they'll have real dates, not our fake future one).
-                sed -i '/"SurveyDate"/d; /"SurveyDateVersion"/d' "$STEAM_REG"
-                # Now inject our suppression keys after the "Steam" block's
-                # opening brace.
-                # VDF format: "Steam"\n{ — we add lines after the {.
-                sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
-\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
-\t\t\t\t\t"SurveyDateVersion"\t\t"999"
-}}' "$STEAM_REG"
-            else
-                # No existing file or no Steam section — safe to create
-                cat > "$STEAM_REG" << 'REGEOF'
-"Registry"
-{
-	"HKLM"
-	{
-		"Software"
-		{
-			"Valve"
-			{
-				"Steam"
-				{
-					"SurveyDate"		"2030-01-01"
-					"SurveyDateVersion"		"999"
-				}
-			}
-		}
-	}
-}
-REGEOF
-            fi
-            echo "luna-inner: wrote hardware survey suppression to $STEAM_REG" >> "$LUNA_LOG"
-        fi
+        suppress_hardware_survey
 
         echo "luna-inner: launching Steam for login at $(date)" >> "$LUNA_LOG"
         # Use -gamepadui (Steam Deck UI) so the login screen renders at
@@ -331,6 +325,47 @@ if [ -f "$GAMESCOPE_OK" ]; then
     exit 0
 fi
 
+# ── Helper: suppress hardware survey (outer script version) ──
+# Same logic as the gamescope inner script function, but available
+# in the kwin_wayland fallback path.
+suppress_hardware_survey_outer() {
+    local _paths="$HOME/.steam/registry.vdf $HOME/.local/share/Steam/registry.vdf"
+    mkdir -p "$HOME/.steam" "$HOME/.local/share/Steam"
+    for _reg in $_paths; do
+        if grep -q '"SurveyDate".*"2030-01-01"' "$_reg" 2>/dev/null; then
+            continue
+        fi
+        if [ -s "$_reg" ] && grep -q '"Steam"' "$_reg"; then
+            sed -i '/"SurveyDate"/d; /"SurveyDateVersion"/d' "$_reg"
+            sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
+\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
+\t\t\t\t\t"SurveyDateVersion"\t\t"999"
+}}' "$_reg"
+        else
+            cat > "$_reg" << 'REGEOF'
+"Registry"
+{
+	"HKLM"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"SurveyDate"		"2030-01-01"
+					"SurveyDateVersion"		"999"
+				}
+			}
+		}
+	}
+}
+REGEOF
+        fi
+        echo "suppress_hardware_survey: updated $_reg" >> "$LUNA_LOG"
+    done
+}
+
 # ── kwin_wayland fallback ──
 # gamescope can't get DRM at all (no Vulkan, VM, simpledrm, etc.).
 # Use kwin_wayland for both luna-ui and Steam.
@@ -366,40 +401,7 @@ while true; do
 
     if [ -f "$STEAM_SIGNAL" ]; then
         rm -f "$STEAM_SIGNAL"
-        # Suppress hardware survey before launching Steam (same logic
-        # as the gamescope inner script path).
-        STEAM_REG="$HOME/.steam/registry.vdf"
-        mkdir -p "$HOME/.steam"
-        if ! grep -q '"SurveyDate".*"2030-01-01"' "$STEAM_REG" 2>/dev/null; then
-            if [ -s "$STEAM_REG" ] && grep -q '"Steam"' "$STEAM_REG"; then
-                sed -i '/"SurveyDate"/d; /"SurveyDateVersion"/d' "$STEAM_REG"
-                sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
-\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
-\t\t\t\t\t"SurveyDateVersion"\t\t"999"
-}}' "$STEAM_REG"
-            else
-                cat > "$STEAM_REG" << 'REGEOF'
-"Registry"
-{
-	"HKLM"
-	{
-		"Software"
-		{
-			"Valve"
-			{
-				"Steam"
-				{
-					"SurveyDate"		"2030-01-01"
-					"SurveyDateVersion"		"999"
-				}
-			}
-		}
-	}
-}
-REGEOF
-            fi
-            echo "luna-session: wrote hardware survey suppression (kwin path)" >> "$LUNA_LOG"
-        fi
+        suppress_hardware_survey_outer
         echo "luna-session: launching Steam via kwin_wayland..."
         kwin_wayland --no-lockscreen --no-global-shortcuts -- steam
         echo "luna-session: Steam exited, restarting luna-ui..."

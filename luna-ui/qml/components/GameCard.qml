@@ -82,15 +82,12 @@ Rectangle {
                     return coverArt
                 return ""
             }
-            // Landscape fallback images (e.g. header.jpg 460x215) look
-            // terrible with AspectCrop in a portrait card — they zoom in
-            // to ~3x showing only a tiny slice.  Detect the aspect ratio
-            // once loaded and use AspectFit for landscape art so the full
-            // image is visible at a reasonable size.
-            fillMode: (implicitWidth > 0 && implicitHeight > 0
-                       && implicitWidth / implicitHeight > 1.2)
-                      ? Image.PreserveAspectFit
-                      : Image.PreserveAspectCrop
+            // Always use PreserveAspectFit so artwork is never zoomed or
+            // cropped. Some Steam games have non-standard cover art sizes
+            // that look wrong when AspectCrop zooms into a tiny slice.
+            // For proper 600x900 library images the card is nearly
+            // exactly 2:3, so the fit is virtually identical to crop.
+            fillMode: Image.PreserveAspectFit
             visible: status === Image.Ready
             opacity: isInstalled ? 1.0 : (downloadProgress >= 0 ? 0.7 : 0.5)
             asynchronous: true
