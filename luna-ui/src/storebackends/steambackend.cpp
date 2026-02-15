@@ -99,11 +99,27 @@ Game SteamBackend::parseAppManifest(const QString& manifestPath) {
 }
 
 bool SteamBackend::launchGame(const Game& game) {
-    // Suppress all Steam UI: no store, no friends list, no chat windows.
-    // Steam stays in the background and just launches the game.
+    // Use xdg-open to send the steam:// protocol URL to the
+    // already-running Steam process. This avoids spawning a new
+    // steam process which would open UI windows (friends list,
+    // hardware survey, etc.) even with -silent flags.
+    // Steam must already be running (ensureSteamRunning() does this).
+    QString url = "steam://rungameid/" + game.appId;
+
+    // Check if Steam is running — if so, use xdg-open for a clean
+    // protocol-only handoff with no extra windows.
+    QProcess pgrep;
+    pgrep.start("pgrep", QStringList() << "-x" << "steam");
+    pgrep.waitForFinished(2000);
+
+    if (pgrep.exitCode() == 0) {
+        return QProcess::startDetached("xdg-open", QStringList() << url);
+    }
+
+    // Steam not running — launch it with suppression flags + the game URL
     return QProcess::startDetached("steam", QStringList()
         << "-silent" << "-nofriendsui" << "-nochatui"
-        << "steam://rungameid/" + game.appId);
+        << url);
 }
 
 QString SteamBackend::getLoggedInSteamId() const {

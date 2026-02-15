@@ -194,9 +194,8 @@ void GameManager::launchSteam() {
 
 void GameManager::ensureSteamRunning() {
     // Pre-start Steam silently in the background so that when the user
-    // clicks Play, the steam:// protocol command is handled by the
-    // already-running process. This avoids the friends list, hardware
-    // survey, and other first-run UI that appears when Steam cold-starts.
+    // clicks Play, the steam:// protocol URL is handled by the
+    // already-running process via xdg-open — no new windows appear.
     if (!isSteamInstalled() || !isSteamAvailable()) return;
 
     // Check if Steam is already running
@@ -209,6 +208,8 @@ void GameManager::ensureSteamRunning() {
     }
 
     qDebug() << "Pre-starting Steam silently in background...";
+    // qputenv sets the variable in this process; child processes inherit it.
+    qputenv("STEAM_NO_CEFHOST", "1");
     QProcess::startDetached("steam", QStringList()
         << "-silent" << "-nofriendsui" << "-nochatui"
         << "-no-browser" << "-skipstreamingdrivers"
@@ -312,6 +313,47 @@ void GameManager::connectToWifi(const QString& ssid, const QString& password) {
         proc->deleteLater();
     });
     proc->start("nmcli", args);
+}
+
+QString GameManager::getConnectedWifi() {
+    QProcess proc;
+    // nmcli -t -f NAME connection show --active shows active connections
+    proc.start("nmcli", {"-t", "-f", "NAME,TYPE", "connection", "show", "--active"});
+    proc.waitForFinished(5000);
+
+    QString output = proc.readAllStandardOutput();
+    for (const QString& line : output.split('\n')) {
+        if (line.trimmed().isEmpty()) continue;
+        // Format: "ConnectionName:802-11-wireless"
+        int sep = line.lastIndexOf(':');
+        if (sep < 0) continue;
+        QString name = line.left(sep);
+        QString type = line.mid(sep + 1);
+        if (type.contains("wireless")) {
+            return name;
+        }
+    }
+    return QString();
+}
+
+void GameManager::disconnectWifi() {
+    QString ssid = getConnectedWifi();
+    if (ssid.isEmpty()) {
+        emit wifiDisconnectResult(false, "No Wi-Fi connection active");
+        return;
+    }
+
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        QString msg = success
+            ? "Disconnected"
+            : QString(proc->readAllStandardError()).trimmed();
+        emit wifiDisconnectResult(success, msg);
+        proc->deleteLater();
+    });
+    proc->start("nmcli", {"connection", "down", ssid});
 }
 
 // ── Steam API key management ──
@@ -1005,8 +1047,21 @@ void GameManager::openApiKeyInBrowser() {
 
 void GameManager::closeApiKeyBrowser() {
     if (m_apiKeyBrowserPid > 0) {
-        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid << ")";
-        QProcess::execute("kill", QStringList() << QString::number(m_apiKeyBrowserPid));
+        qDebug() << "Closing API key browser (pid:" << m_apiKeyBrowserPid
+                 << "type:" << m_apiKeyBrowserType << ")";
+        // Kill the process tree: the PID from startDetached is the
+        // launcher wrapper — the actual browser forks child processes.
+        // Use SIGTERM on the process group, then fall back to pkill
+        // by browser name to catch any orphans.
+        QProcess::execute("kill", QStringList() << "-TERM"
+            << QString::number(m_apiKeyBrowserPid));
+
+        // Also kill by name — Brave/Chromium fork many children that
+        // survive after the parent PID is killed.
+        if (!m_apiKeyBrowserType.isEmpty()) {
+            QProcess::execute("pkill", QStringList() << "-f"
+                << m_apiKeyBrowserType);
+        }
         m_apiKeyBrowserPid = 0;
     }
 }

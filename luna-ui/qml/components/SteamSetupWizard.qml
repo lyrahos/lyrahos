@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Window
 
 // Full-screen modal wizard for first-time Steam setup.
 // Step 1: Intro explaining the multi-login process
@@ -39,9 +38,13 @@ Rectangle {
             wizard.apiKeyScraping = false
             wizard.apiKeyScrapeErrorMsg = ""
             wizard.detectedApiKey = key
-            // Show the always-on-top popup over the kiosk browser
-            apiKeyOverlay.overlayKey = key
-            apiKeyOverlay.visible = true
+            // Kill the browser first so Luna UI comes back to the foreground,
+            // then show the confirmation overlay inline (no separate Window
+            // needed — gamescope stretches all Windows to fullscreen anyway).
+            GameManager.closeApiKeyBrowser()
+            wizard.apiKeyBrowserOpen = false
+            apiKeyConfirmOverlay.overlayKey = key
+            apiKeyConfirmOverlay.visible = true
         }
 
         function onApiKeyScrapeError(error) {
@@ -1266,26 +1269,19 @@ Rectangle {
         }
     }
 
-    // ── Always-on-top popup that appears over the kiosk browser ──
-    // Qt.WindowStaysOnTopHint ensures this floats above fullscreen/kiosk windows.
-    Window {
-        id: apiKeyOverlay
+    // ── API Key confirmation overlay (inline, not a separate Window) ──
+    // Shown after the browser is killed and Luna UI is back in focus.
+    // Using an inline Rectangle avoids gamescope stretching issues.
+    Rectangle {
+        id: apiKeyConfirmOverlay
         visible: false
-        width: 420
-        height: 260
-        flags: Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Dialog
-        color: "transparent"
-        x: (Screen.width - width) / 2
-        y: (Screen.height - height) / 2
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.85)
+        z: 300
 
         property string overlayKey: ""
 
-        // Gamescope may stretch the Window to fullscreen.
-        // Use a semi-transparent backdrop so the popup is visible either way.
-        Rectangle {
-            anchors.fill: parent
-            color: Qt.rgba(0, 0, 0, 0.6)
-        }
+        MouseArea { anchors.fill: parent; onClicked: {} }
 
         Rectangle {
             anchors.centerIn: parent
@@ -1295,15 +1291,6 @@ Rectangle {
             color: ThemeManager.getColor("surface")
             border.color: ThemeManager.getColor("accent")
             border.width: 2
-
-            // Drop shadow effect
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: -2
-                radius: 18
-                color: Qt.rgba(0, 0, 0, 0.5)
-                z: -1
-            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -1333,7 +1320,7 @@ Rectangle {
                     Text {
                         anchors.centerIn: parent
                         text: {
-                            var k = apiKeyOverlay.overlayKey
+                            var k = apiKeyConfirmOverlay.overlayKey
                             if (k.length > 12)
                                 return k.substring(0, 8) + "..." + k.substring(k.length - 4)
                             return k
@@ -1368,10 +1355,9 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                apiKeyOverlay.visible = false
-                                GameManager.closeApiKeyBrowser()
-                                GameManager.setSteamApiKey(apiKeyOverlay.overlayKey)
-                                wizard.detectedApiKey = apiKeyOverlay.overlayKey
+                                apiKeyConfirmOverlay.visible = false
+                                GameManager.setSteamApiKey(apiKeyConfirmOverlay.overlayKey)
+                                wizard.detectedApiKey = apiKeyConfirmOverlay.overlayKey
                                 wizard.currentStep = 3
                             }
                         }
@@ -1396,7 +1382,7 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                apiKeyOverlay.visible = false
+                                apiKeyConfirmOverlay.visible = false
                                 wizard.detectedApiKey = ""
                                 wizard.showManualInput = true
                             }
