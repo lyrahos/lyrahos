@@ -578,13 +578,17 @@ QStringList GameManager::getSteamAppsDirs() const {
 }
 
 QString GameManager::findSteamCmdBin() const {
-    // 1. Check PATH (system-installed via pacman/AUR)
-    QString inPath = QStandardPaths::findExecutable("steamcmd");
-    if (!inPath.isEmpty()) return inPath;
-
-    // 2. Check local download location (~/.steam/steamcmd/steamcmd.sh)
+    // 1. Prefer the local download (~/.steam/steamcmd/steamcmd.sh).
+    //    steamcmd.sh sets STEAMROOT to its own directory, so login tokens
+    //    are stored in ~/.steam/steamcmd/config/config.vdf — isolated
+    //    from the Steam client which overwrites ~/.local/share/Steam/config/.
+    //    This ensures credentials survive Steam client restarts.
     QString localBin = QDir::homePath() + "/.steam/steamcmd/steamcmd.sh";
     if (QFile::exists(localBin)) return localBin;
+
+    // 2. Fall back to system-installed binary (pacman/AUR)
+    QString inPath = QStandardPaths::findExecutable("steamcmd");
+    if (!inPath.isEmpty()) return inPath;
 
     return QString();
 }
@@ -1521,7 +1525,22 @@ void GameManager::loginSteamCmd() {
     // SteamCMD's exit codes are unreliable (often exits 5 even on success).
     auto loginOk = std::make_shared<bool>(false);
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, loginOk]() {
+    // Timer to send quit after the login token has been saved.
+    // SteamCMD prints "Logged in OK" → "Waiting for user info" → "OK"
+    // → "Steam>" — only at the Steam> prompt has the token been persisted.
+    // We wait for the Steam> prompt, or fall back to a 5-second delay.
+    auto quitTimer = new QTimer(this);
+    quitTimer->setSingleShot(true);
+    quitTimer->setInterval(5000);
+    connect(quitTimer, &QTimer::timeout, this, [this, quitTimer]() {
+        quitTimer->deleteLater();
+        if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+            qDebug() << "[steamcmd-setup] quit timer fired, sending quit";
+            m_steamCmdSetupProc->write("quit\n");
+        }
+    });
+
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, loginOk, quitTimer]() {
         QString output = QString::fromUtf8(m_steamCmdSetupProc->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
             QString trimmed = line.trimmed();
@@ -1539,12 +1558,23 @@ void GameManager::loginSteamCmd() {
                 emit steamCmdSetupCredentialNeeded("steamguard");
                 continue;
             }
-            // Successful login — SteamCMD prints these on a valid session.
-            // Now tell it to quit so it exits cleanly after saving the token.
-            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
-                trimmed.contains("Waiting for user info", Qt::CaseInsensitive)) {
+            // Successful login detected — but do NOT quit yet.
+            // SteamCMD needs to finish saving the login token to disk.
+            // Start a timeout; if we see the "Steam>" prompt we'll
+            // quit sooner.
+            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive)) {
                 *loginOk = true;
+                if (!quitTimer->isActive()) {
+                    qDebug() << "[steamcmd-setup] login OK, waiting for token save...";
+                    quitTimer->start();
+                }
+            }
+            // The Steam> prompt means SteamCMD is idle and the token
+            // has been fully written to config.vdf. Safe to quit now.
+            if (*loginOk && trimmed.startsWith("Steam>")) {
+                quitTimer->stop();
                 if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+                    qDebug() << "[steamcmd-setup] Steam> prompt seen, sending quit";
                     m_steamCmdSetupProc->write("quit\n");
                 }
             }
@@ -1553,6 +1583,7 @@ void GameManager::loginSteamCmd() {
                 trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
                 trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
                 *loginOk = false;
+                quitTimer->stop();
                 if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
                     m_steamCmdSetupProc->write("quit\n");
                 }
