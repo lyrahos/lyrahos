@@ -574,6 +574,13 @@ QStringList GameManager::getSteamAppsDirs() const {
         if (QDir(steamapps).exists())
             dirs.append(steamapps);
     }
+
+    // Include SteamCMD's steamapps (not in libraryfolders.vdf but has
+    // manifests and game files from SteamCMD-installed games)
+    QString steamCmdApps = QDir::homePath() + "/.steam/steamcmd/steamapps";
+    if (QDir(steamCmdApps).exists() && !dirs.contains(steamCmdApps))
+        dirs.append(steamCmdApps);
+
     return dirs;
 }
 

@@ -54,6 +54,17 @@ QVector<QString> SteamBackend::getLibraryFolders() {
         auto match = matches.next();
         folders.append(match.captured(1));
     }
+
+    // Also include SteamCMD's data directory. SteamCMD installs games
+    // to ~/.steam/steamcmd/ which is NOT listed in libraryfolders.vdf.
+    // After relog, the Steam client may remove the symlinked manifests
+    // we copied into its library, making SteamCMD-installed games
+    // invisible. Including SteamCMD's path ensures they're always found.
+    QString steamCmdDir = QDir::homePath() + "/.steam/steamcmd";
+    if (QDir(steamCmdDir + "/steamapps").exists() && !folders.contains(steamCmdDir)) {
+        folders.append(steamCmdDir);
+    }
+
     return folders;
 }
 
@@ -417,9 +428,19 @@ QSet<QString> SteamBackend::getInstalledAppIds() const {
     QRegularExpression pathRe("\"path\"\\s+\"([^\"]+)\"");
     auto pathMatches = pathRe.globalMatch(vdfContent);
 
+    QVector<QString> folders;
     while (pathMatches.hasNext()) {
         auto pathMatch = pathMatches.next();
-        QString folder = pathMatch.captured(1);
+        folders.append(pathMatch.captured(1));
+    }
+
+    // Include SteamCMD's directory (not listed in libraryfolders.vdf)
+    QString steamCmdDir = QDir::homePath() + "/.steam/steamcmd";
+    if (QDir(steamCmdDir + "/steamapps").exists() && !folders.contains(steamCmdDir)) {
+        folders.append(steamCmdDir);
+    }
+
+    for (const QString& folder : folders) {
         QDir steamapps(folder + "/steamapps");
         QStringList manifests = steamapps.entryList(
             QStringList() << "appmanifest_*.acf", QDir::Files);
