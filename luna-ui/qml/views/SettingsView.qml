@@ -614,6 +614,69 @@ Rectangle {
             Behavior on border.color { ColorAnimation { duration: 150 } }
         }
 
+        // ── Log Out ──
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 72
+            radius: 12
+            color: ThemeManager.getColor("surface")
+            border.color: logoutArea.containsMouse
+                          ? "#ff6b6b" : "transparent"
+            border.width: logoutArea.containsMouse ? 2 : 0
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 16
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    Text {
+                        text: "Log Out"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                    }
+                    Text {
+                        text: "Save session and return to login screen"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    radius: 20
+                    color: logoutArea.containsMouse ? "#ff6b6b" : Qt.rgba(1, 0.42, 0.42, 0.15)
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u23FB"
+                        font.pixelSize: 18
+                        font.bold: true
+                        color: logoutArea.containsMouse ? "white" : "#ff6b6b"
+                    }
+
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                }
+            }
+
+            MouseArea {
+                id: logoutArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: GameManager.logout()
+            }
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
+        }
+
         // Theme (placeholder)
         Rectangle {
             Layout.fillWidth: true

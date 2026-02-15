@@ -338,6 +338,22 @@ void GameManager::switchToDesktop() {
     QCoreApplication::quit();
 }
 
+void GameManager::logout() {
+    // Cancel all active downloads so SteamCMD processes don't linger.
+    QStringList activeApps = m_activeDownloads.keys();
+    for (const QString& appId : activeApps) {
+        cancelDownload(appId);
+    }
+
+    // Write a logout signal file. luna-session will see this and exit
+    // cleanly, which returns the display to SDDM (login screen).
+    QFile signal("/tmp/luna-logout");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
+
+    QCoreApplication::quit();
+}
+
 int GameManager::getGameCount() {
     return m_db->getAllGames().size();
 }

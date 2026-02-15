@@ -31,6 +31,7 @@ public:
     Q_INVOKABLE void launchSteam();
     Q_INVOKABLE void launchSteamLogin();
     Q_INVOKABLE void switchToDesktop();
+    Q_INVOKABLE void logout();
     Q_INVOKABLE int getGameCount();
     Q_INVOKABLE bool isNetworkAvailable();
     Q_INVOKABLE QVariantList getWifiNetworks();
