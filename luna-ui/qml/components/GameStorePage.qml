@@ -212,7 +212,7 @@ Item {
                         // Search icon
                         Text {
                             text: "\u2315"
-                            font.pixelSize: 18
+                            font.pixelSize: 20
                             color: ThemeManager.getColor("textSecondary")
                         }
 
@@ -253,16 +253,16 @@ Item {
                         // Clear button
                         Rectangle {
                             visible: searchInput.text.length > 0
-                            Layout.preferredWidth: 28
-                            Layout.preferredHeight: 28
-                            radius: 14
+                            Layout.preferredWidth: 32
+                            Layout.preferredHeight: 32
+                            radius: 16
                             color: clearSearchArea.containsMouse
                                    ? ThemeManager.getColor("hover") : "transparent"
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\u2715"
-                                font.pixelSize: 12
+                                font.pixelSize: 14
                                 color: ThemeManager.getColor("textSecondary")
                             }
 
@@ -286,8 +286,8 @@ Item {
                         model: sortOptions
 
                         Rectangle {
-                            width: sortChipText.width + 20
-                            height: 36
+                            width: sortChipText.width + 28
+                            height: 42
                             radius: 10
                             color: currentSort === modelData.value
                                    ? ThemeManager.getColor("primary")
@@ -302,7 +302,7 @@ Item {
                                 id: sortChipText
                                 anchors.centerIn: parent
                                 text: modelData.label
-                                font.pixelSize: 12
+                                font.pixelSize: ThemeManager.getFontSize("small")
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: currentSort === modelData.value
                                 color: currentSort === modelData.value
@@ -383,8 +383,8 @@ Item {
                         Item { Layout.fillWidth: true }
 
                         Rectangle {
-                            Layout.preferredWidth: backLabel.width + 24
-                            Layout.preferredHeight: 34
+                            Layout.preferredWidth: backLabel.width + 32
+                            Layout.preferredHeight: 42
                             radius: 8
                             color: ThemeManager.getColor("surface")
                             border.color: backBtnArea.containsMouse
@@ -395,7 +395,7 @@ Item {
                                 id: backLabel
                                 anchors.centerIn: parent
                                 text: "Back to Store"
-                                font.pixelSize: 12
+                                font.pixelSize: ThemeManager.getFontSize("small")
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: true
                                 color: ThemeManager.getColor("textPrimary")
@@ -412,15 +412,69 @@ Item {
                     }
 
                     // Loading spinner
-                    Text {
+                    ColumnLayout {
                         visible: loadingSearch
-                        text: "Searching game stores..."
-                        font.pixelSize: ThemeManager.getFontSize("medium")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
-                        font.italic: true
                         Layout.alignment: Qt.AlignHCenter
                         Layout.topMargin: 40
+                        spacing: 12
+
+                        Item {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: 56
+                            Layout.preferredHeight: 56
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 56
+                                height: 56
+                                radius: 28
+                                color: "transparent"
+                                border.width: 4
+                                border.color: Qt.rgba(1, 1, 1, 0.1)
+
+                                Rectangle {
+                                    width: 56
+                                    height: 56
+                                    radius: 28
+                                    color: "transparent"
+                                    border.width: 4
+                                    border.color: "transparent"
+
+                                    Rectangle {
+                                        width: 14
+                                        height: 4
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                    }
+                                    Rectangle {
+                                        width: 4
+                                        height: 14
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                    }
+
+                                    RotationAnimation on rotation {
+                                        from: 0
+                                        to: 360
+                                        duration: 1200
+                                        loops: Animation.Infinite
+                                        running: loadingSearch
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: "Searching game stores..."
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
                     }
 
                     // No results
@@ -573,7 +627,7 @@ Item {
                                 id: featuredLabel
                                 anchors.centerIn: parent
                                 text: "FEATURED DEAL"
-                                font.pixelSize: 10
+                                font.pixelSize: 14
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: true
                                 color: "#ffffff"
@@ -598,7 +652,7 @@ Item {
                                      heroBanner.featuredDeal.steamRatingText !== "" &&
                                      heroBanner.featuredDeal.steamRatingText !== "null"
                             text: heroBanner.featuredDeal ? heroBanner.featuredDeal.steamRatingText : ""
-                            font.pixelSize: 13
+                            font.pixelSize: ThemeManager.getFontSize("small")
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                         }
@@ -624,7 +678,7 @@ Item {
                                     text: heroBanner.featuredDeal
                                           ? "-" + Math.round(parseFloat(heroBanner.featuredDeal.savings)) + "%"
                                           : ""
-                                    font.pixelSize: 14
+                                    font.pixelSize: ThemeManager.getFontSize("medium")
                                     font.bold: true
                                     color: "#0a0a0a"
                                 }
@@ -637,7 +691,7 @@ Item {
                                     return !isNaN(s) && s > 0
                                 }
                                 text: heroBanner.featuredDeal ? "$" + heroBanner.featuredDeal.normalPrice : ""
-                                font.pixelSize: 16
+                                font.pixelSize: 18
                                 font.family: ThemeManager.getFont("ui")
                                 color: ThemeManager.getColor("textSecondary")
                                 font.strikeout: true
@@ -649,7 +703,7 @@ Item {
                                     if (heroBanner.featuredDeal.salePrice === "0.00") return "FREE"
                                     return "$" + heroBanner.featuredDeal.salePrice
                                 }
-                                font.pixelSize: 22
+                                font.pixelSize: ThemeManager.getFontSize("large")
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: true
                                 color: "#4ade80"
@@ -669,9 +723,9 @@ Item {
                             model: Math.min(topDeals.length, 5)
 
                             Rectangle {
-                                width: heroBanner.featuredIndex === index ? 24 : 8
-                                height: 8
-                                radius: 4
+                                width: heroBanner.featuredIndex === index ? 28 : 12
+                                height: 12
+                                radius: 6
                                 color: heroBanner.featuredIndex === index
                                        ? ThemeManager.getColor("primary")
                                        : Qt.rgba(1, 1, 1, 0.3)
@@ -716,27 +770,54 @@ Item {
                         anchors.centerIn: parent
                         spacing: 12
 
-                        // Pulsing loading indicator
-                        Rectangle {
+                        // Spinning ring (matches game launch overlay)
+                        Item {
                             Layout.alignment: Qt.AlignHCenter
-                            width: 48
-                            height: 48
-                            radius: 24
-                            color: ThemeManager.getColor("primary")
-                            opacity: pulseAnim.running ? 1.0 : 0.3
+                            Layout.preferredWidth: 56
+                            Layout.preferredHeight: 56
 
-                            SequentialAnimation on opacity {
-                                id: pulseAnim
-                                running: loadingTopDeals
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.3; duration: 800 }
-                                NumberAnimation { to: 1.0; duration: 800 }
-                            }
-
-                            Text {
+                            Rectangle {
                                 anchors.centerIn: parent
-                                text: "\u2B50"
-                                font.pixelSize: 20
+                                width: 56
+                                height: 56
+                                radius: 28
+                                color: "transparent"
+                                border.width: 4
+                                border.color: Qt.rgba(1, 1, 1, 0.1)
+
+                                Rectangle {
+                                    width: 56
+                                    height: 56
+                                    radius: 28
+                                    color: "transparent"
+                                    border.width: 4
+                                    border.color: "transparent"
+
+                                    Rectangle {
+                                        width: 14
+                                        height: 4
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                    }
+                                    Rectangle {
+                                        width: 4
+                                        height: 14
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                    }
+
+                                    RotationAnimation on rotation {
+                                        from: 0
+                                        to: 360
+                                        duration: 1200
+                                        loops: Animation.Infinite
+                                        running: loadingTopDeals
+                                    }
+                                }
                             }
                         }
 
@@ -854,16 +935,16 @@ Item {
 
                         // Scroll arrows
                         Rectangle {
-                            Layout.preferredWidth: 32
-                            Layout.preferredHeight: 32
-                            radius: 8
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            radius: 10
                             color: trendLeftArea.containsMouse
                                    ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "<"
-                                font.pixelSize: 16
+                                font.pixelSize: 18
                                 font.bold: true
                                 color: ThemeManager.getColor("textPrimary")
                             }
@@ -878,16 +959,16 @@ Item {
                         }
 
                         Rectangle {
-                            Layout.preferredWidth: 32
-                            Layout.preferredHeight: 32
-                            radius: 8
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            radius: 10
                             color: trendRightArea.containsMouse
                                    ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
 
                             Text {
                                 anchors.centerIn: parent
                                 text: ">"
-                                font.pixelSize: 16
+                                font.pixelSize: 18
                                 font.bold: true
                                 color: ThemeManager.getColor("textPrimary")
                             }
@@ -1089,14 +1170,14 @@ Item {
                         Text {
                             text: StoreApi.hasBuiltInIGDBCredentials()
                                   ? "Active (built-in)" : "Active (custom)"
-                            font.pixelSize: 12
+                            font.pixelSize: ThemeManager.getFontSize("small")
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                         }
 
                         Text {
                             text: "Game descriptions, screenshots & ratings enabled"
-                            font.pixelSize: 12
+                            font.pixelSize: ThemeManager.getFontSize("small")
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                             opacity: 0.7
@@ -1118,7 +1199,7 @@ Item {
                                 id: resetLabel
                                 anchors.centerIn: parent
                                 text: "Reset to built-in"
-                                font.pixelSize: 11
+                                font.pixelSize: ThemeManager.getFontSize("small")
                                 font.family: ThemeManager.getFont("ui")
                                 color: ThemeManager.getColor("textSecondary")
                             }
@@ -1173,7 +1254,7 @@ Item {
                                     id: optLabel
                                     anchors.centerIn: parent
                                     text: "OPTIONAL"
-                                    font.pixelSize: 9
+                                    font.pixelSize: 12
                                     font.bold: true
                                     color: "#0a0a0a"
                                     font.letterSpacing: 0.8
@@ -1193,7 +1274,7 @@ Item {
 
                         Text {
                             text: "Credentials are encrypted on disk and bound to this device."
-                            font.pixelSize: 11
+                            font.pixelSize: ThemeManager.getFontSize("small")
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                             opacity: 0.6
@@ -1205,7 +1286,7 @@ Item {
                             // Client ID input
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 38
+                                Layout.preferredHeight: 44
                                 radius: 8
                                 color: ThemeManager.getColor("hover")
                                 border.color: igdbClientIdInput.activeFocus
@@ -1217,7 +1298,7 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 10
                                     verticalAlignment: TextInput.AlignVCenter
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textPrimary")
                                     clip: true
@@ -1229,7 +1310,7 @@ Item {
                                     verticalAlignment: Text.AlignVCenter
                                     visible: igdbClientIdInput.text === "" && !igdbClientIdInput.activeFocus
                                     text: "Client ID"
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
@@ -1238,7 +1319,7 @@ Item {
                             // Client Secret input
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 38
+                                Layout.preferredHeight: 44
                                 radius: 8
                                 color: ThemeManager.getColor("hover")
                                 border.color: igdbSecretInput.activeFocus
@@ -1250,7 +1331,7 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 10
                                     verticalAlignment: TextInput.AlignVCenter
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textPrimary")
                                     echoMode: TextInput.Password
@@ -1263,7 +1344,7 @@ Item {
                                     verticalAlignment: Text.AlignVCenter
                                     visible: igdbSecretInput.text === "" && !igdbSecretInput.activeFocus
                                     text: "Client Secret"
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
@@ -1271,8 +1352,8 @@ Item {
 
                             // Save button
                             Rectangle {
-                                Layout.preferredWidth: saveBtnLabel.width + 24
-                                Layout.preferredHeight: 38
+                                Layout.preferredWidth: saveBtnLabel.width + 28
+                                Layout.preferredHeight: 44
                                 radius: 8
                                 color: (igdbClientIdInput.text.length > 0 && igdbSecretInput.text.length > 0)
                                        ? ThemeManager.getColor("accent")
@@ -1282,7 +1363,7 @@ Item {
                                     id: saveBtnLabel
                                     anchors.centerIn: parent
                                     text: "Save"
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("ui")
                                     font.bold: true
                                     color: (igdbClientIdInput.text.length > 0 && igdbSecretInput.text.length > 0)

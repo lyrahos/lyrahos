@@ -85,8 +85,8 @@ Rectangle {
         anchors.right: parent.right
         anchors.topMargin: 8
         anchors.rightMargin: 8
-        width: discountText.width + 14
-        height: 24
+        width: discountText.width + 18
+        height: 28
         radius: 6
         color: "#4ade80"
 
@@ -94,7 +94,7 @@ Rectangle {
             id: discountText
             anchors.centerIn: parent
             text: "-" + Math.round(parseFloat(savings)) + "%"
-            font.pixelSize: 12
+            font.pixelSize: 14
             font.family: ThemeManager.getFont("ui")
             font.bold: true
             color: "#0a0a0a"
@@ -108,8 +108,8 @@ Rectangle {
         anchors.left: parent.left
         anchors.topMargin: 8
         anchors.leftMargin: 8
-        width: 32
-        height: 32
+        width: 36
+        height: 36
         radius: 6
         color: {
             var score = parseInt(metacriticScore)
@@ -121,7 +121,7 @@ Rectangle {
         Text {
             anchors.centerIn: parent
             text: metacriticScore
-            font.pixelSize: 11
+            font.pixelSize: 14
             font.family: ThemeManager.getFont("ui")
             font.bold: true
             color: "#0a0a0a"
@@ -140,7 +140,7 @@ Rectangle {
         Text {
             Layout.fillWidth: true
             text: gameTitle
-            font.pixelSize: 13
+            font.pixelSize: ThemeManager.getFontSize("medium")
             font.family: ThemeManager.getFont("body")
             font.bold: true
             color: "#ffffff"
@@ -159,7 +159,7 @@ Rectangle {
                     return !isNaN(s) && s > 0
                 }
                 text: "$" + normalPrice
-                font.pixelSize: 12
+                font.pixelSize: 14
                 font.family: ThemeManager.getFont("ui")
                 color: ThemeManager.getColor("textSecondary")
                 font.strikeout: true
@@ -171,7 +171,7 @@ Rectangle {
                     if (salePrice === "0.00") return "FREE"
                     return "$" + salePrice
                 }
-                font.pixelSize: 14
+                font.pixelSize: ThemeManager.getFontSize("medium")
                 font.family: ThemeManager.getFont("ui")
                 font.bold: true
                 color: {
@@ -188,7 +188,7 @@ Rectangle {
             Text {
                 visible: steamRatingText !== "" && steamRatingText !== "null"
                 text: steamRatingText
-                font.pixelSize: 10
+                font.pixelSize: ThemeManager.getFontSize("small")
                 font.family: ThemeManager.getFont("ui")
                 color: ThemeManager.getColor("textSecondary")
                 opacity: 0.8

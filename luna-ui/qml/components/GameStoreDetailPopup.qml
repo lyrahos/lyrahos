@@ -232,7 +232,7 @@ Rectangle {
                 // ─── Top Section: Hero Image + Screenshot Viewer ───
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(popupCard.height * 0.45, 420)
+                    Layout.preferredHeight: Math.min(popupCard.height * 0.55, 560)
                     spacing: 0
 
                     // Left: Hero/Header image
@@ -247,7 +247,7 @@ Rectangle {
                             id: headerImg
                             anchors.fill: parent
                             source: headerImage
-                            fillMode: Image.PreserveAspectCrop
+                            fillMode: Image.PreserveAspectFit
                             asynchronous: true
                             cache: true
                             sourceSize.width: popupCard.width
@@ -269,7 +269,7 @@ Rectangle {
                             anchors.fill: parent
                             source: igdbScreenshots.length > 0
                                     ? igdbScreenshots[fullContent.currentScreenshotIndex] : ""
-                            fillMode: Image.PreserveAspectCrop
+                            fillMode: Image.PreserveAspectFit
                             asynchronous: true
                             cache: true
                             opacity: status === Image.Ready ? 1.0 : 0.0
@@ -372,16 +372,16 @@ Rectangle {
                             anchors.top: parent.top
                             anchors.right: parent.right
                             anchors.margins: 10
-                            width: counterText.width + 16
-                            height: 26
-                            radius: 13
+                            width: counterText.width + 20
+                            height: 30
+                            radius: 15
                             color: Qt.rgba(0, 0, 0, 0.6)
 
                             Text {
                                 id: counterText
                                 anchors.centerIn: parent
                                 text: (fullContent.currentScreenshotIndex + 1) + " / " + igdbScreenshots.length
-                                font.pixelSize: 12
+                                font.pixelSize: ThemeManager.getFontSize("small")
                                 font.family: ThemeManager.getFont("ui")
                                 color: "#ffffff"
                             }
@@ -414,7 +414,7 @@ Rectangle {
                         Text {
                             visible: igdbGenres !== ""
                             text: igdbGenres
-                            font.pixelSize: 14
+                            font.pixelSize: ThemeManager.getFontSize("medium")
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                         }
@@ -423,7 +423,7 @@ Rectangle {
                         Text {
                             visible: igdbGenres !== "" && igdbReleaseDate !== ""
                             text: "|"
-                            font.pixelSize: 14
+                            font.pixelSize: ThemeManager.getFontSize("medium")
                             color: ThemeManager.getColor("textSecondary")
                             opacity: 0.5
                         }
@@ -432,7 +432,7 @@ Rectangle {
                         Text {
                             visible: igdbReleaseDate !== ""
                             text: igdbReleaseDate
-                            font.pixelSize: 14
+                            font.pixelSize: ThemeManager.getFontSize("medium")
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                         }
@@ -457,7 +457,7 @@ Rectangle {
                                 id: heroDiscText
                                 anchors.centerIn: parent
                                 text: "-" + Math.round(parseFloat(savings)) + "%"
-                                font.pixelSize: 15
+                                font.pixelSize: ThemeManager.getFontSize("medium")
                                 font.bold: true
                                 color: "#0a0a0a"
                             }
@@ -531,7 +531,7 @@ Rectangle {
                                     Text {
                                         anchors.centerIn: parent
                                         text: metacriticScore
-                                        font.pixelSize: 14
+                                        font.pixelSize: ThemeManager.getFontSize("small")
                                         font.bold: true
                                         color: "#0a0a0a"
                                     }
@@ -539,7 +539,7 @@ Rectangle {
 
                                 Text {
                                     text: "Metacritic"
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
@@ -562,7 +562,7 @@ Rectangle {
                                 Text {
                                     text: (steamRatingPercent !== "" && steamRatingPercent !== "0")
                                           ? steamRatingPercent + "%" : ""
-                                    font.pixelSize: 16
+                                    font.pixelSize: ThemeManager.getFontSize("medium")
                                     font.bold: true
                                     color: {
                                         var pct = parseInt(steamRatingPercent)
@@ -575,7 +575,7 @@ Rectangle {
 
                                 Text {
                                     text: steamRatingText
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
@@ -619,7 +619,7 @@ Rectangle {
                                         var t = protonTier.charAt(0).toUpperCase() + protonTier.slice(1)
                                         return "Linux: " + t
                                     }
-                                    font.pixelSize: 13
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("ui")
                                     font.bold: true
                                     color: {
@@ -637,7 +637,7 @@ Rectangle {
                                 Text {
                                     visible: protonTotalReports > 0
                                     text: "(" + protonTotalReports + " reports)"
-                                    font.pixelSize: 11
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                     opacity: 0.7
@@ -660,13 +660,13 @@ Rectangle {
 
                                 Text {
                                     text: "Cheapest ever:"
-                                    font.pixelSize: 12
+                                    font.pixelSize: ThemeManager.getFontSize("small")
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
                                 Text {
                                     text: "$" + cheapestEverPrice
-                                    font.pixelSize: 14
+                                    font.pixelSize: ThemeManager.getFontSize("medium")
                                     font.family: ThemeManager.getFont("ui")
                                     font.bold: true
                                     color: ThemeManager.getColor("accent")
@@ -747,7 +747,7 @@ Rectangle {
                                                 id: retryIgdbLabel
                                                 anchors.centerIn: parent
                                                 text: "Retry"
-                                                font.pixelSize: 11
+                                                font.pixelSize: ThemeManager.getFontSize("small")
                                                 font.family: ThemeManager.getFont("ui")
                                                 font.bold: true
                                                 color: retryIgdbArea.containsMouse
@@ -838,7 +838,7 @@ Rectangle {
                                             Text {
                                                 anchors.centerIn: parent
                                                 text: protonTier.charAt(0).toUpperCase() + protonTier.slice(1)
-                                                font.pixelSize: 16
+                                                font.pixelSize: ThemeManager.getFontSize("medium")
                                                 font.family: ThemeManager.getFont("heading")
                                                 font.bold: true
                                                 color: {
@@ -879,7 +879,7 @@ Rectangle {
                                             Text {
                                                 visible: protonConfidence !== ""
                                                 text: "Confidence: " + protonConfidence.charAt(0).toUpperCase() + protonConfidence.slice(1)
-                                                font.pixelSize: 13
+                                                font.pixelSize: ThemeManager.getFontSize("small")
                                                 font.family: ThemeManager.getFont("ui")
                                                 color: ThemeManager.getColor("textSecondary")
                                             }
@@ -887,7 +887,7 @@ Rectangle {
                                             Text {
                                                 visible: protonTotalReports > 0
                                                 text: "Based on " + protonTotalReports + " user reports"
-                                                font.pixelSize: 13
+                                                font.pixelSize: ThemeManager.getFontSize("small")
                                                 font.family: ThemeManager.getFont("ui")
                                                 color: ThemeManager.getColor("textSecondary")
                                             }
@@ -931,7 +931,7 @@ Rectangle {
                                         Text {
                                             visible: loadingDeals
                                             text: "Loading..."
-                                            font.pixelSize: 12
+                                            font.pixelSize: ThemeManager.getFontSize("small")
                                             font.family: ThemeManager.getFont("body")
                                             color: ThemeManager.getColor("textSecondary")
                                             font.italic: true
@@ -1003,7 +1003,7 @@ Rectangle {
                                                         id: dealSavingsText
                                                         anchors.centerIn: parent
                                                         text: "-" + Math.round(parseFloat(modelData.savings)) + "%"
-                                                        font.pixelSize: 12
+                                                        font.pixelSize: ThemeManager.getFontSize("small")
                                                         font.bold: true
                                                         color: "#0a0a0a"
                                                     }
@@ -1016,7 +1016,7 @@ Rectangle {
                                                         return !isNaN(s) && s > 0
                                                     }
                                                     text: "$" + (modelData.retailPrice || "")
-                                                    font.pixelSize: 13
+                                                    font.pixelSize: ThemeManager.getFontSize("small")
                                                     font.family: ThemeManager.getFont("ui")
                                                     color: ThemeManager.getColor("textSecondary")
                                                     font.strikeout: true
@@ -1028,7 +1028,7 @@ Rectangle {
                                                         if (modelData.price === "0.00") return "FREE"
                                                         return "$" + (modelData.price || "")
                                                     }
-                                                    font.pixelSize: 16
+                                                    font.pixelSize: ThemeManager.getFontSize("medium")
                                                     font.family: ThemeManager.getFont("ui")
                                                     font.bold: true
                                                     color: (modelData.price === "0.00" || parseFloat(modelData.savings) > 0)
@@ -1066,7 +1066,7 @@ Rectangle {
                                                 id: retryDealsLabel
                                                 anchors.centerIn: parent
                                                 text: "Retry"
-                                                font.pixelSize: 12
+                                                font.pixelSize: ThemeManager.getFontSize("small")
                                                 font.family: ThemeManager.getFont("ui")
                                                 font.bold: true
                                                 color: retryDealsArea.containsMouse
