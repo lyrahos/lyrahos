@@ -216,7 +216,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 z: -1
-                onEntered: hoveredRow = 0
+                onEntered: { hoveredRow = 0; focusedRow = 0; settingsRoot.forceActiveFocus() }
                 onExited: hoveredRow = -1
                 onClicked: { focusedRow = 0; activateRow(0) }
             }
@@ -709,7 +709,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 z: -1
-                onEntered: hoveredRow = 1
+                onEntered: { hoveredRow = 1; focusedRow = 1; settingsRoot.forceActiveFocus() }
                 onExited: hoveredRow = -1
                 onClicked: { focusedRow = 1; activateRow(1) }
             }
@@ -1072,7 +1072,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 z: -1
-                onEntered: hoveredRow = 2
+                onEntered: { hoveredRow = 2; focusedRow = 2; settingsRoot.forceActiveFocus() }
                 onExited: hoveredRow = -1
                 onClicked: { focusedRow = 2; activateRow(2) }
             }
@@ -1382,6 +1382,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
+                onEntered: { focusedRow = 3; settingsRoot.forceActiveFocus() }
                 onClicked: switchToDesktop()
             }
 
@@ -1449,6 +1450,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
+                onEntered: { focusedRow = 4; settingsRoot.forceActiveFocus() }
                 onClicked: GameManager.logout()
             }
 
@@ -1469,7 +1471,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 z: -1
-                onEntered: hoveredRow = 5
+                onEntered: { hoveredRow = 5; focusedRow = 5; settingsRoot.forceActiveFocus() }
                 onExited: hoveredRow = -1
                 onClicked: { focusedRow = 5; activateRow(5) }
             }

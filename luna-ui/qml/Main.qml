@@ -15,10 +15,16 @@ ApplicationWindow {
 
     // Track which zone has focus: "nav" or "content"
     property string focusZone: "nav"
+    property bool pendingContentFocus: false
 
     function enterContent() {
         focusZone = "content"
         navBar.focus = false
+        if (contentLoader.status === Loader.Loading) {
+            pendingContentFocus = true
+            return
+        }
+        pendingContentFocus = false
         if (contentLoader.item && typeof contentLoader.item.gainFocus === "function") {
             contentLoader.item.gainFocus()
         }
@@ -59,8 +65,11 @@ ApplicationWindow {
 
                 onLoaded: {
                     if (item && typeof item.requestNavFocus === "object") {
-                        // Connect the content view's "go back to nav" signal
                         item.requestNavFocus.connect(root.enterNav)
+                    }
+                    if (root.pendingContentFocus) {
+                        root.pendingContentFocus = false
+                        root.enterContent()
                     }
                 }
             }

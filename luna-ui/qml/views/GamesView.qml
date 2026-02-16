@@ -269,11 +269,18 @@ Rectangle {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onEntered: hoveredTabIndex = index
+                            onEntered: {
+                                hoveredTabIndex = index
+                                focusedTabIndex = index
+                                focusState = "tabs"
+                                gamesRoot.forceActiveFocus()
+                            }
                             onExited: hoveredTabIndex = -1
                             onClicked: {
                                 activeTab = index
                                 focusedTabIndex = index
+                                focusState = "tabs"
+                                gamesRoot.forceActiveFocus()
                             }
                         }
                     }
@@ -377,6 +384,11 @@ Rectangle {
                         }
                         onCancelClicked: function(appId) {
                             GameManager.cancelDownload(appId)
+                        }
+                        onCardHovered: {
+                            gameGrid.currentIndex = index
+                            focusState = "content"
+                            gamesRoot.forceActiveFocus()
                         }
                     }
 
@@ -935,6 +947,11 @@ Rectangle {
                                     z: -1
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
+                                    onEntered: {
+                                        clientsFocusIndex = 0
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
                                     onClicked: {
                                         if (!GameManager.isSteamInstalled())
                                             return
@@ -1006,6 +1023,11 @@ Rectangle {
                                     id: epicCardArea
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                    onEntered: {
+                                        clientsFocusIndex = 1
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
                                 }
 
                                 Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -1068,6 +1090,11 @@ Rectangle {
                                     id: gogCardArea
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                    onEntered: {
+                                        clientsFocusIndex = 2
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
                                 }
 
                                 Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -1130,6 +1157,11 @@ Rectangle {
                                     id: heroicCardArea
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                    onEntered: {
+                                        clientsFocusIndex = 3
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
                                 }
 
                                 Behavior on border.color { ColorAnimation { duration: 150 } }

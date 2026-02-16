@@ -102,6 +102,7 @@ Rectangle {
                     onClicked: {
                         currentIndex = index
                         sectionChanged(modelData.section)
+                        enterContent()
                     }
                 }
 
