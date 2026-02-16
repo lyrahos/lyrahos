@@ -43,6 +43,12 @@ Item {
 
     signal requestNavFocus()
 
+    // Direct key handler — ensures controller events are processed
+    // even if parent-chain propagation through Loader/StackLayout fails
+    Keys.onPressed: function(event) {
+        handleStoreKeys(event)
+    }
+
     function gainFocus() {
         hasKeyboardFocus = true
         // Start at hero if available, else search bar
@@ -125,12 +131,14 @@ Item {
     function handleStoreKeys(event) {
         // If virtual keyboard is open, it handles its own keys
         if (storeVirtualKeyboard.visible) {
+            event.accepted = true
             return
         }
 
         // If detail popup is open, let it handle keys
         if (detailPopup.visible) {
             detailPopup.handleKeys(event)
+            event.accepted = true
             return
         }
 

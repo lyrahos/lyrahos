@@ -22,6 +22,9 @@ Rectangle {
     property int clientsFocusIndex: 0
     readonly property int clientsItemCount: 4  // Steam, Epic, GOG, Heroic
 
+    // Credential dialog controller focus: 0 = input, 1 = submit, 2 = cancel
+    property int credDialogFocusIndex: 0
+
     function gainFocus() {
         focusState = "tabs"
         focusedTabIndex = activeTab
@@ -38,10 +41,75 @@ Rectangle {
 
     // Master keyboard handler
     Keys.onPressed: function(event) {
+        // VirtualKeyboard handles its own keys
+        if (gamesVirtualKeyboard.visible) {
+            event.accepted = true
+            return
+        }
+        // Credential dialog navigation
+        if (credentialDialog.visible) {
+            handleCredDialogKeys(event)
+            return
+        }
         if (focusState === "tabs") {
             handleTabKeys(event)
         } else if (focusState === "content") {
             handleContentKeys(event)
+        }
+    }
+
+    function handleCredDialogKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Up:
+            if (credDialogFocusIndex > 0) credDialogFocusIndex--
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (credDialogFocusIndex < 2) credDialogFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            if (credDialogFocusIndex === 2) credDialogFocusIndex = 1
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (credDialogFocusIndex === 1) credDialogFocusIndex = 2
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (credDialogFocusIndex === 0) {
+                // Open virtual keyboard for credential input
+                var isPassword = credentialDialog.promptType === "password"
+                gamesVirtualKeyboard.placeholderText = isPassword
+                    ? "Enter password..." : "Enter Steam Guard code..."
+                gamesVirtualKeyboard.open("", isPassword)
+                gamesVirtualKeyboard.targetField = "credential"
+            } else if (credDialogFocusIndex === 1) {
+                // Submit
+                if (credInput.text.length > 0) {
+                    GameManager.provideSteamCmdCredential(
+                        credentialDialog.pendingAppId, credInput.text)
+                    credInput.text = ""
+                    credentialDialog.visible = false
+                    gamesRoot.forceActiveFocus()
+                }
+            } else if (credDialogFocusIndex === 2) {
+                // Cancel
+                credInput.text = ""
+                GameManager.cancelDownload(credentialDialog.pendingAppId)
+                credentialDialog.visible = false
+                gamesRoot.forceActiveFocus()
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Escape:
+            credInput.text = ""
+            GameManager.cancelDownload(credentialDialog.pendingAppId)
+            credentialDialog.visible = false
+            gamesRoot.forceActiveFocus()
+            event.accepted = true
+            break
         }
     }
 
@@ -83,19 +151,17 @@ Rectangle {
             // Clients
             handleClientsKeys(event)
         } else if (activeTab === 2) {
-            // Game Store — forward keys to GameStorePage
-            if (gameStoreLoader.item && typeof gameStoreLoader.item.handleStoreKeys === "function") {
-                // Check if at top zone and pressing Up → go back to tab bar
-                var zone = gameStoreLoader.item.navZone
-                if (event.key === Qt.Key_Up && (zone === "searchBar" || zone === "")) {
-                    focusState = "tabs"
-                    focusedTabIndex = activeTab
-                    if (typeof gameStoreLoader.item.loseFocus === "function")
-                        gameStoreLoader.item.loseFocus()
-                    event.accepted = true
-                    return
-                }
-                gameStoreLoader.item.handleStoreKeys(event)
+            // Game Store — GameStorePage handles its own keys via Keys.onPressed.
+            // Only unhandled keys propagate here (Up at searchBar, Escape).
+            var zone = gameStoreLoader.item ? gameStoreLoader.item.navZone : ""
+            if (event.key === Qt.Key_Escape ||
+                (event.key === Qt.Key_Up && (zone === "searchBar" || zone === ""))) {
+                focusState = "tabs"
+                focusedTabIndex = activeTab
+                if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                    gameStoreLoader.item.loseFocus()
+                event.accepted = true
+                return
             }
         }
     }
@@ -697,7 +763,9 @@ Rectangle {
                                             gameStoresTab.wifiStatus = "Connecting..."
                                             GameManager.connectToWifi(model.ssid, "")
                                         } else {
-                                            wifiPasswordField.forceActiveFocus()
+                                            gamesVirtualKeyboard.placeholderText = "Enter WiFi password..."
+                                            gamesVirtualKeyboard.open("", true)
+                                            gamesVirtualKeyboard.targetField = "wifi"
                                         }
                                     }
                                 }
@@ -1479,6 +1547,35 @@ Rectangle {
     // ── Steam Setup Wizard ──
     SteamSetupWizard {
         id: steamSetupWizard
+        onClosed: gamesRoot.forceActiveFocus()
+    }
+
+    // ── Virtual Keyboard for WiFi password + credential dialogs ──
+    VirtualKeyboard {
+        id: gamesVirtualKeyboard
+        anchors.fill: parent
+        z: 1000
+
+        property string targetField: ""  // "wifi" or "credential"
+
+        onAccepted: function(text) {
+            if (targetField === "wifi") {
+                wifiPasswordField.text = text
+                if (text.length > 0 && !gameStoresTab.wifiConnecting) {
+                    gameStoresTab.wifiConnecting = true
+                    gameStoresTab.wifiStatus = "Connecting..."
+                    GameManager.connectToWifi(wifiSelectedSsid.text, text)
+                }
+            } else if (targetField === "credential") {
+                credInput.text = text
+            }
+            targetField = ""
+            gamesRoot.forceActiveFocus()
+        }
+        onCancelled: {
+            targetField = ""
+            gamesRoot.forceActiveFocus()
+        }
     }
 
     // ── Load games on startup and when store scan completes ──
@@ -1560,9 +1657,11 @@ Rectangle {
                     Layout.preferredHeight: 44
                     radius: 8
                     color: ThemeManager.getColor("hover")
-                    border.color: credInput.activeFocus
+                    border.color: (credInput.activeFocus || credDialogFocusIndex === 0)
                                   ? ThemeManager.getColor("focus") : "transparent"
-                    border.width: credInput.activeFocus ? 2 : 0
+                    border.width: (credInput.activeFocus || credDialogFocusIndex === 0) ? 3 : 0
+
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
 
                     TextInput {
                         id: credInput
@@ -1581,6 +1680,7 @@ Rectangle {
                                     credentialDialog.pendingAppId, text)
                                 text = ""
                                 credentialDialog.visible = false
+                                gamesRoot.forceActiveFocus()
                             }
                         }
                     }
@@ -1606,6 +1706,11 @@ Rectangle {
                         Layout.preferredHeight: 40
                         radius: 8
                         color: ThemeManager.getColor("primary")
+                        border.color: credDialogFocusIndex === 1
+                                      ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: credDialogFocusIndex === 1 ? 3 : 0
+
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: submitCredLabel
@@ -1626,6 +1731,7 @@ Rectangle {
                                         credentialDialog.pendingAppId, credInput.text)
                                     credInput.text = ""
                                     credentialDialog.visible = false
+                                    gamesRoot.forceActiveFocus()
                                 }
                             }
                         }
@@ -1636,8 +1742,12 @@ Rectangle {
                         Layout.preferredHeight: 40
                         radius: 8
                         color: ThemeManager.getColor("surface")
-                        border.color: Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
+                        border.color: credDialogFocusIndex === 2
+                                      ? ThemeManager.getColor("focus")
+                                      : Qt.rgba(1, 1, 1, 0.15)
+                        border.width: credDialogFocusIndex === 2 ? 3 : 1
+
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: cancelCredLabel
@@ -1655,6 +1765,7 @@ Rectangle {
                                 credInput.text = ""
                                 GameManager.cancelDownload(credentialDialog.pendingAppId)
                                 credentialDialog.visible = false
+                                gamesRoot.forceActiveFocus()
                             }
                         }
                     }
@@ -1896,7 +2007,8 @@ Rectangle {
             credentialDialog.pendingAppId = appId
             credentialDialog.promptType = promptType
             credentialDialog.visible = true
-            credInput.forceActiveFocus()
+            credDialogFocusIndex = 0
+            gamesRoot.forceActiveFocus()
         }
 
         function onGameLaunched(gameId, gameTitle) {
