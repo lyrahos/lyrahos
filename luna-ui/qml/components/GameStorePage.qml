@@ -123,6 +123,11 @@ Item {
     }
 
     function handleStoreKeys(event) {
+        // If virtual keyboard is open, it handles its own keys
+        if (storeVirtualKeyboard.visible) {
+            return
+        }
+
         // If detail popup is open, let it handle keys
         if (detailPopup.visible) {
             detailPopup.handleKeys(event)
@@ -143,6 +148,10 @@ Item {
 
     function handleSearchBarKeys(event) {
         switch (event.key) {
+        case Qt.Key_Left:
+            requestNavFocus()
+            event.accepted = true
+            break
         case Qt.Key_Down:
             searchInput.focus = false
             nextZone()
@@ -151,7 +160,10 @@ Item {
             break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            searchInput.forceActiveFocus()
+            // Open virtual keyboard instead of focusing raw TextInput
+            // (directly focusing TextInput freezes controller navigation)
+            storeVirtualKeyboard.placeholderText = "Search games..."
+            storeVirtualKeyboard.open(searchInput.text)
             event.accepted = true
             break
         }
@@ -621,11 +633,12 @@ Item {
                             color: currentSort === modelData.value
                                    ? ThemeManager.getColor("primary")
                                    : ThemeManager.getColor("surface")
-                            border.color: (sortChipArea.containsMouse || isKbFocused) && currentSort !== modelData.value
+                            border.color: (sortChipArea.containsMouse || isKbFocused)
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (sortChipArea.containsMouse || isKbFocused) && currentSort !== modelData.value ? 2 : 0
+                            border.width: (sortChipArea.containsMouse || isKbFocused) ? 3 : 0
 
                             Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 id: sortChipText
@@ -719,7 +732,8 @@ Item {
                             color: ThemeManager.getColor("surface")
                             border.color: (backBtnArea.containsMouse || isKbFocused)
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (backBtnArea.containsMouse || isKbFocused) ? 2 : 0
+                            border.width: (backBtnArea.containsMouse || isKbFocused) ? 3 : 0
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 id: backLabel
@@ -1447,6 +1461,7 @@ Item {
                         border.width: (loadMoreArea.containsMouse || isKbFocused) ? 3 : 2
 
                         Behavior on color { ColorAnimation { duration: 200 } }
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: loadMoreLabel
@@ -1738,6 +1753,29 @@ Item {
     GameStoreDetailPopup {
         id: detailPopup
         anchors.fill: parent
+    }
+
+    // ─── Virtual Keyboard for Search ───
+    VirtualKeyboard {
+        id: storeVirtualKeyboard
+        anchors.fill: parent
+
+        onAccepted: function(typedText) {
+            searchInput.text = typedText
+            if (typedText.trim().length > 0) {
+                storePage.searchQuery = typedText.trim()
+                storePage.isSearching = true
+                storePage.loadingSearch = true
+                StoreApi.searchGames(typedText.trim())
+                navZone = "backToStore"
+            }
+            storePage.forceActiveFocus()
+        }
+
+        onCancelled: {
+            navZone = "searchBar"
+            storePage.forceActiveFocus()
+        }
     }
 
     // ─── Helper Functions ───

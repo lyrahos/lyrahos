@@ -42,6 +42,16 @@ ApplicationWindow {
         anchors.fill: parent
         color: ThemeManager.getColor("background")
 
+        // Back button (B / Escape) returns to NavBar from any content view.
+        // Content views that handle Escape internally (e.g. SettingsView expanded
+        // panels, GameStore detail popup) accept the event so it won't reach here.
+        Keys.onEscapePressed: function(event) {
+            if (root.focusZone === "content") {
+                root.enterNav()
+                event.accepted = true
+            }
+        }
+
         RowLayout {
             anchors.fill: parent
             spacing: 0
