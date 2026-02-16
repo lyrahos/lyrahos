@@ -1,4 +1,5 @@
 #include "storeapimanager.h"
+#include "credentialstore.h"
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -21,7 +22,18 @@ StoreApiManager::StoreApiManager(QObject *parent)
     : QObject(parent)
     , m_nam(new QNetworkAccessManager(this))
 {
+    // Use build-time IGDB credentials as defaults (injected from GitHub Secrets)
+#ifdef IGDB_CLIENT_ID
+    m_igdbClientId = QStringLiteral(IGDB_CLIENT_ID);
+    m_usingBuiltInCredentials = true;
+#endif
+#ifdef IGDB_CLIENT_SECRET
+    m_igdbClientSecret = QStringLiteral(IGDB_CLIENT_SECRET);
+#endif
+
+    // User-saved credentials (encrypted) override built-in defaults
     loadIGDBCredentials();
+
     // Pre-fetch store list on construction
     fetchStores();
 }
@@ -450,13 +462,47 @@ void StoreApiManager::setIGDBCredentials(const QString& clientId, const QString&
     m_igdbClientSecret = clientSecret;
     m_igdbAccessToken.clear();
     m_igdbTokenExpiry = 0;
+    m_usingBuiltInCredentials = false;
     saveIGDBCredentials();
+    emit igdbCredentialsSaved();
+}
+
+void StoreApiManager::clearIGDBCredentials()
+{
+    // Remove user-saved credentials, revert to built-in if available
+    QFile::remove(igdbCredentialsPath());
+
+#ifdef IGDB_CLIENT_ID
+    m_igdbClientId = QStringLiteral(IGDB_CLIENT_ID);
+    m_usingBuiltInCredentials = true;
+#else
+    m_igdbClientId.clear();
+    m_usingBuiltInCredentials = false;
+#endif
+#ifdef IGDB_CLIENT_SECRET
+    m_igdbClientSecret = QStringLiteral(IGDB_CLIENT_SECRET);
+#else
+    m_igdbClientSecret.clear();
+#endif
+
+    m_igdbAccessToken.clear();
+    m_igdbTokenExpiry = 0;
     emit igdbCredentialsSaved();
 }
 
 bool StoreApiManager::hasIGDBCredentials()
 {
     return !m_igdbClientId.isEmpty() && !m_igdbClientSecret.isEmpty();
+}
+
+bool StoreApiManager::hasBuiltInIGDBCredentials()
+{
+    // True when compile-time credentials were provided via GitHub Secrets
+#if defined(IGDB_CLIENT_ID) && defined(IGDB_CLIENT_SECRET)
+    return true;
+#else
+    return false;
+#endif
 }
 
 QString StoreApiManager::getIGDBClientId()
@@ -466,28 +512,32 @@ QString StoreApiManager::getIGDBClientId()
 
 void StoreApiManager::loadIGDBCredentials()
 {
-    QFile file(igdbCredentialsPath());
-    if (!file.open(QIODevice::ReadOnly))
+    QByteArray data = CredentialStore::loadEncrypted(igdbCredentialsPath());
+    if (data.isEmpty())
         return;
 
-    QJsonObject obj = QJsonDocument::fromJson(file.readAll()).object();
-    m_igdbClientId = obj["client_id"].toString();
-    m_igdbClientSecret = obj["client_secret"].toString();
+    QJsonObject obj = QJsonDocument::fromJson(data).object();
+    if (obj.isEmpty())
+        return;
+
+    // User-saved credentials override built-in defaults
+    QString clientId = obj["client_id"].toString();
+    QString clientSecret = obj["client_secret"].toString();
+    if (!clientId.isEmpty() && !clientSecret.isEmpty()) {
+        m_igdbClientId = clientId;
+        m_igdbClientSecret = clientSecret;
+        m_usingBuiltInCredentials = false;
+    }
 }
 
 void StoreApiManager::saveIGDBCredentials()
 {
-    QString dir = QDir::homePath() + "/.config/luna-ui";
-    QDir().mkpath(dir);
-
-    QFile file(igdbCredentialsPath());
-    if (!file.open(QIODevice::WriteOnly))
-        return;
-
     QJsonObject obj;
     obj["client_id"] = m_igdbClientId;
     obj["client_secret"] = m_igdbClientSecret;
-    file.write(QJsonDocument(obj).toJson());
+
+    QByteArray json = QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    CredentialStore::saveEncrypted(igdbCredentialsPath(), json);
 }
 
 QString StoreApiManager::igdbCredentialsPath() const

@@ -22,7 +22,20 @@ qt_add_executable(luna-ui
     src/storebackends/lutrisbackend.cpp
     src/storebackends/custombackend.cpp
     src/storeapimanager.cpp
+    src/credentialstore.cpp
 )
+
+# ── IGDB credentials (injected from GitHub Secrets at build time) ──
+# Usage: cmake .. -DIGDB_CLIENT_ID="your_id" -DIGDB_CLIENT_SECRET="your_secret"
+if(DEFINED IGDB_CLIENT_ID AND DEFINED IGDB_CLIENT_SECRET)
+    target_compile_definitions(luna-ui PRIVATE
+        IGDB_CLIENT_ID="${IGDB_CLIENT_ID}"
+        IGDB_CLIENT_SECRET="${IGDB_CLIENT_SECRET}"
+    )
+    message(STATUS "IGDB credentials: provided (compiled in)")
+else()
+    message(STATUS "IGDB credentials: not provided (user must configure manually)")
+endif()
 
 qt_add_qml_module(luna-ui
     URI LunaUI

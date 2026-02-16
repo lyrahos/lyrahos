@@ -522,13 +522,26 @@ jobs:
       # ISO build. Build dependencies stay in the container; only the
       # binary and resources are installed into the rootfs.
       - name: Build luna-ui from source (phase 4)
+        env:
+          IGDB_CLIENT_ID: ${{ secrets.IGDB_CLIENT_ID }}
+          IGDB_CLIENT_SECRET: ${{ secrets.IGDB_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           echo "Phase 4: Building luna-ui from source..."
 
+          # Build CMake flags — inject IGDB credentials if available
+          IGDB_FLAGS=""
+          if [ -n "${IGDB_CLIENT_ID:-}" ] && [ -n "${IGDB_CLIENT_SECRET:-}" ]; then
+            IGDB_FLAGS="-DIGDB_CLIENT_ID=${IGDB_CLIENT_ID} -DIGDB_CLIENT_SECRET=${IGDB_CLIENT_SECRET}"
+            echo "IGDB credentials: will be compiled in"
+          else
+            echo "IGDB credentials: not configured (users must set up manually)"
+          fi
+
           docker run --rm \
             -v "$(pwd)/squashfs-root:/rootfs" \
             -v "$(pwd)/luna-ui:/src/luna-ui:ro" \
+            -e IGDB_FLAGS="${IGDB_FLAGS}" \
             fedora:${{ env.FEDORA_VERSION }} \
             bash -c '
               set -euo pipefail
@@ -541,7 +554,7 @@ jobs:
 
               echo "Building luna-ui..."
               mkdir /build && cd /build
-              cmake /src/luna-ui -DCMAKE_INSTALL_PREFIX=/usr
+              cmake /src/luna-ui -DCMAKE_INSTALL_PREFIX=/usr ${IGDB_FLAGS}
               cmake --build . -j$(nproc)
 
               echo "Installing luna-ui into rootfs..."

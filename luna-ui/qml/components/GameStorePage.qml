@@ -869,7 +869,84 @@ Item {
                     }
                 }
 
-                // ─── IGDB Setup Prompt ───
+                // ─── IGDB Status / Setup ───
+
+                // Active state: IGDB credentials are available (built-in or user-configured)
+                Rectangle {
+                    visible: !storePage.isSearching && StoreApi.hasIGDBCredentials()
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 48
+                    radius: 10
+                    color: ThemeManager.getColor("surface")
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 10
+
+                        Rectangle {
+                            Layout.preferredWidth: 8
+                            Layout.preferredHeight: 8
+                            radius: 4
+                            color: "#4ade80"
+                        }
+
+                        Text {
+                            text: "IGDB"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("ui")
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        Text {
+                            text: StoreApi.hasBuiltInIGDBCredentials()
+                                  ? "Active (built-in)" : "Active (custom)"
+                            font.pixelSize: 12
+                            font.family: ThemeManager.getFont("ui")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+
+                        Text {
+                            text: "Game descriptions, screenshots & ratings enabled"
+                            font.pixelSize: 12
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                            opacity: 0.7
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        // Reset to built-in (only if user overrode and built-in exists)
+                        Rectangle {
+                            visible: StoreApi.hasBuiltInIGDBCredentials() && !StoreApi.hasBuiltInIGDBCredentials()
+                            Layout.preferredWidth: resetLabel.width + 20
+                            Layout.preferredHeight: 28
+                            radius: 6
+                            color: "transparent"
+                            border.color: Qt.rgba(1, 1, 1, 0.12)
+                            border.width: 1
+
+                            Text {
+                                id: resetLabel
+                                anchors.centerIn: parent
+                                text: "Reset to built-in"
+                                font.pixelSize: 11
+                                font.family: ThemeManager.getFont("ui")
+                                color: ThemeManager.getColor("textSecondary")
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: StoreApi.clearIGDBCredentials()
+                            }
+                        }
+                    }
+                }
+
+                // Setup state: No credentials available, prompt user
                 Rectangle {
                     visible: !storePage.isSearching && !StoreApi.hasIGDBCredentials()
                     Layout.fillWidth: true
@@ -926,6 +1003,14 @@ Item {
                             color: ThemeManager.getColor("textSecondary")
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: "Credentials are encrypted on disk and bound to this device."
+                            font.pixelSize: 11
+                            font.family: ThemeManager.getFont("ui")
+                            color: ThemeManager.getColor("textSecondary")
+                            opacity: 0.6
                         }
 
                         RowLayout {

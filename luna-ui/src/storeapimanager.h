@@ -24,7 +24,9 @@ public:
     // ── IGDB API ──
     Q_INVOKABLE void fetchIGDBGameInfo(const QString& gameName);
     Q_INVOKABLE void setIGDBCredentials(const QString& clientId, const QString& clientSecret);
+    Q_INVOKABLE void clearIGDBCredentials();
     Q_INVOKABLE bool hasIGDBCredentials();
+    Q_INVOKABLE bool hasBuiltInIGDBCredentials();
     Q_INVOKABLE QString getIGDBClientId();
 
     // ── ProtonDB API ──
@@ -72,6 +74,7 @@ private:
     QString m_igdbClientSecret;
     QString m_igdbAccessToken;
     qint64 m_igdbTokenExpiry = 0;
+    bool m_usingBuiltInCredentials = false;
 
     void loadIGDBCredentials();
     void saveIGDBCredentials();
