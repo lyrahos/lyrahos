@@ -33,11 +33,13 @@ Rectangle {
         asynchronous: true
         cache: true
         opacity: status === Image.Ready ? 1.0 : 0.0
+        sourceSize.width: storeCard.width * 2
+        sourceSize.height: storeCard.height * 2
 
         Behavior on opacity { NumberAnimation { duration: 300 } }
     }
 
-    // Placeholder when image hasn't loaded
+    // Placeholder when image hasn't loaded or failed
     Rectangle {
         anchors.fill: parent
         visible: bgImage.status !== Image.Ready

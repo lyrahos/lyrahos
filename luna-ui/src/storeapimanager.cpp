@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QUrlQuery>
+#include <QSet>
 #include <QDir>
 #include <QFile>
 #include <QDateTime>
@@ -63,8 +64,16 @@ void StoreApiManager::fetchDeals(const QString& sortBy, int pageNumber, int page
 
         QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
         QVariantList deals;
+        QSet<QString> seenGameIDs;
         for (const auto& val : arr) {
             QJsonObject obj = val.toObject();
+            QString gameId = obj["gameID"].toString();
+
+            // Deduplicate: keep only the first (best) deal per game
+            if (seenGameIDs.contains(gameId))
+                continue;
+            seenGameIDs.insert(gameId);
+
             QVariantMap deal;
             deal["dealID"]       = obj["dealID"].toString();
             deal["title"]        = obj["title"].toString();
@@ -75,7 +84,7 @@ void StoreApiManager::fetchDeals(const QString& sortBy, int pageNumber, int page
             deal["steamRatingText"]    = obj["steamRatingText"].toString();
             deal["steamRatingPercent"] = obj["steamRatingPercent"].toString();
             deal["steamAppID"]   = obj["steamAppID"].toString();
-            deal["gameID"]       = obj["gameID"].toString();
+            deal["gameID"]       = gameId;
             deal["storeID"]      = obj["storeID"].toString();
             deal["dealRating"]   = obj["dealRating"].toString();
             deal["releaseDate"]  = obj["releaseDate"].toInteger();
@@ -123,8 +132,16 @@ void StoreApiManager::fetchRecentDeals(int pageSize)
 
         QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
         QVariantList deals;
+        QSet<QString> seenGameIDs;
         for (const auto& val : arr) {
             QJsonObject obj = val.toObject();
+            QString gameId = obj["gameID"].toString();
+
+            // Deduplicate: keep only the first deal per game
+            if (seenGameIDs.contains(gameId))
+                continue;
+            seenGameIDs.insert(gameId);
+
             QVariantMap deal;
             deal["dealID"]       = obj["dealID"].toString();
             deal["title"]        = obj["title"].toString();
@@ -135,7 +152,7 @@ void StoreApiManager::fetchRecentDeals(int pageSize)
             deal["steamRatingText"]    = obj["steamRatingText"].toString();
             deal["steamRatingPercent"] = obj["steamRatingPercent"].toString();
             deal["steamAppID"]   = obj["steamAppID"].toString();
-            deal["gameID"]       = obj["gameID"].toString();
+            deal["gameID"]       = gameId;
             deal["storeID"]      = obj["storeID"].toString();
             deal["dealRating"]   = obj["dealRating"].toString();
             deal["releaseDate"]  = obj["releaseDate"].toInteger();
