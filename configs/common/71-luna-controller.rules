@@ -1,0 +1,11 @@
+# Amazon Luna Controller — ensure it is identified as a Luna controller
+# rather than a generic Xbox pad when the xpad driver claims the device.
+#
+# VID 0x1949 (Amazon) / PID 0x0419 (Luna Controller)
+# Sets a friendly name that SDL2's name-based fallback detection can match.
+
+# USB
+SUBSYSTEM=="input", ATTRS{idVendor}=="1949", ATTRS{idProduct}=="0419", ENV{ID_INPUT_JOYSTICK}="1", ATTR{name}="Amazon Luna Controller"
+
+# Bluetooth
+SUBSYSTEM=="input", ATTRS{name}=="Luna Controller", ENV{ID_INPUT_JOYSTICK}="1"

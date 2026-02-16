@@ -708,6 +708,10 @@ jobs:
           sudo mkdir -p squashfs-root/etc/skel/.config
           sudo cp configs/common/brave-flags.conf squashfs-root/etc/skel/.config/brave-flags.conf
 
+          # Luna controller udev rule (proper identification over xpad)
+          sudo mkdir -p squashfs-root/etc/udev/rules.d
+          sudo cp configs/common/71-luna-controller.rules squashfs-root/etc/udev/rules.d/
+
           # Logrotate
           sudo mkdir -p squashfs-root/etc/logrotate.d
           sudo cp logging/logrotate-lyrah.conf squashfs-root/etc/logrotate.d/lyrah
