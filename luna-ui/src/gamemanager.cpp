@@ -8,11 +8,13 @@
 #include <QVariantMap>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QCoreApplication>
 #include <QNetworkInterface>
 #include <QUrlQuery>
 #include <QFileSystemWatcher>
+#include <QPointer>
 #include <QTextStream>
 #include <QRegularExpression>
 #include <memory>
@@ -1034,8 +1036,10 @@ void GameManager::installGame(int gameId) {
     QString dataDir = steamCmdDataDir();
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, proc, appId = game.appId, gameId, primarySteamApps, dataDir](int exitCode, QProcess::ExitStatus status) {
-        proc->deleteLater();
+        // Remove from hash BEFORE deleteLater so provideSteamCmdCredential
+        // can never find a pointer that's scheduled for deletion.
         m_steamCmdProcesses.remove(appId);
+        proc->deleteLater();
         m_downloadProgressCache.remove(appId);
 
         // SteamCMD exit codes are unreliable (often exits 5 on success).
@@ -1357,8 +1361,20 @@ void GameManager::checkDownloadProgress() {
 // ── Steam Setup Wizard backend ──
 
 bool GameManager::isSteamSetupComplete() {
-    // Setup is "complete" when: Steam is logged in, API key is saved, and steamcmd is available
-    return isSteamAvailable() && hasSteamApiKey() && isSteamCmdAvailable();
+    // Setup is "complete" when: Steam is logged in, API key is saved,
+    // steamcmd is available, AND a cached login token exists.
+    // Without the token check we'd report "connected" even when
+    // SteamCMD will just re-prompt for credentials on every game install.
+    if (!isSteamAvailable() || !hasSteamApiKey() || !isSteamCmdAvailable())
+        return false;
+
+    // SteamCMD stores login tokens in config/config.vdf relative to its
+    // data directory. If this file is missing or empty, the login never
+    // completed (e.g. crash during token save) and we should not report
+    // setup as complete.
+    QString tokenFile = steamCmdDataDir() + "/config/config.vdf";
+    QFileInfo fi(tokenFile);
+    return fi.exists() && fi.size() > 0;
 }
 
 void GameManager::openApiKeyInBrowser() {
@@ -1795,6 +1811,12 @@ void GameManager::loginSteamCmd() {
         return;
     }
 
+    // Clean up any previous process that finished but wasn't fully cleaned
+    if (m_steamCmdSetupProc) {
+        m_steamCmdSetupProc->deleteLater();
+        m_steamCmdSetupProc = nullptr;
+    }
+
     m_steamCmdSetupProc = new QProcess(this);
     // Always use the consistent data directory so login tokens are stored
     // where installGame() will find them — survives reboots and logouts.
@@ -1810,6 +1832,11 @@ void GameManager::loginSteamCmd() {
     // SteamCMD's exit codes are unreliable (often exits 5 even on success).
     auto loginOk = std::make_shared<bool>(false);
 
+    // Use QPointer to safely reference the process from lambdas — if the
+    // QProcess is destroyed (e.g. GameManager teardown, cancel) the
+    // QPointer becomes null and we avoid use-after-free crashes.
+    QPointer<QProcess> procGuard = m_steamCmdSetupProc;
+
     // Timer to send quit after the login token has been saved.
     // SteamCMD prints "Logged in OK" → "Waiting for user info" → "OK"
     // → "Steam>" — only at the Steam> prompt has the token been persisted.
@@ -1817,16 +1844,17 @@ void GameManager::loginSteamCmd() {
     auto quitTimer = new QTimer(this);
     quitTimer->setSingleShot(true);
     quitTimer->setInterval(5000);
-    connect(quitTimer, &QTimer::timeout, this, [this, quitTimer]() {
+    connect(quitTimer, &QTimer::timeout, this, [procGuard, quitTimer]() {
         quitTimer->deleteLater();
-        if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+        if (procGuard && procGuard->state() == QProcess::Running) {
             qDebug() << "[steamcmd-setup] quit timer fired, sending quit";
-            m_steamCmdSetupProc->write("quit\n");
+            procGuard->write("quit\n");
         }
     });
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, loginOk, quitTimer]() {
-        QString output = QString::fromUtf8(m_steamCmdSetupProc->readAllStandardOutput());
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, procGuard, loginOk, quitTimer]() {
+        if (!procGuard) return;
+        QString output = QString::fromUtf8(procGuard->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
             QString trimmed = line.trimmed();
             if (trimmed.isEmpty()) continue;
@@ -1848,7 +1876,7 @@ void GameManager::loginSteamCmd() {
             // Start a timeout; if we see the "Steam>" prompt we'll
             // quit sooner.
             if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
-                trimmed.contains("OK", Qt::CaseSensitive) && trimmed.length() < 10) {
+                (trimmed.contains("OK", Qt::CaseSensitive) && trimmed.length() < 10)) {
                 *loginOk = true;
                 if (!quitTimer->isActive()) {
                     qDebug() << "[steamcmd-setup] login OK, waiting for token save...";
@@ -1863,9 +1891,9 @@ void GameManager::loginSteamCmd() {
             if (trimmed.startsWith("Steam>")) {
                 *loginOk = true;
                 quitTimer->stop();
-                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
+                if (procGuard && procGuard->state() == QProcess::Running) {
                     qDebug() << "[steamcmd-setup] Steam> prompt seen, sending quit";
-                    m_steamCmdSetupProc->write("quit\n");
+                    procGuard->write("quit\n");
                 }
             }
             // Login failure messages from SteamCMD itself
@@ -1874,15 +1902,20 @@ void GameManager::loginSteamCmd() {
                 trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
                 *loginOk = false;
                 quitTimer->stop();
-                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
-                    m_steamCmdSetupProc->write("quit\n");
+                if (procGuard && procGuard->state() == QProcess::Running) {
+                    procGuard->write("quit\n");
                 }
             }
         }
     });
 
     connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, loginOk](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOk, quitTimer](int exitCode, QProcess::ExitStatus) {
+        // Always clean up the timer — it may still be running if the
+        // process exited before the timer fired (e.g. crash, kill).
+        quitTimer->stop();
+        quitTimer->deleteLater();
+
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
 
@@ -1915,5 +1948,9 @@ void GameManager::cancelSteamCmdSetup() {
         if (!m_steamCmdSetupProc->waitForFinished(3000)) {
             m_steamCmdSetupProc->kill();
         }
+    }
+    if (m_steamCmdSetupProc) {
+        m_steamCmdSetupProc->deleteLater();
+        m_steamCmdSetupProc = nullptr;
     }
 }

@@ -1111,33 +1111,6 @@ Rectangle {
                                     Layout.fillWidth: true
                                     spacing: 10
 
-                                    // Scan library
-                                    Rectangle {
-                                        Layout.preferredWidth: scanLibLabel.width + 28
-                                        Layout.preferredHeight: 36
-                                        radius: 8
-                                        color: ThemeManager.getColor("primary")
-
-                                        Text {
-                                            id: scanLibLabel
-                                            anchors.centerIn: parent
-                                            text: "Scan Library"
-                                            font.pixelSize: ThemeManager.getFontSize("small")
-                                            font.family: ThemeManager.getFont("body")
-                                            font.bold: true
-                                            color: "white"
-                                        }
-
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                GameManager.scanAllStores()
-                                                refreshGames()
-                                            }
-                                        }
-                                    }
-
                                     // Fetch owned games (requires API key)
                                     Rectangle {
                                         visible: GameManager.hasSteamApiKey()
