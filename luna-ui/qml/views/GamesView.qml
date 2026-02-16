@@ -108,10 +108,10 @@ Rectangle {
 
         switch (event.key) {
         case Qt.Key_Left:
-            if (idx % cols === 0) {
-                // At left edge, go back to NavBar
+            if (idx <= 0 || idx % cols === 0) {
+                // At left edge (or empty grid), go back to NavBar
                 requestNavFocus()
-            } else if (idx > 0) {
+            } else {
                 gameGrid.currentIndex = idx - 1
             }
             event.accepted = true

@@ -143,6 +143,10 @@ Item {
 
     function handleSearchBarKeys(event) {
         switch (event.key) {
+        case Qt.Key_Left:
+            requestNavFocus()
+            event.accepted = true
+            break
         case Qt.Key_Down:
             searchInput.focus = false
             nextZone()
