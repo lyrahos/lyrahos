@@ -232,7 +232,7 @@ Rectangle {
                 // ─── Top Section: Hero Image + Screenshot Viewer ───
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(popupCard.height * 0.45, 420)
+                    Layout.preferredHeight: Math.min(popupCard.height * 0.55, 560)
                     spacing: 0
 
                     // Left: Hero/Header image
@@ -247,7 +247,7 @@ Rectangle {
                             id: headerImg
                             anchors.fill: parent
                             source: headerImage
-                            fillMode: Image.PreserveAspectCrop
+                            fillMode: Image.PreserveAspectFit
                             asynchronous: true
                             cache: true
                             sourceSize.width: popupCard.width
@@ -269,7 +269,7 @@ Rectangle {
                             anchors.fill: parent
                             source: igdbScreenshots.length > 0
                                     ? igdbScreenshots[fullContent.currentScreenshotIndex] : ""
-                            fillMode: Image.PreserveAspectCrop
+                            fillMode: Image.PreserveAspectFit
                             asynchronous: true
                             cache: true
                             opacity: status === Image.Ready ? 1.0 : 0.0
