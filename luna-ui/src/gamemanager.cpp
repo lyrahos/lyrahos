@@ -1832,6 +1832,12 @@ void GameManager::loginSteamCmd() {
     // SteamCMD's exit codes are unreliable (often exits 5 even on success).
     auto loginOk = std::make_shared<bool>(false);
 
+    // Track whether we're waiting for a Steam Guard code.  SteamCMD
+    // outputs bare "OK" lines during normal auth handshake (e.g.
+    // "Connecting...OK"), so we must not treat those as login success
+    // while a guard code prompt is outstanding.
+    auto awaitingGuard = std::make_shared<bool>(false);
+
     // Use QPointer to safely reference the process from lambdas — if the
     // QProcess is destroyed (e.g. GameManager teardown, cancel) the
     // QPointer becomes null and we avoid use-after-free crashes.
@@ -1844,15 +1850,18 @@ void GameManager::loginSteamCmd() {
     auto quitTimer = new QTimer(this);
     quitTimer->setSingleShot(true);
     quitTimer->setInterval(5000);
-    connect(quitTimer, &QTimer::timeout, this, [procGuard, quitTimer]() {
-        quitTimer->deleteLater();
+    QPointer<QTimer> quitTimerGuard = quitTimer;
+    connect(quitTimer, &QTimer::timeout, this, [procGuard]() {
+        // Don't deleteLater() here — the finished handler owns cleanup.
+        // Deleting the timer here would cause a use-after-free when
+        // the finished handler tries to stop/delete it.
         if (procGuard && procGuard->state() == QProcess::Running) {
             qDebug() << "[steamcmd-setup] quit timer fired, sending quit";
             procGuard->write("quit\n");
         }
     });
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, procGuard, loginOk, quitTimer]() {
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, procGuard, loginOk, awaitingGuard, quitTimerGuard]() {
         if (!procGuard) return;
         QString output = QString::fromUtf8(procGuard->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
@@ -1865,9 +1874,16 @@ void GameManager::loginSteamCmd() {
                 emit steamCmdSetupCredentialNeeded("password");
                 continue;
             }
-            // Steam Guard / Two-factor / authenticator prompt
+            // Steam Guard / Two-factor / authenticator prompt.
+            // Reset loginOk and stop the quit timer — a bare "OK" from
+            // the auth handshake may have fired earlier, but we haven't
+            // actually logged in yet.
             if (trimmed.contains("Steam Guard", Qt::CaseInsensitive) ||
                 trimmed.contains("Two-factor", Qt::CaseInsensitive)) {
+                *loginOk = false;
+                *awaitingGuard = true;
+                if (quitTimerGuard)
+                    quitTimerGuard->stop();
                 emit steamCmdSetupCredentialNeeded("steamguard");
                 continue;
             }
@@ -1875,12 +1891,15 @@ void GameManager::loginSteamCmd() {
             // SteamCMD needs to finish saving the login token to disk.
             // Start a timeout; if we see the "Steam>" prompt we'll
             // quit sooner.
-            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
-                (trimmed.contains("OK", Qt::CaseSensitive) && trimmed.length() < 10)) {
+            // Only match the explicit "Logged in OK" message, not bare
+            // "OK" lines which appear during the auth handshake before
+            // login is complete.
+            if (trimmed.contains("Logged in OK", Qt::CaseInsensitive)) {
                 *loginOk = true;
-                if (!quitTimer->isActive()) {
+                *awaitingGuard = false;
+                if (quitTimerGuard && !quitTimerGuard->isActive()) {
                     qDebug() << "[steamcmd-setup] login OK, waiting for token save...";
-                    quitTimer->start();
+                    quitTimerGuard->start();
                 }
             }
             // The Steam> prompt means SteamCMD is idle and the login
@@ -1890,7 +1909,9 @@ void GameManager::loginSteamCmd() {
             // versions may skip that message after guard code auth).
             if (trimmed.startsWith("Steam>")) {
                 *loginOk = true;
-                quitTimer->stop();
+                *awaitingGuard = false;
+                if (quitTimerGuard)
+                    quitTimerGuard->stop();
                 if (procGuard && procGuard->state() == QProcess::Running) {
                     qDebug() << "[steamcmd-setup] Steam> prompt seen, sending quit";
                     procGuard->write("quit\n");
@@ -1901,7 +1922,9 @@ void GameManager::loginSteamCmd() {
                 trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
                 trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
                 *loginOk = false;
-                quitTimer->stop();
+                *awaitingGuard = false;
+                if (quitTimerGuard)
+                    quitTimerGuard->stop();
                 if (procGuard && procGuard->state() == QProcess::Running) {
                     procGuard->write("quit\n");
                 }
@@ -1910,11 +1933,14 @@ void GameManager::loginSteamCmd() {
     });
 
     connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, loginOk, quitTimer](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOk, quitTimerGuard](int exitCode, QProcess::ExitStatus) {
         // Always clean up the timer — it may still be running if the
         // process exited before the timer fired (e.g. crash, kill).
-        quitTimer->stop();
-        quitTimer->deleteLater();
+        // Use QPointer guard to avoid use-after-free.
+        if (quitTimerGuard) {
+            quitTimerGuard->stop();
+            quitTimerGuard->deleteLater();
+        }
 
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
