@@ -30,6 +30,334 @@ Item {
         { label: "Newest",      value: "recent" }
     ]
 
+    // ─── Keyboard Navigation ───
+    // Zones: "searchBar", "sortChips", "hero", "trending", "dealsGrid", "loadMore"
+    // Search mode zones: "searchBar", "backToStore", "searchResults"
+    property string navZone: ""
+    property int sortChipFocusIndex: 0
+    property int heroDotFocusIndex: 0
+    property int trendingFocusIndex: 0
+    property int dealGridFocusIndex: 0
+    property int searchResultFocusIndex: 0
+    property bool hasKeyboardFocus: false
+
+    signal requestNavFocus()
+
+    function gainFocus() {
+        hasKeyboardFocus = true
+        // Start at hero if available, else search bar
+        if (isSearching) {
+            navZone = "searchResults"
+            searchResultFocusIndex = 0
+        } else if (topDeals.length > 0) {
+            navZone = "hero"
+        } else {
+            navZone = "searchBar"
+        }
+        storePage.forceActiveFocus()
+    }
+
+    function loseFocus() {
+        hasKeyboardFocus = false
+        navZone = ""
+    }
+
+    // Navigate to the next zone down
+    function nextZone() {
+        if (isSearching) {
+            switch (navZone) {
+            case "searchBar": navZone = "backToStore"; break
+            case "backToStore":
+                if (searchResults.length > 0) { navZone = "searchResults"; searchResultFocusIndex = 0 }
+                break
+            case "searchResults": break // bottom
+            }
+        } else {
+            switch (navZone) {
+            case "searchBar": navZone = "sortChips"; sortChipFocusIndex = 0; break
+            case "sortChips":
+                if (topDeals.length > 0) { navZone = "hero"; heroDotFocusIndex = heroBanner.featuredIndex }
+                break
+            case "hero":
+                if (recentDeals.length > 0) { navZone = "trending"; trendingFocusIndex = 0 }
+                else if (topDeals.length > 1) { navZone = "dealsGrid"; dealGridFocusIndex = 0 }
+                break
+            case "trending":
+                if (topDeals.length > 1 || (currentSort !== "Deal Rating" && topDeals.length > 0)) {
+                    navZone = "dealsGrid"; dealGridFocusIndex = 0
+                }
+                break
+            case "dealsGrid": navZone = "loadMore"; break
+            case "loadMore": break // bottom
+            }
+        }
+    }
+
+    // Navigate to the previous zone up
+    function prevZone() {
+        if (isSearching) {
+            switch (navZone) {
+            case "searchBar": break // top — parent handles going to tab bar
+            case "backToStore": navZone = "searchBar"; break
+            case "searchResults": navZone = "backToStore"; break
+            }
+        } else {
+            switch (navZone) {
+            case "searchBar": break // top
+            case "sortChips": navZone = "searchBar"; break
+            case "hero":
+                navZone = "sortChips"
+                // Find the index of the currently active sort chip
+                for (var i = 0; i < sortOptions.length; i++) {
+                    if (sortOptions[i].value === currentSort) { sortChipFocusIndex = i; break }
+                }
+                break
+            case "trending": navZone = "hero"; break
+            case "dealsGrid":
+                if (recentDeals.length > 0) navZone = "trending"
+                else navZone = "hero"
+                break
+            case "loadMore": navZone = "dealsGrid"; break
+            }
+        }
+    }
+
+    function handleStoreKeys(event) {
+        // If detail popup is open, let it handle keys
+        if (detailPopup.visible) {
+            detailPopup.handleKeys(event)
+            return
+        }
+
+        switch (navZone) {
+        case "searchBar": handleSearchBarKeys(event); break
+        case "sortChips": handleSortChipKeys(event); break
+        case "hero": handleHeroKeys(event); break
+        case "trending": handleTrendingKeys(event); break
+        case "dealsGrid": handleDealsGridKeys(event); break
+        case "loadMore": handleLoadMoreKeys(event); break
+        case "backToStore": handleBackToStoreKeys(event); break
+        case "searchResults": handleSearchResultsKeys(event); break
+        }
+    }
+
+    function handleSearchBarKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Down:
+            searchInput.focus = false
+            nextZone()
+            storePage.forceActiveFocus()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            searchInput.forceActiveFocus()
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleSortChipKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (sortChipFocusIndex > 0) sortChipFocusIndex--
+            else requestNavFocus()
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (sortChipFocusIndex < sortOptions.length - 1) sortChipFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Up: prevZone(); event.accepted = true; break
+        case Qt.Key_Down: nextZone(); event.accepted = true; break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            var opt = sortOptions[sortChipFocusIndex]
+            currentSort = opt.value
+            currentPage = 0
+            storePage.loadingTopDeals = true
+            StoreApi.fetchDeals(opt.value, 0, 30)
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleHeroKeys(event) {
+        var dotCount = Math.min(topDeals.length, 5)
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (heroDotFocusIndex > 0) {
+                heroDotFocusIndex--
+                heroBanner.featuredIndex = heroDotFocusIndex
+                heroBanner.featuredDeal = topDeals[heroDotFocusIndex]
+                heroRotateTimer.restart()
+            } else {
+                requestNavFocus()
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (heroDotFocusIndex < dotCount - 1) {
+                heroDotFocusIndex++
+                heroBanner.featuredIndex = heroDotFocusIndex
+                heroBanner.featuredDeal = topDeals[heroDotFocusIndex]
+                heroRotateTimer.restart()
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Up: prevZone(); event.accepted = true; break
+        case Qt.Key_Down: nextZone(); event.accepted = true; break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (heroBanner.featuredDeal) detailPopup.open(heroBanner.featuredDeal)
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleTrendingKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (trendingFocusIndex > 0) trendingFocusIndex--
+            else requestNavFocus()
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (trendingFocusIndex < recentDeals.length - 1) trendingFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Up: prevZone(); event.accepted = true; break
+        case Qt.Key_Down: nextZone(); event.accepted = true; break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (trendingFocusIndex >= 0 && trendingFocusIndex < recentDeals.length)
+                detailPopup.open(recentDeals[trendingFocusIndex])
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleDealsGridKeys(event) {
+        var gridDeals = (currentSort === "Deal Rating" && topDeals.length > 1) ? topDeals.slice(1) : topDeals
+        var cols = Math.max(1, Math.floor(mainFlickable.width / (Math.floor((mainFlickable.width - 48) / 3) + 16)))
+        if (cols < 1) cols = 3
+        var count = gridDeals.length
+        var idx = dealGridFocusIndex
+
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (idx % cols === 0) requestNavFocus()
+            else dealGridFocusIndex = idx - 1
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (idx < count - 1) dealGridFocusIndex = idx + 1
+            event.accepted = true
+            break
+        case Qt.Key_Up:
+            if (idx - cols < 0) prevZone()
+            else dealGridFocusIndex = idx - cols
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (idx + cols >= count) nextZone()
+            else dealGridFocusIndex = idx + cols
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (idx >= 0 && idx < count) detailPopup.open(gridDeals[idx])
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleLoadMoreKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Up: prevZone(); event.accepted = true; break
+        case Qt.Key_Left: requestNavFocus(); event.accepted = true; break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            currentPage++
+            storePage.appendNextDeals = true
+            storePage.loadingTopDeals = true
+            StoreApi.fetchDeals(currentSort, currentPage, 30)
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleBackToStoreKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Up: prevZone(); event.accepted = true; break
+        case Qt.Key_Down: nextZone(); event.accepted = true; break
+        case Qt.Key_Left: requestNavFocus(); event.accepted = true; break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            clearSearch()
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleSearchResultsKeys(event) {
+        var cols = 3
+        var count = searchResults.length
+        var idx = searchResultFocusIndex
+
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (idx % cols === 0) requestNavFocus()
+            else searchResultFocusIndex = idx - 1
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (idx < count - 1) searchResultFocusIndex = idx + 1
+            event.accepted = true
+            break
+        case Qt.Key_Up:
+            if (idx - cols < 0) prevZone()
+            else searchResultFocusIndex = idx - cols
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (idx + cols < count) searchResultFocusIndex = idx + cols
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (idx >= 0 && idx < count) detailPopup.open(searchResults[idx])
+            event.accepted = true
+            break
+        }
+    }
+
+    // Ensure focused items in grids/trending are scrolled into view
+    onDealGridFocusIndexChanged: if (navZone === "dealsGrid") ensureDealVisible(dealGridFocusIndex)
+    onTrendingFocusIndexChanged: if (navZone === "trending") ensureTrendingVisible(trendingFocusIndex)
+
+    function ensureDealVisible(idx) {
+        // Scroll mainFlickable so the focused deal card is visible
+        var cardW = Math.floor((mainFlickable.width - 48) / 3)
+        var cardH = cardW * 0.55
+        var cols = 3
+        var row = Math.floor(idx / cols)
+        // Approximate Y position of the deals grid within mainContent
+        var gridY = dealsGridSection.y + (row * (cardH + 16))
+        var viewTop = mainFlickable.contentY
+        var viewBottom = viewTop + mainFlickable.height
+        if (gridY < viewTop) mainFlickable.contentY = gridY - 20
+        else if (gridY + cardH > viewBottom) mainFlickable.contentY = gridY + cardH - mainFlickable.height + 20
+    }
+
+    function ensureTrendingVisible(idx) {
+        var targetX = idx * (420 + 16)
+        var viewLeft = trendingList.contentX
+        var viewRight = viewLeft + trendingList.width
+        if (targetX < viewLeft) trendingList.contentX = targetX - 10
+        else if (targetX + 420 > viewRight) trendingList.contentX = targetX + 420 - trendingList.width + 10
+    }
+
     // Periodically check network status
     Timer {
         id: storeNetworkCheck
@@ -196,10 +524,10 @@ Item {
                     Layout.preferredHeight: 60
                     radius: 14
                     color: ThemeManager.getColor("surface")
-                    border.color: searchInput.activeFocus
+                    border.color: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar"))
                                   ? ThemeManager.getColor("focus")
                                   : Qt.rgba(1, 1, 1, 0.06)
-                    border.width: searchInput.activeFocus ? 3 : 1
+                    border.width: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar")) ? 3 : 1
 
                     Behavior on border.color { ColorAnimation { duration: 150 } }
 
@@ -286,15 +614,16 @@ Item {
                         model: sortOptions
 
                         Rectangle {
+                            property bool isKbFocused: hasKeyboardFocus && navZone === "sortChips" && sortChipFocusIndex === index
                             width: sortChipText.width + 40
                             height: 56
                             radius: 12
                             color: currentSort === modelData.value
                                    ? ThemeManager.getColor("primary")
                                    : ThemeManager.getColor("surface")
-                            border.color: sortChipArea.containsMouse && currentSort !== modelData.value
+                            border.color: (sortChipArea.containsMouse || isKbFocused) && currentSort !== modelData.value
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: sortChipArea.containsMouse && currentSort !== modelData.value ? 2 : 0
+                            border.width: (sortChipArea.containsMouse || isKbFocused) && currentSort !== modelData.value ? 2 : 0
 
                             Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -383,13 +712,14 @@ Item {
                         Item { Layout.fillWidth: true }
 
                         Rectangle {
+                            property bool isKbFocused: hasKeyboardFocus && navZone === "backToStore"
                             Layout.preferredWidth: backLabel.width + 40
                             Layout.preferredHeight: 56
                             radius: 12
                             color: ThemeManager.getColor("surface")
-                            border.color: backBtnArea.containsMouse
+                            border.color: (backBtnArea.containsMouse || isKbFocused)
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: backBtnArea.containsMouse ? 2 : 0
+                            border.width: (backBtnArea.containsMouse || isKbFocused) ? 2 : 0
 
                             Text {
                                 id: backLabel
@@ -523,6 +853,7 @@ Item {
                                 steamRatingText: ""
                                 steamAppID: modelData.steamAppID || ""
                                 gameID: modelData.gameID || ""
+                                isKeyboardFocused: hasKeyboardFocus && navZone === "searchResults" && searchResultFocusIndex === index
 
                                 onClicked: {
                                     detailPopup.open(modelData)
@@ -545,6 +876,10 @@ Item {
                     radius: 20
                     clip: true
                     color: ThemeManager.getColor("surface")
+                    border.color: (hasKeyboardFocus && navZone === "hero")
+                                  ? ThemeManager.getColor("focus") : "transparent"
+                    border.width: (hasKeyboardFocus && navZone === "hero") ? 3 : 0
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
 
                     property var featuredDeal: topDeals.length > 0 ? topDeals[0] : null
                     property int featuredIndex: 0
@@ -1007,6 +1342,7 @@ Item {
                             gameID: modelData.gameID || ""
                             storeID: modelData.storeID || ""
                             dealRating: modelData.dealRating || ""
+                            isKeyboardFocused: hasKeyboardFocus && navZone === "trending" && trendingFocusIndex === index
 
                             onClicked: detailPopup.open(modelData)
                         }
@@ -1015,6 +1351,7 @@ Item {
 
                 // ─── Top Deals Grid ───
                 ColumnLayout {
+                    id: dealsGridSection
                     visible: !storePage.isSearching && topDeals.length > 0
                     Layout.fillWidth: true
                     spacing: 16
@@ -1084,6 +1421,7 @@ Item {
                                 gameID: modelData.gameID || ""
                                 storeID: modelData.storeID || ""
                                 dealRating: modelData.dealRating || ""
+                                isKeyboardFocused: hasKeyboardFocus && navZone === "dealsGrid" && dealGridFocusIndex === index
 
                                 onClicked: detailPopup.open(modelData)
                             }
@@ -1092,20 +1430,21 @@ Item {
 
                     // Load more button
                     Rectangle {
+                        property bool isKbFocused: hasKeyboardFocus && navZone === "loadMore"
                         Layout.alignment: Qt.AlignHCenter
                         Layout.preferredWidth: loadMoreLabel.width + 56
                         Layout.preferredHeight: 56
                         Layout.topMargin: 12
                         radius: 12
-                        color: loadMoreArea.containsMouse
+                        color: (loadMoreArea.containsMouse || isKbFocused)
                                ? ThemeManager.getColor("primary")
                                : ThemeManager.getColor("surface")
-                        border.color: loadMoreArea.containsMouse
-                                      ? "transparent"
+                        border.color: (loadMoreArea.containsMouse || isKbFocused)
+                                      ? ThemeManager.getColor("focus")
                                       : Qt.rgba(ThemeManager.getColor("primary").r,
                                                 ThemeManager.getColor("primary").g,
                                                 ThemeManager.getColor("primary").b, 0.4)
-                        border.width: 2
+                        border.width: (loadMoreArea.containsMouse || isKbFocused) ? 3 : 2
 
                         Behavior on color { ColorAnimation { duration: 200 } }
 
@@ -1116,7 +1455,7 @@ Item {
                             font.pixelSize: 24
                             font.family: ThemeManager.getFont("ui")
                             font.bold: true
-                            color: loadMoreArea.containsMouse
+                            color: (loadMoreArea.containsMouse || parent.isKbFocused)
                                    ? "#ffffff"
                                    : ThemeManager.getColor("textPrimary")
                         }

@@ -31,6 +31,9 @@ Rectangle {
     function loseFocus() {
         focusState = ""
         focusedTabIndex = -1
+        // Clean up Game Store focus if active
+        if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+            gameStoreLoader.item.loseFocus()
     }
 
     // Master keyboard handler
@@ -80,15 +83,19 @@ Rectangle {
             // Clients
             handleClientsKeys(event)
         } else if (activeTab === 2) {
-            // Game Store - handled by GameStorePage internally
-            // Left arrow goes back to nav, Up goes to tabs
-            if (event.key === Qt.Key_Left) {
-                requestNavFocus()
-                event.accepted = true
-            } else if (event.key === Qt.Key_Up) {
-                focusState = "tabs"
-                focusedTabIndex = activeTab
-                event.accepted = true
+            // Game Store — forward keys to GameStorePage
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.handleStoreKeys === "function") {
+                // Check if at top zone and pressing Up → go back to tab bar
+                var zone = gameStoreLoader.item.navZone
+                if (event.key === Qt.Key_Up && (zone === "searchBar" || zone === "")) {
+                    focusState = "tabs"
+                    focusedTabIndex = activeTab
+                    if (typeof gameStoreLoader.item.loseFocus === "function")
+                        gameStoreLoader.item.loseFocus()
+                    event.accepted = true
+                    return
+                }
+                gameStoreLoader.item.handleStoreKeys(event)
             }
         }
     }
@@ -192,6 +199,11 @@ Rectangle {
             }
         } else if (activeTab === 1) {
             clientsFocusIndex = 0
+        } else if (activeTab === 2) {
+            // Game Store — hand focus to GameStorePage
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.gainFocus === "function") {
+                gameStoreLoader.item.gainFocus()
+            }
         }
     }
 
@@ -1449,9 +1461,16 @@ Rectangle {
                 id: gameStoreTab
 
                 Loader {
+                    id: gameStoreLoader
                     anchors.fill: parent
                     source: "../components/GameStorePage.qml"
                     active: activeTab === 2
+
+                    onLoaded: {
+                        if (item) {
+                            item.requestNavFocus.connect(gamesRoot.requestNavFocus)
+                        }
+                    }
                 }
             }
         }
