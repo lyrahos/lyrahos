@@ -43,6 +43,10 @@ StoreApiManager::StoreApiManager(QObject *parent)
 
 void StoreApiManager::fetchDeals(const QString& sortBy, int pageNumber, int pageSize)
 {
+    // Ensure store metadata is loaded (retries if initial fetch failed)
+    if (!m_storesLoaded)
+        fetchStores();
+
     QUrl url(CHEAPSHARK_BASE + "/deals");
     QUrlQuery query;
     query.addQueryItem("sortBy", sortBy);
@@ -228,6 +232,10 @@ void StoreApiManager::searchGames(const QString& title)
 
 void StoreApiManager::fetchGameDeals(const QString& cheapSharkGameId)
 {
+    // Ensure store metadata is available for resolving store names
+    if (!m_storesLoaded)
+        fetchStores();
+
     QUrl url(CHEAPSHARK_BASE + "/games");
     QUrlQuery query;
     query.addQueryItem("id", cheapSharkGameId);

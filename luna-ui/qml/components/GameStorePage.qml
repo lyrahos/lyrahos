@@ -17,6 +17,9 @@ Item {
     property string currentSort: "Deal Rating"
     property int currentPage: 0
     property bool hasNetwork: GameManager.isNetworkAvailable()
+    property bool appendNextDeals: false  // true when "Load More" is pending
+    property string topDealsError: ""
+    property string recentDealsError: ""
 
     // Sort options
     property var sortOptions: [
@@ -60,22 +63,33 @@ Item {
 
         function onDealsReady(deals) {
             if (storePage.isSearching) return
-            storePage.topDeals = deals
+            if (storePage.appendNextDeals) {
+                // "Load More" — append new deals to existing list
+                storePage.topDeals = storePage.topDeals.concat(deals)
+                storePage.appendNextDeals = false
+            } else {
+                storePage.topDeals = deals
+            }
+            storePage.topDealsError = ""
             storePage.loadingTopDeals = false
         }
 
         function onDealsError(error) {
             storePage.loadingTopDeals = false
+            storePage.appendNextDeals = false
+            storePage.topDealsError = error
             console.warn("Failed to fetch deals:", error)
         }
 
         function onRecentDealsReady(deals) {
             storePage.recentDeals = deals
+            storePage.recentDealsError = ""
             storePage.loadingRecentDeals = false
         }
 
         function onRecentDealsError(error) {
             storePage.loadingRecentDeals = false
+            storePage.recentDealsError = error
         }
 
         function onSearchResultsReady(results) {
@@ -736,6 +750,80 @@ Item {
                     }
                 }
 
+                // ─── Error State (deals failed to load) ───
+                ColumnLayout {
+                    visible: !storePage.isSearching && !loadingTopDeals && topDeals.length === 0 && topDealsError !== ""
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 260
+                    spacing: 12
+
+                    Item { Layout.fillHeight: true }
+
+                    Text {
+                        text: "Failed to load deals"
+                        font.pixelSize: ThemeManager.getFontSize("large")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: topDealsError
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        Layout.maximumWidth: 400
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: retryLabel.width + 32
+                        Layout.preferredHeight: 42
+                        radius: 10
+                        color: retryArea.containsMouse
+                               ? ThemeManager.getColor("primary")
+                               : ThemeManager.getColor("surface")
+                        border.color: ThemeManager.getColor("primary")
+                        border.width: 1
+
+                        Behavior on color { ColorAnimation { duration: 150 } }
+
+                        Text {
+                            id: retryLabel
+                            anchors.centerIn: parent
+                            text: "Retry"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("ui")
+                            font.bold: true
+                            color: retryArea.containsMouse
+                                   ? "#ffffff"
+                                   : ThemeManager.getColor("textPrimary")
+                        }
+
+                        MouseArea {
+                            id: retryArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                storePage.topDealsError = ""
+                                storePage.recentDealsError = ""
+                                storePage.loadingTopDeals = true
+                                storePage.loadingRecentDeals = true
+                                storePage.currentPage = 0
+                                StoreApi.fetchDeals(storePage.currentSort, 0, 60)
+                                StoreApi.fetchRecentDeals(20)
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
+                }
+
                 // ─── Trending Deals Section (horizontal scroll) ───
                 ColumnLayout {
                     visible: !storePage.isSearching && recentDeals.length > 0
@@ -959,6 +1047,8 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 currentPage++
+                                storePage.appendNextDeals = true
+                                storePage.loadingTopDeals = true
                                 StoreApi.fetchDeals(currentSort, currentPage, 60)
                             }
                         }

@@ -38,6 +38,10 @@ Rectangle {
     property bool loadingIGDB: false
     property bool loadingProton: false
 
+    // Error states
+    property string dealsErrorMsg: ""
+    property string igdbErrorMsg: ""
+
     function open(deal) {
         gameTitle = deal.title || ""
         gameID = deal.gameID || ""
@@ -62,6 +66,8 @@ Rectangle {
         protonConfidence = ""
         protonTotalReports = 0
         cheapestEverPrice = ""
+        dealsErrorMsg = ""
+        igdbErrorMsg = ""
         loadingDeals = true
         loadingIGDB = true
         loadingProton = true
@@ -72,11 +78,17 @@ Rectangle {
         visible = true
 
         // Fetch details from all APIs
-        if (gameID !== "")
+        if (gameID !== "") {
             StoreApi.fetchGameDeals(gameID)
+        } else {
+            loadingDeals = false
+        }
 
-        if (gameTitle !== "")
+        if (gameTitle !== "") {
             StoreApi.fetchIGDBGameInfo(gameTitle)
+        } else {
+            loadingIGDB = false
+        }
 
         if (steamAppID !== "" && steamAppID !== "null" && steamAppID !== "0")
             StoreApi.fetchProtonRating(steamAppID)
@@ -104,11 +116,13 @@ Rectangle {
             detailPopup.cheapestEverPrice = details.cheapestEverPrice || ""
             if (details.headerImage)
                 detailPopup.headerImage = details.headerImage
+            detailPopup.dealsErrorMsg = ""
             detailPopup.loadingDeals = false
         }
 
         function onGameDealsError(error) {
             if (!detailPopup.visible) return
+            detailPopup.dealsErrorMsg = error
             detailPopup.loadingDeals = false
         }
 
@@ -120,11 +134,13 @@ Rectangle {
             detailPopup.igdbReleaseDate = info.releaseDate || ""
             detailPopup.igdbRating = info.totalRating || 0
             detailPopup.igdbScreenshots = info.screenshots || []
+            detailPopup.igdbErrorMsg = ""
             detailPopup.loadingIGDB = false
         }
 
         function onIgdbGameInfoError(error) {
             if (!detailPopup.visible) return
+            detailPopup.igdbErrorMsg = error
             detailPopup.loadingIGDB = false
         }
 
@@ -542,7 +558,7 @@ Rectangle {
 
                             // ─── IGDB Description ───
                             Rectangle {
-                                visible: igdbSummary !== "" || loadingIGDB
+                                visible: igdbSummary !== "" || loadingIGDB || igdbErrorMsg !== ""
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: descCol.height + 28
                                 radius: 12
@@ -571,6 +587,54 @@ Rectangle {
                                         font.family: ThemeManager.getFont("body")
                                         color: ThemeManager.getColor("textSecondary")
                                         font.italic: true
+                                    }
+
+                                    // IGDB error with retry
+                                    RowLayout {
+                                        visible: !loadingIGDB && igdbErrorMsg !== "" && igdbSummary === ""
+                                        Layout.fillWidth: true
+                                        spacing: 10
+
+                                        Text {
+                                            text: "Could not load description"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                            font.italic: true
+                                        }
+
+                                        Rectangle {
+                                            Layout.preferredWidth: retryIgdbLabel.width + 20
+                                            Layout.preferredHeight: 28
+                                            radius: 6
+                                            color: retryIgdbArea.containsMouse
+                                                   ? ThemeManager.getColor("primary")
+                                                   : ThemeManager.getColor("hover")
+
+                                            Text {
+                                                id: retryIgdbLabel
+                                                anchors.centerIn: parent
+                                                text: "Retry"
+                                                font.pixelSize: 11
+                                                font.family: ThemeManager.getFont("ui")
+                                                font.bold: true
+                                                color: retryIgdbArea.containsMouse
+                                                       ? "#ffffff"
+                                                       : ThemeManager.getColor("textPrimary")
+                                            }
+
+                                            MouseArea {
+                                                id: retryIgdbArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    detailPopup.igdbErrorMsg = ""
+                                                    detailPopup.loadingIGDB = true
+                                                    StoreApi.fetchIGDBGameInfo(detailPopup.gameTitle)
+                                                }
+                                            }
+                                        }
                                     }
 
                                     Text {
@@ -884,9 +948,58 @@ Rectangle {
                                         }
                                     }
 
+                                    // Error loading deals
+                                    ColumnLayout {
+                                        visible: !loadingDeals && dealsErrorMsg !== ""
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Text {
+                                            text: "Failed to load store prices"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: "#ff6b6b"
+                                        }
+
+                                        Rectangle {
+                                            Layout.preferredWidth: retryDealsLabel.width + 24
+                                            Layout.preferredHeight: 32
+                                            radius: 8
+                                            color: retryDealsArea.containsMouse
+                                                   ? ThemeManager.getColor("primary")
+                                                   : ThemeManager.getColor("hover")
+
+                                            Behavior on color { ColorAnimation { duration: 150 } }
+
+                                            Text {
+                                                id: retryDealsLabel
+                                                anchors.centerIn: parent
+                                                text: "Retry"
+                                                font.pixelSize: 12
+                                                font.family: ThemeManager.getFont("ui")
+                                                font.bold: true
+                                                color: retryDealsArea.containsMouse
+                                                       ? "#ffffff"
+                                                       : ThemeManager.getColor("textPrimary")
+                                            }
+
+                                            MouseArea {
+                                                id: retryDealsArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    detailPopup.dealsErrorMsg = ""
+                                                    detailPopup.loadingDeals = true
+                                                    StoreApi.fetchGameDeals(detailPopup.gameID)
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     // No deals message
                                     Text {
-                                        visible: !loadingDeals && gameDeals.length === 0
+                                        visible: !loadingDeals && dealsErrorMsg === "" && gameDeals.length === 0
                                         text: "No deals found for this game"
                                         font.pixelSize: ThemeManager.getFontSize("small")
                                         font.family: ThemeManager.getFont("body")
