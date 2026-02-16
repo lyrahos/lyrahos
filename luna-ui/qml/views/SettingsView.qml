@@ -16,50 +16,238 @@ Rectangle {
     property int hoveredRow: -1
     readonly property int rowCount: 6
 
+    // "rows" = navigating between settings rows
+    // "expanded" = navigating inside an expanded WiFi/BT/Audio panel
+    property string focusMode: "rows"
+    property int wifiFocusIndex: 0
+    property int btFocusIndex: 0
+    property int audioFocusIndex: 0  // 0..outputCount-1 = outputs, outputCount.. = inputs
+
     function gainFocus() {
         focusedRow = 0
+        focusMode = "rows"
         settingsRoot.forceActiveFocus()
     }
 
     function loseFocus() {
         focusedRow = -1
+        focusMode = "rows"
     }
 
-    Keys.onUpPressed: {
-        if (focusedRow > 0) focusedRow--
+    Keys.onPressed: function(event) {
+        if (focusMode === "rows") {
+            handleRowKeys(event)
+        } else if (focusMode === "expanded") {
+            handleExpandedKeys(event)
+        }
     }
-    Keys.onDownPressed: {
-        if (focusedRow < rowCount - 1) focusedRow++
+
+    function handleRowKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Up:
+            if (focusedRow > 0) focusedRow--
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (focusedRow < rowCount - 1) focusedRow++
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            requestNavFocus()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            activateRow(focusedRow)
+            event.accepted = true
+            break
+        }
     }
-    Keys.onLeftPressed: requestNavFocus()
-    Keys.onReturnPressed: activateRow(focusedRow)
-    Keys.onEnterPressed: activateRow(focusedRow)
+
+    function handleExpandedKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Escape:
+            // Collapse and go back to row navigation
+            exitExpanded()
+            event.accepted = true
+            break
+        default:
+            if (focusedRow === 0) handleWifiExpandedKeys(event)
+            else if (focusedRow === 1) handleBtExpandedKeys(event)
+            else if (focusedRow === 2) handleAudioExpandedKeys(event)
+            break
+        }
+    }
+
+    function exitExpanded() {
+        focusMode = "rows"
+        settingsRoot.forceActiveFocus()
+    }
+
+    // ─── WiFi expanded navigation ───
+    function handleWifiExpandedKeys(event) {
+        var count = settingsWifiModel.count
+        switch (event.key) {
+        case Qt.Key_Up:
+            if (wifiFocusIndex > 0) wifiFocusIndex--
+            else exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (wifiFocusIndex < count - 1) wifiFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (count > 0 && wifiFocusIndex >= 0 && wifiFocusIndex < count) {
+                var net = settingsWifiModel.get(wifiFocusIndex)
+                if (net && net.ssid !== connectedSsid) {
+                    selectedSsid = net.ssid
+                    settingsWifiPasswordField.text = ""
+                    wifiStatus = ""
+                    if (net.security === "" || net.security === "--") {
+                        wifiConnecting = true
+                        wifiStatus = "Connecting to " + net.ssid + "..."
+                        GameManager.connectToWifi(net.ssid, "")
+                    } else {
+                        settingsWifiPasswordField.forceActiveFocus()
+                    }
+                }
+            }
+            event.accepted = true
+            break
+        }
+    }
+
+    // ─── Bluetooth expanded navigation ───
+    function handleBtExpandedKeys(event) {
+        var count = settingsBtModel.count
+        switch (event.key) {
+        case Qt.Key_Up:
+            if (btFocusIndex > 0) btFocusIndex--
+            else exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (btFocusIndex < count - 1) btFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (count > 0 && btFocusIndex >= 0 && btFocusIndex < count) {
+                var dev = settingsBtModel.get(btFocusIndex)
+                if (dev) {
+                    // Check if already connected
+                    var alreadyConnected = false
+                    for (var i = 0; i < connectedBtDevices.length; i++) {
+                        if (connectedBtDevices[i].address === dev.address) {
+                            alreadyConnected = true
+                            break
+                        }
+                    }
+                    if (!alreadyConnected) {
+                        btConnecting = true
+                        btStatus = "Connecting to " + dev.name + "..."
+                        GameManager.connectBluetooth(dev.address)
+                    }
+                }
+            }
+            event.accepted = true
+            break
+        }
+    }
+
+    // ─── Audio expanded navigation ───
+    // audioFocusIndex spans: 0..outputCount-1 = output devices, outputCount..total-1 = input devices
+    function handleAudioExpandedKeys(event) {
+        var outCount = audioOutputDevices.length
+        var inCount = audioInputDevices.length
+        var totalCount = outCount + inCount
+
+        switch (event.key) {
+        case Qt.Key_Up:
+            if (audioFocusIndex > 0) audioFocusIndex--
+            else exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (audioFocusIndex < totalCount - 1) audioFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (audioFocusIndex < outCount) {
+                // Output device
+                var outDev = audioOutputDevices[audioFocusIndex]
+                if (outDev && outDev.name !== currentAudioOutput)
+                    GameManager.setAudioOutputDevice(outDev.name)
+            } else if (audioFocusIndex < totalCount) {
+                // Input device
+                var inDev = audioInputDevices[audioFocusIndex - outCount]
+                if (inDev && inDev.name !== currentAudioInput)
+                    GameManager.setAudioInputDevice(inDev.name)
+            }
+            event.accepted = true
+            break
+        }
+    }
 
     function activateRow(row) {
         switch (row) {
         case 0:
-            wifiExpanded = !wifiExpanded
-            if (wifiExpanded) {
+            if (!wifiExpanded) {
+                wifiExpanded = true
                 wifiStatus = ""
                 selectedSsid = ""
                 settingsWifiPasswordField.text = ""
                 wifiScanning = true
                 settingsWifiModel.clear()
                 GameManager.scanWifiNetworks()
+                // Enter expanded mode
+                wifiFocusIndex = 0
+                focusMode = "expanded"
+            } else {
+                // Already expanded — enter it
+                wifiFocusIndex = 0
+                focusMode = "expanded"
             }
             break
         case 1:
-            btExpanded = !btExpanded
-            if (btExpanded) {
+            if (!btExpanded) {
+                btExpanded = true
                 btStatus = ""
                 btScanning = true
                 settingsBtModel.clear()
                 GameManager.scanBluetoothDevices()
+                btFocusIndex = 0
+                focusMode = "expanded"
+            } else {
+                btFocusIndex = 0
+                focusMode = "expanded"
             }
             break
         case 2:
-            audioExpanded = !audioExpanded
-            if (audioExpanded) refreshAudioDevices()
+            if (!audioExpanded) {
+                audioExpanded = true
+                refreshAudioDevices()
+                audioFocusIndex = 0
+                focusMode = "expanded"
+            } else {
+                audioFocusIndex = 0
+                focusMode = "expanded"
+            }
             break
         case 3: switchToDesktop(); break
         case 4: GameManager.logout(); break
@@ -485,19 +673,20 @@ Rectangle {
                         model: ListModel { id: settingsWifiModel }
 
                         delegate: Rectangle {
+                            property bool isKbFocused: focusMode === "expanded" && focusedRow === 0 && wifiFocusIndex === index
                             width: settingsWifiList.width
                             height: 50
                             radius: 10
-                            color: settingsWifiItemArea.containsMouse
+                            color: (settingsWifiItemArea.containsMouse || isKbFocused)
                                    ? Qt.rgba(ThemeManager.getColor("primary").r,
                                              ThemeManager.getColor("primary").g,
                                              ThemeManager.getColor("primary").b, 0.15)
                                    : ThemeManager.getColor("hover")
                             border.color: model.ssid === connectedSsid
                                           ? ThemeManager.getColor("accent")
-                                          : settingsWifiItemArea.containsMouse
+                                          : (settingsWifiItemArea.containsMouse || isKbFocused)
                                             ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (model.ssid === connectedSsid || settingsWifiItemArea.containsMouse) ? 1 : 0
+                            border.width: (model.ssid === connectedSsid || settingsWifiItemArea.containsMouse || isKbFocused) ? 2 : 0
 
                             RowLayout {
                                 anchors.fill: parent
@@ -931,6 +1120,8 @@ Rectangle {
                             required property string address
                             required property string name
 
+                            property bool isKbFocused: focusMode === "expanded" && focusedRow === 1 && btFocusIndex === index
+
                             width: settingsBtList.width
                             height: 50
                             radius: 10
@@ -943,16 +1134,16 @@ Rectangle {
                                 return false
                             }
 
-                            color: btItemArea.containsMouse
+                            color: (btItemArea.containsMouse || isKbFocused)
                                    ? Qt.rgba(ThemeManager.getColor("primary").r,
                                              ThemeManager.getColor("primary").g,
                                              ThemeManager.getColor("primary").b, 0.15)
                                    : ThemeManager.getColor("hover")
                             border.color: isConnected
                                           ? ThemeManager.getColor("accent")
-                                          : btItemArea.containsMouse
+                                          : (btItemArea.containsMouse || isKbFocused)
                                             ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (isConnected || btItemArea.containsMouse) ? 1 : 0
+                            border.width: (isConnected || btItemArea.containsMouse || isKbFocused) ? 2 : 0
 
                             RowLayout {
                                 anchors.fill: parent
@@ -1175,22 +1366,24 @@ Rectangle {
                             required property var modelData
                             required property int index
 
+                            property bool isKbFocused: focusMode === "expanded" && focusedRow === 2 && audioFocusIndex === index
+
                             width: audioOutputList.width
                             height: 50
                             radius: 10
 
                             property bool isCurrent: modelData.name === currentAudioOutput
 
-                            color: audioOutArea.containsMouse
+                            color: (audioOutArea.containsMouse || isKbFocused)
                                    ? Qt.rgba(ThemeManager.getColor("primary").r,
                                              ThemeManager.getColor("primary").g,
                                              ThemeManager.getColor("primary").b, 0.15)
                                    : ThemeManager.getColor("hover")
                             border.color: isCurrent
                                           ? ThemeManager.getColor("accent")
-                                          : audioOutArea.containsMouse
+                                          : (audioOutArea.containsMouse || isKbFocused)
                                             ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (isCurrent || audioOutArea.containsMouse) ? 1 : 0
+                            border.width: (isCurrent || audioOutArea.containsMouse || isKbFocused) ? 2 : 0
 
                             RowLayout {
                                 anchors.fill: parent
@@ -1255,22 +1448,24 @@ Rectangle {
                             required property var modelData
                             required property int index
 
+                            property bool isKbFocused: focusMode === "expanded" && focusedRow === 2 && audioFocusIndex === (audioOutputDevices.length + index)
+
                             width: audioInputList.width
                             height: 50
                             radius: 10
 
                             property bool isCurrent: modelData.name === currentAudioInput
 
-                            color: audioInArea.containsMouse
+                            color: (audioInArea.containsMouse || isKbFocused)
                                    ? Qt.rgba(ThemeManager.getColor("primary").r,
                                              ThemeManager.getColor("primary").g,
                                              ThemeManager.getColor("primary").b, 0.15)
                                    : ThemeManager.getColor("hover")
                             border.color: isCurrent
                                           ? ThemeManager.getColor("accent")
-                                          : audioInArea.containsMouse
+                                          : (audioInArea.containsMouse || isKbFocused)
                                             ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (isCurrent || audioInArea.containsMouse) ? 1 : 0
+                            border.width: (isCurrent || audioInArea.containsMouse || isKbFocused) ? 2 : 0
 
                             RowLayout {
                                 anchors.fill: parent
