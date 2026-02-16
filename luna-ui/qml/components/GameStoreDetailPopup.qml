@@ -971,16 +971,16 @@ Rectangle {
                                                 Image {
                                                     Layout.preferredWidth: 20
                                                     Layout.preferredHeight: 20
-                                                    source: StoreApi.getStoreIconUrl(parseInt(modelData.storeID))
+                                                    source: modelData.storeIcon || ""
                                                     asynchronous: true
                                                     cache: true
                                                     fillMode: Image.PreserveAspectFit
                                                     visible: source !== ""
                                                 }
 
-                                                // Store name - resolved dynamically
+                                                // Store name
                                                 Text {
-                                                    text: StoreApi.getStoreName(parseInt(modelData.storeID))
+                                                    text: modelData.storeName || ("Store #" + modelData.storeID)
                                                     font.pixelSize: ThemeManager.getFontSize("small")
                                                     font.family: ThemeManager.getFont("body")
                                                     font.bold: true

@@ -12,6 +12,7 @@
 #include <QFile>
 #include <QDateTime>
 #include <QDebug>
+#include <memory>
 
 static const QString CHEAPSHARK_BASE = "https://www.cheapshark.com/api/1.0";
 static const QString PROTONDB_BASE   = "https://www.protondb.com/api/v1/reports/summaries";
@@ -233,8 +234,27 @@ void StoreApiManager::searchGames(const QString& title)
 void StoreApiManager::fetchGameDeals(const QString& cheapSharkGameId)
 {
     // Ensure store metadata is available for resolving store names
-    if (!m_storesLoaded)
+    if (!m_storesLoaded) {
+        auto successConn = std::make_shared<QMetaObject::Connection>();
+        auto errorConn = std::make_shared<QMetaObject::Connection>();
+
+        *successConn = connect(this, &StoreApiManager::storesReady, this,
+            [this, cheapSharkGameId, successConn, errorConn](QVariantList) {
+                disconnect(*successConn);
+                disconnect(*errorConn);
+                fetchGameDeals(cheapSharkGameId);
+            });
+        *errorConn = connect(this, &StoreApiManager::storesError, this,
+            [this, cheapSharkGameId, successConn, errorConn](const QString&) {
+                disconnect(*successConn);
+                disconnect(*errorConn);
+                m_storesLoaded = true;  // Prevent infinite retry
+                fetchGameDeals(cheapSharkGameId);
+            });
+
         fetchStores();
+        return;
+    }
 
     QUrl url(CHEAPSHARK_BASE + "/games");
     QUrlQuery query;
