@@ -21,6 +21,7 @@ qt_add_executable(luna-ui
     src/storebackends/heroicbackend.cpp
     src/storebackends/lutrisbackend.cpp
     src/storebackends/custombackend.cpp
+    src/storeapimanager.cpp
 )
 
 qt_add_qml_module(luna-ui
@@ -38,6 +39,9 @@ qt_add_qml_module(luna-ui
         qml/components/SearchBar.qml
         qml/components/GameDetailView.qml
         qml/components/SteamSetupWizard.qml
+        qml/components/GameStorePage.qml
+        qml/components/StoreGameCard.qml
+        qml/components/GameStoreDetailPopup.qml
 )
 
 target_link_libraries(luna-ui PRIVATE
