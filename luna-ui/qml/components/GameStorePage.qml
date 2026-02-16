@@ -412,15 +412,69 @@ Item {
                     }
 
                     // Loading spinner
-                    Text {
+                    ColumnLayout {
                         visible: loadingSearch
-                        text: "Searching game stores..."
-                        font.pixelSize: ThemeManager.getFontSize("medium")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
-                        font.italic: true
                         Layout.alignment: Qt.AlignHCenter
                         Layout.topMargin: 40
+                        spacing: 12
+
+                        Item {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: 56
+                            Layout.preferredHeight: 56
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 56
+                                height: 56
+                                radius: 28
+                                color: "transparent"
+                                border.width: 4
+                                border.color: Qt.rgba(1, 1, 1, 0.1)
+
+                                Rectangle {
+                                    width: 56
+                                    height: 56
+                                    radius: 28
+                                    color: "transparent"
+                                    border.width: 4
+                                    border.color: "transparent"
+
+                                    Rectangle {
+                                        width: 14
+                                        height: 4
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                    }
+                                    Rectangle {
+                                        width: 4
+                                        height: 14
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                    }
+
+                                    RotationAnimation on rotation {
+                                        from: 0
+                                        to: 360
+                                        duration: 1200
+                                        loops: Animation.Infinite
+                                        running: loadingSearch
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: "Searching game stores..."
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
                     }
 
                     // No results
@@ -716,27 +770,54 @@ Item {
                         anchors.centerIn: parent
                         spacing: 12
 
-                        // Pulsing loading indicator
-                        Rectangle {
+                        // Spinning ring (matches game launch overlay)
+                        Item {
                             Layout.alignment: Qt.AlignHCenter
-                            width: 48
-                            height: 48
-                            radius: 24
-                            color: ThemeManager.getColor("primary")
-                            opacity: pulseAnim.running ? 1.0 : 0.3
+                            Layout.preferredWidth: 56
+                            Layout.preferredHeight: 56
 
-                            SequentialAnimation on opacity {
-                                id: pulseAnim
-                                running: loadingTopDeals
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.3; duration: 800 }
-                                NumberAnimation { to: 1.0; duration: 800 }
-                            }
-
-                            Text {
+                            Rectangle {
                                 anchors.centerIn: parent
-                                text: "\u2B50"
-                                font.pixelSize: 20
+                                width: 56
+                                height: 56
+                                radius: 28
+                                color: "transparent"
+                                border.width: 4
+                                border.color: Qt.rgba(1, 1, 1, 0.1)
+
+                                Rectangle {
+                                    width: 56
+                                    height: 56
+                                    radius: 28
+                                    color: "transparent"
+                                    border.width: 4
+                                    border.color: "transparent"
+
+                                    Rectangle {
+                                        width: 14
+                                        height: 4
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                    }
+                                    Rectangle {
+                                        width: 4
+                                        height: 14
+                                        radius: 2
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                    }
+
+                                    RotationAnimation on rotation {
+                                        from: 0
+                                        to: 360
+                                        duration: 1200
+                                        loops: Animation.Infinite
+                                        running: loadingTopDeals
+                                    }
+                                }
                             }
                         }
 
