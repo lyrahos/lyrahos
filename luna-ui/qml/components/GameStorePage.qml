@@ -43,7 +43,7 @@ Item {
             if (wasOffline && storePage.hasNetwork) {
                 storePage.loadingTopDeals = true
                 storePage.loadingRecentDeals = true
-                StoreApi.fetchDeals(storePage.currentSort, 0, 60)
+                StoreApi.fetchDeals(storePage.currentSort, 0, 30)
                 StoreApi.fetchRecentDeals(20)
             }
         }
@@ -52,7 +52,7 @@ Item {
     Component.onCompleted: {
         hasNetwork = GameManager.isNetworkAvailable()
         if (hasNetwork) {
-            StoreApi.fetchDeals("Deal Rating", 0, 60)
+            StoreApi.fetchDeals("Deal Rating", 0, 30)
             StoreApi.fetchRecentDeals(20)
         }
     }
@@ -319,7 +319,7 @@ Item {
                                     currentSort = modelData.value
                                     currentPage = 0
                                     storePage.loadingTopDeals = true
-                                    StoreApi.fetchDeals(modelData.value, 0, 60)
+                                    StoreApi.fetchDeals(modelData.value, 0, 30)
                                 }
                             }
                         }
@@ -815,7 +815,7 @@ Item {
                                 storePage.loadingTopDeals = true
                                 storePage.loadingRecentDeals = true
                                 storePage.currentPage = 0
-                                StoreApi.fetchDeals(storePage.currentSort, 0, 60)
+                                StoreApi.fetchDeals(storePage.currentSort, 0, 30)
                                 StoreApi.fetchRecentDeals(20)
                             }
                         }
@@ -1049,7 +1049,7 @@ Item {
                                 currentPage++
                                 storePage.appendNextDeals = true
                                 storePage.loadingTopDeals = true
-                                StoreApi.fetchDeals(currentSort, currentPage, 60)
+                                StoreApi.fetchDeals(currentSort, currentPage, 30)
                             }
                         }
                     }
