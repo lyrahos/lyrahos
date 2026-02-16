@@ -8,6 +8,7 @@
 #include "database.h"
 #include "controllermanager.h"
 #include "artworkmanager.h"
+#include "storeapimanager.h"
 
 int main(int argc, char *argv[]) {
     // Must be called before QGuiApplication for WebEngineView to work
@@ -28,12 +29,14 @@ int main(int argc, char *argv[]) {
     ControllerManager controllerManager;
     controllerManager.initialize();
     ArtworkManager artworkManager;
+    StoreApiManager storeApiManager;
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
     engine.rootContext()->setContextProperty("ControllerManager", &controllerManager);
     engine.rootContext()->setContextProperty("ArtworkManager", &artworkManager);
+    engine.rootContext()->setContextProperty("StoreApi", &storeApiManager);
 
     // RESOURCE_PREFIX / in CMakeLists.txt places QML files at :/LunaUI/...
     engine.load(QUrl(QStringLiteral("qrc:/LunaUI/qml/Main.qml")));
