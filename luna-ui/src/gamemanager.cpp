@@ -8,14 +8,17 @@
 #include <QVariantMap>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QCoreApplication>
 #include <QNetworkInterface>
 #include <QUrlQuery>
 #include <QFileSystemWatcher>
+#include <QPointer>
 #include <QTextStream>
 #include <QRegularExpression>
 #include <memory>
+#include <unistd.h>
 
 GameManager::GameManager(Database *db, QObject *parent)
     : QObject(parent), m_db(db) {
@@ -82,7 +85,7 @@ void GameManager::launchGame(int gameId) {
     // Safety: if a stale steam://install/ command is in the database for a game
     // that's marked installed, fix it before launching.
     if (game.storeSource == "steam" && game.launchCommand.contains("steam://install/")) {
-        game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + game.appId;
+        game.launchCommand = "steam -silent steam://rungameid/" + game.appId;
         m_db->updateGame(game);
     }
 
@@ -184,8 +187,13 @@ bool GameManager::isSteamInstalled() {
 }
 
 bool GameManager::isSteamAvailable() {
-    // Steam is "available" if the user has logged in (library data exists)
-    return QFile::exists(QDir::homePath() + "/.local/share/Steam/steamapps/libraryfolders.vdf");
+    // Steam is "available" if the user has logged in (library data exists).
+    // Check both common Linux Steam paths — the canonical data directory
+    // and the ~/.steam/steam symlink/directory — because the layout varies
+    // between distros and bootstrap methods.
+    QString home = QDir::homePath();
+    return QFile::exists(home + "/.local/share/Steam/steamapps/libraryfolders.vdf")
+        || QFile::exists(home + "/.steam/steam/steamapps/libraryfolders.vdf");
 }
 
 void GameManager::launchSteam() {
@@ -207,60 +215,120 @@ void GameManager::ensureSteamRunning() {
         return;
     }
 
+    // Kill any straggling Steam sub-processes (steamwebhelper, etc.)
+    // left over from a previous session. If any survive with the
+    // hardware survey queued, they'll show it when we start a new
+    // Steam instance that inherits the backend.
+    QProcess::execute("pkill", QStringList() << "-f" << "steamwebhelper");
+
     // Mark the hardware survey as completed so it never pops up
     suppressSteamHardwareSurvey();
 
     qDebug() << "Pre-starting Steam silently in background...";
-    // Suppress Steam's overlay UI (the "Preparing to launch..." dialog)
-    // and hardware survey popups via environment variables.
+    // Suppress Steam's overlay drawing via environment variable.
     // NOTE: Do NOT set STEAM_NO_CEFHOST — it prevents Steam from fully
-    // initializing its network stack, causing "no internet" errors when
-    // launching games. Only suppress UI elements, not internals.
+    // initializing its network stack, causing "no internet" errors.
+    // NOTE: Do NOT use -nofriendsui/-nochatui — on modern Steam these
+    // prevent the client backend (CM connection) from fully initializing,
+    // causing "no internet" errors when launching games even though
+    // the web store (CEF) works fine.
     qputenv("SteamNoOverlayUIDrawing", "1");
-    QProcess::startDetached("steam", QStringList()
-        << "-silent" << "-nofriendsui" << "-nochatui");
+    QProcess::startDetached("steam", QStringList() << "-silent");
 }
 
 void GameManager::suppressSteamHardwareSurvey() {
-    // Write a future SurveyDate and high SurveyDateVersion to Steam's
+    // Inject a future SurveyDate and high SurveyDateVersion into Steam's
     // registry.vdf so the hardware survey dialog never appears.
     // Steam checks this file on startup; if the date is in the future,
     // it skips the survey prompt entirely.
-    QString registryPath = QDir::homePath() + "/.steam/registry.vdf";
+    //
+    // IMPORTANT: We must modify the existing file, NOT truncate it.
+    // After the user logs into Steam (step 1), Steam writes a full
+    // registry.vdf with hundreds of settings. Truncating it would
+    // destroy all of Steam's state and ironically trigger the survey.
+    //
+    // Write to BOTH possible registry.vdf locations. On some distros
+    // ~/.steam is a symlink to ~/.local/share/Steam (same file), but
+    // on others they're separate directories. Steam reads from its
+    // own data dir so we must cover both.
+    QStringList registryPaths = {
+        QDir::homePath() + "/.steam/registry.vdf",
+        QDir::homePath() + "/.local/share/Steam/registry.vdf"
+    };
 
-    // If the file already contains our marker, skip
-    QFile checkFile(registryPath);
-    if (checkFile.open(QIODevice::ReadOnly)) {
-        QString content = QString::fromUtf8(checkFile.readAll());
-        if (content.contains("\"SurveyDateVersion\"")) {
-            return;  // Already suppressed
-        }
-    }
-
-    // Write the full registry file with survey suppression
-    // This is a minimal registry.vdf that Steam merges with its own data.
     QDir().mkpath(QDir::homePath() + "/.steam");
-    QFile file(registryPath);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QTextStream out(&file);
-        out << "\"Registry\"\n"
-            << "{\n"
-            << "\t\"HKLM\"\n"
-            << "\t{\n"
-            << "\t\t\"Software\"\n"
-            << "\t\t{\n"
-            << "\t\t\t\"Valve\"\n"
-            << "\t\t\t{\n"
-            << "\t\t\t\t\"Steam\"\n"
-            << "\t\t\t\t{\n"
-            << "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
-            << "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
-            << "\t\t\t\t}\n"
-            << "\t\t\t}\n"
-            << "\t\t}\n"
-            << "\t}\n"
-            << "}\n";
-        qDebug() << "Wrote hardware survey suppression to" << registryPath;
+    QDir().mkpath(QDir::homePath() + "/.local/share/Steam");
+
+    for (const QString& registryPath : registryPaths) {
+        QString content;
+
+        QFile readFile(registryPath);
+        if (readFile.open(QIODevice::ReadOnly)) {
+            content = QString::fromUtf8(readFile.readAll());
+            readFile.close();
+        }
+
+        // If the file already has our suppression values, skip it
+        if (content.contains("\"SurveyDate\"\t\t\"2030-01-01\"") &&
+            content.contains("\"SurveyDateVersion\"")) {
+            continue;
+        }
+
+        if (content.isEmpty()) {
+            // No registry.vdf yet — write a minimal one (pre-first-login)
+            content =
+                "\"Registry\"\n"
+                "{\n"
+                "\t\"HKLM\"\n"
+                "\t{\n"
+                "\t\t\"Software\"\n"
+                "\t\t{\n"
+                "\t\t\t\"Valve\"\n"
+                "\t\t\t{\n"
+                "\t\t\t\t\"Steam\"\n"
+                "\t\t\t\t{\n"
+                "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+                "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n"
+                "\t\t\t\t}\n"
+                "\t\t\t}\n"
+                "\t\t}\n"
+                "\t}\n"
+                "}\n";
+        } else {
+            // Existing file — update or inject entries without destroying it.
+            // Replace existing SurveyDate value if present
+            QRegularExpression dateRe("\"SurveyDate\"\\s+\"[^\"]*\"");
+            if (content.contains(dateRe)) {
+                content.replace(dateRe, "\"SurveyDate\"\t\t\"2030-01-01\"");
+            }
+
+            QRegularExpression verRe("\"SurveyDateVersion\"\\s+\"[^\"]*\"");
+            if (content.contains(verRe)) {
+                content.replace(verRe, "\"SurveyDateVersion\"\t\t\"999\"");
+            }
+
+            // If neither entry exists, inject them into the HKLM/Software/Valve/Steam block.
+            if (!content.contains("\"SurveyDate\"")) {
+                QRegularExpression steamBlockRe(
+                    "(\"Steam\"\\s*\\n\\s*\\{\\s*\\n)");
+                auto match = steamBlockRe.match(content);
+                if (match.hasMatch()) {
+                    int insertPos = match.capturedEnd();
+                    QString entries =
+                        "\t\t\t\t\t\"SurveyDate\"\t\t\"2030-01-01\"\n"
+                        "\t\t\t\t\t\"SurveyDateVersion\"\t\t\"999\"\n";
+                    content.insert(insertPos, entries);
+                }
+            }
+        }
+
+        QFile writeFile(registryPath);
+        if (writeFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            writeFile.write(content.toUtf8());
+            writeFile.flush();
+            writeFile.close();
+            qDebug() << "Updated hardware survey suppression in" << registryPath;
+        }
     }
 }
 
@@ -290,25 +358,56 @@ void GameManager::switchToDesktop() {
     QCoreApplication::quit();
 }
 
+void GameManager::logout() {
+    // Cancel all active downloads so SteamCMD processes don't linger.
+    QStringList activeApps = m_activeDownloads.keys();
+    for (const QString& appId : activeApps) {
+        cancelDownload(appId);
+    }
+
+    // Write a logout signal file. luna-session will see this and exit
+    // cleanly, which returns the display to SDDM (login screen).
+    QFile signal("/tmp/luna-logout");
+    signal.open(QIODevice::WriteOnly);
+    signal.close();
+
+    QCoreApplication::quit();
+}
+
 int GameManager::getGameCount() {
     return m_db->getAllGames().size();
 }
 
 bool GameManager::isNetworkAvailable() {
+    // Fast path: check for any non-loopback interface with an IP address.
+    // Accept both IPv4 and IPv6, and don't require the IsRunning flag —
+    // many wireless drivers (especially on gaming handhelds) don't report
+    // it correctly even when fully connected.
     const auto interfaces = QNetworkInterface::allInterfaces();
     for (const auto &iface : interfaces) {
         if (iface.flags().testFlag(QNetworkInterface::IsUp) &&
-            iface.flags().testFlag(QNetworkInterface::IsRunning) &&
             !iface.flags().testFlag(QNetworkInterface::IsLoopBack)) {
             const auto entries = iface.addressEntries();
             for (const auto &entry : entries) {
-                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol &&
-                    !entry.ip().isLoopback()) {
+                if (!entry.ip().isLoopback() && !entry.ip().isNull()) {
                     return true;
                 }
             }
         }
     }
+
+    // Fallback: ask NetworkManager directly (always present on Lyrah OS).
+    // This catches edge cases where QNetworkInterface doesn't see
+    // addresses yet (e.g. WiFi just connected, DHCP still pending).
+    QProcess nmcli;
+    nmcli.start("nmcli", QStringList() << "networking" << "connectivity" << "check");
+    if (nmcli.waitForFinished(3000)) {
+        QString state = QString::fromUtf8(nmcli.readAllStandardOutput()).trimmed();
+        if (state == "full" || state == "limited" || state == "portal") {
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -436,6 +535,199 @@ void GameManager::disconnectWifi() {
     proc->start("nmcli", {"connection", "down", ssid});
 }
 
+// ── Bluetooth management ──
+
+void GameManager::scanBluetoothDevices() {
+    // Power on the adapter first, then scan for a few seconds
+    QProcess *powerProc = new QProcess(this);
+    connect(powerProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, powerProc](int, QProcess::ExitStatus) {
+        powerProc->deleteLater();
+
+        // Start discovery
+        QProcess::startDetached("bluetoothctl", {"scan", "on"});
+
+        // After 6 seconds, collect discovered devices
+        QTimer::singleShot(6000, this, [this]() {
+            QProcess *listProc = new QProcess(this);
+            connect(listProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, listProc](int, QProcess::ExitStatus) {
+                QVariantList devices;
+                QString output = listProc->readAllStandardOutput();
+                // bluetoothctl devices output: "Device AA:BB:CC:DD:EE:FF DeviceName"
+                for (const QString& line : output.split('\n')) {
+                    QString trimmed = line.trimmed();
+                    if (!trimmed.startsWith("Device ")) continue;
+                    // "Device " is 7 chars, MAC is 17 chars
+                    if (trimmed.length() < 25) continue;
+                    QString address = trimmed.mid(7, 17);
+                    QString name = trimmed.mid(25).trimmed();
+                    if (name.isEmpty()) name = address;
+
+                    QVariantMap dev;
+                    dev["address"] = address;
+                    dev["name"] = name;
+                    devices.append(dev);
+                }
+                // Stop scanning
+                QProcess::startDetached("bluetoothctl", {"scan", "off"});
+                emit bluetoothDevicesScanned(devices);
+                listProc->deleteLater();
+            });
+            listProc->start("bluetoothctl", {"devices"});
+        });
+    });
+    powerProc->start("bluetoothctl", {"power", "on"});
+}
+
+void GameManager::connectBluetooth(const QString& address) {
+    // Pair first (no-op if already paired), then connect
+    QProcess *pairProc = new QProcess(this);
+    connect(pairProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, pairProc, address](int, QProcess::ExitStatus) {
+        pairProc->deleteLater();
+        // Trust the device so it auto-reconnects
+        QProcess::startDetached("bluetoothctl", {"trust", address});
+
+        QProcess *connProc = new QProcess(this);
+        connect(connProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, connProc](int exitCode, QProcess::ExitStatus) {
+            bool success = (exitCode == 0);
+            QString msg = success
+                ? "Connected"
+                : QString(connProc->readAllStandardError() + connProc->readAllStandardOutput()).trimmed();
+            emit bluetoothConnectResult(success, msg);
+            connProc->deleteLater();
+        });
+        connProc->start("bluetoothctl", {"connect", address});
+    });
+    pairProc->start("bluetoothctl", {"pair", address});
+}
+
+void GameManager::disconnectBluetooth(const QString& address) {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        QString msg = success
+            ? "Disconnected"
+            : QString(proc->readAllStandardError()).trimmed();
+        emit bluetoothDisconnectResult(success, msg);
+        proc->deleteLater();
+    });
+    proc->start("bluetoothctl", {"disconnect", address});
+}
+
+QVariantList GameManager::getConnectedBluetoothDevices() {
+    QVariantList devices;
+    // List all known devices, then check which are connected
+    QProcess listProc;
+    listProc.start("bluetoothctl", {"devices", "Connected"});
+    listProc.waitForFinished(3000);
+
+    QString output = listProc.readAllStandardOutput();
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (!trimmed.startsWith("Device ")) continue;
+        if (trimmed.length() < 25) continue;
+        QString address = trimmed.mid(7, 17);
+        QString name = trimmed.mid(25).trimmed();
+        if (name.isEmpty()) name = address;
+
+        QVariantMap dev;
+        dev["address"] = address;
+        dev["name"] = name;
+        devices.append(dev);
+    }
+    return devices;
+}
+
+// ── Audio device management ──
+
+QVariantList GameManager::getAudioOutputDevices() {
+    QVariantList devices;
+    QProcess proc;
+    // pactl list sinks gives detailed info; parse Name and Description
+    proc.start("pactl", {"list", "sinks"});
+    proc.waitForFinished(3000);
+
+    QString output = proc.readAllStandardOutput();
+    QVariantMap current;
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("Name:")) {
+            current = QVariantMap();
+            current["name"] = trimmed.mid(5).trimmed();
+        } else if (trimmed.startsWith("Description:") && current.contains("name")) {
+            current["description"] = trimmed.mid(12).trimmed();
+            devices.append(current);
+        }
+    }
+    return devices;
+}
+
+QVariantList GameManager::getAudioInputDevices() {
+    QVariantList devices;
+    QProcess proc;
+    proc.start("pactl", {"list", "sources"});
+    proc.waitForFinished(3000);
+
+    QString output = proc.readAllStandardOutput();
+    QVariantMap current;
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (trimmed.startsWith("Name:")) {
+            current = QVariantMap();
+            current["name"] = trimmed.mid(5).trimmed();
+            // Skip monitor sources (they echo output audio, not real mics)
+        } else if (trimmed.startsWith("Description:") && current.contains("name")) {
+            QString name = current["name"].toString();
+            // Filter out .monitor sources — they're not real inputs
+            if (!name.contains(".monitor")) {
+                current["description"] = trimmed.mid(12).trimmed();
+                devices.append(current);
+            }
+        }
+    }
+    return devices;
+}
+
+QString GameManager::getDefaultAudioOutput() {
+    QProcess proc;
+    proc.start("pactl", {"get-default-sink"});
+    proc.waitForFinished(3000);
+    return QString(proc.readAllStandardOutput()).trimmed();
+}
+
+QString GameManager::getDefaultAudioInput() {
+    QProcess proc;
+    proc.start("pactl", {"get-default-source"});
+    proc.waitForFinished(3000);
+    return QString(proc.readAllStandardOutput()).trimmed();
+}
+
+void GameManager::setAudioOutputDevice(const QString& name) {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        emit audioOutputSet(success, success ? "Output changed" : QString(proc->readAllStandardError()).trimmed());
+        proc->deleteLater();
+    });
+    proc->start("pactl", {"set-default-sink", name});
+}
+
+void GameManager::setAudioInputDevice(const QString& name) {
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        bool success = (exitCode == 0);
+        emit audioInputSet(success, success ? "Input changed" : QString(proc->readAllStandardError()).trimmed());
+        proc->deleteLater();
+    });
+    proc->start("pactl", {"set-default-source", name});
+}
+
 // ── Steam API key management ──
 
 QString GameManager::steamApiKeyPath() const {
@@ -454,6 +746,10 @@ void GameManager::setSteamApiKey(const QString& key) {
     QFile file(steamApiKeyPath());
     if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         file.write(key.trimmed().toUtf8());
+        // Ensure the key is flushed to disk immediately so it survives
+        // unexpected session termination (e.g., SDDM logout).
+        file.flush();
+        fsync(file.handle());
     }
 }
 
@@ -558,17 +854,28 @@ QStringList GameManager::getSteamAppsDirs() const {
         if (QDir(steamapps).exists())
             dirs.append(steamapps);
     }
+
+    // Include SteamCMD's steamapps (not in libraryfolders.vdf but has
+    // manifests and game files from SteamCMD-installed games)
+    QString steamCmdApps = QDir::homePath() + "/.steam/steamcmd/steamapps";
+    if (QDir(steamCmdApps).exists() && !dirs.contains(steamCmdApps))
+        dirs.append(steamCmdApps);
+
     return dirs;
 }
 
 QString GameManager::findSteamCmdBin() const {
-    // 1. Check PATH (system-installed via pacman/AUR)
-    QString inPath = QStandardPaths::findExecutable("steamcmd");
-    if (!inPath.isEmpty()) return inPath;
-
-    // 2. Check local download location (~/.steam/steamcmd/steamcmd.sh)
+    // 1. Prefer the local download (~/.steam/steamcmd/steamcmd.sh).
+    //    steamcmd.sh sets STEAMROOT to its own directory, so login tokens
+    //    are stored in ~/.steam/steamcmd/config/config.vdf — isolated
+    //    from the Steam client which overwrites ~/.local/share/Steam/config/.
+    //    This ensures credentials survive Steam client restarts.
     QString localBin = QDir::homePath() + "/.steam/steamcmd/steamcmd.sh";
     if (QFile::exists(localBin)) return localBin;
+
+    // 2. Fall back to system-installed binary (pacman/AUR)
+    QString inPath = QStandardPaths::findExecutable("steamcmd");
+    if (!inPath.isEmpty()) return inPath;
 
     return QString();
 }
@@ -729,8 +1036,10 @@ void GameManager::installGame(int gameId) {
     QString dataDir = steamCmdDataDir();
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, proc, appId = game.appId, gameId, primarySteamApps, dataDir](int exitCode, QProcess::ExitStatus status) {
-        proc->deleteLater();
+        // Remove from hash BEFORE deleteLater so provideSteamCmdCredential
+        // can never find a pointer that's scheduled for deletion.
         m_steamCmdProcesses.remove(appId);
+        proc->deleteLater();
         m_downloadProgressCache.remove(appId);
 
         // SteamCMD exit codes are unreliable (often exits 5 on success).
@@ -816,7 +1125,7 @@ void GameManager::installGame(int gameId) {
             // Update the database: mark as installed
             Game game = m_db->getGameById(gameId);
             game.isInstalled = true;
-            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + appId;
+            game.launchCommand = "steam -silent steam://rungameid/" + appId;
             if (!installDir.isEmpty()) {
                 game.installPath = primarySteamApps + "/common/" + installDir;
             }
@@ -1023,7 +1332,7 @@ void GameManager::checkDownloadProgress() {
                         Game game = m_db->getGameById(gameId);
                         if (!game.isInstalled) {
                             game.isInstalled = true;
-                            game.launchCommand = "steam -silent -nofriendsui -nochatui steam://rungameid/" + appId;
+                            game.launchCommand = "steam -silent steam://rungameid/" + appId;
                             m_db->updateGame(game);
                             emit downloadComplete(appId, gameId);
                             qDebug() << "ACF watcher: download complete:" << game.title;
@@ -1052,8 +1361,20 @@ void GameManager::checkDownloadProgress() {
 // ── Steam Setup Wizard backend ──
 
 bool GameManager::isSteamSetupComplete() {
-    // Setup is "complete" when: Steam is logged in, API key is saved, and steamcmd is available
-    return isSteamAvailable() && hasSteamApiKey() && isSteamCmdAvailable();
+    // Setup is "complete" when: Steam is logged in, API key is saved,
+    // steamcmd is available, AND a cached login token exists.
+    // Without the token check we'd report "connected" even when
+    // SteamCMD will just re-prompt for credentials on every game install.
+    if (!isSteamAvailable() || !hasSteamApiKey() || !isSteamCmdAvailable())
+        return false;
+
+    // SteamCMD stores login tokens in config/config.vdf relative to its
+    // data directory. If this file is missing or empty, the login never
+    // completed (e.g. crash during token save) and we should not report
+    // setup as complete.
+    QString tokenFile = steamCmdDataDir() + "/config/config.vdf";
+    QFileInfo fi(tokenFile);
+    return fi.exists() && fi.size() > 0;
 }
 
 void GameManager::openApiKeyInBrowser() {
@@ -1490,6 +1811,12 @@ void GameManager::loginSteamCmd() {
         return;
     }
 
+    // Clean up any previous process that finished but wasn't fully cleaned
+    if (m_steamCmdSetupProc) {
+        m_steamCmdSetupProc->deleteLater();
+        m_steamCmdSetupProc = nullptr;
+    }
+
     m_steamCmdSetupProc = new QProcess(this);
     // Always use the consistent data directory so login tokens are stored
     // where installGame() will find them — survives reboots and logouts.
@@ -1505,8 +1832,29 @@ void GameManager::loginSteamCmd() {
     // SteamCMD's exit codes are unreliable (often exits 5 even on success).
     auto loginOk = std::make_shared<bool>(false);
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, loginOk]() {
-        QString output = QString::fromUtf8(m_steamCmdSetupProc->readAllStandardOutput());
+    // Use QPointer to safely reference the process from lambdas — if the
+    // QProcess is destroyed (e.g. GameManager teardown, cancel) the
+    // QPointer becomes null and we avoid use-after-free crashes.
+    QPointer<QProcess> procGuard = m_steamCmdSetupProc;
+
+    // Timer to send quit after the login token has been saved.
+    // SteamCMD prints "Logged in OK" → "Waiting for user info" → "OK"
+    // → "Steam>" — only at the Steam> prompt has the token been persisted.
+    // We wait for the Steam> prompt, or fall back to a 5-second delay.
+    auto quitTimer = new QTimer(this);
+    quitTimer->setSingleShot(true);
+    quitTimer->setInterval(5000);
+    connect(quitTimer, &QTimer::timeout, this, [procGuard, quitTimer]() {
+        quitTimer->deleteLater();
+        if (procGuard && procGuard->state() == QProcess::Running) {
+            qDebug() << "[steamcmd-setup] quit timer fired, sending quit";
+            procGuard->write("quit\n");
+        }
+    });
+
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, procGuard, loginOk, quitTimer]() {
+        if (!procGuard) return;
+        QString output = QString::fromUtf8(procGuard->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
             QString trimmed = line.trimmed();
             if (trimmed.isEmpty()) continue;
@@ -1523,13 +1871,29 @@ void GameManager::loginSteamCmd() {
                 emit steamCmdSetupCredentialNeeded("steamguard");
                 continue;
             }
-            // Successful login — SteamCMD prints these on a valid session.
-            // Now tell it to quit so it exits cleanly after saving the token.
+            // Successful login detected — but do NOT quit yet.
+            // SteamCMD needs to finish saving the login token to disk.
+            // Start a timeout; if we see the "Steam>" prompt we'll
+            // quit sooner.
             if (trimmed.contains("Logged in OK", Qt::CaseInsensitive) ||
-                trimmed.contains("Waiting for user info", Qt::CaseInsensitive)) {
+                (trimmed.contains("OK", Qt::CaseSensitive) && trimmed.length() < 10)) {
                 *loginOk = true;
-                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
-                    m_steamCmdSetupProc->write("quit\n");
+                if (!quitTimer->isActive()) {
+                    qDebug() << "[steamcmd-setup] login OK, waiting for token save...";
+                    quitTimer->start();
+                }
+            }
+            // The Steam> prompt means SteamCMD is idle and the login
+            // token has been written to config.vdf. If SteamCMD reached
+            // the interactive prompt, authentication succeeded — even if
+            // we never saw "Logged in OK" explicitly (modern SteamCMD
+            // versions may skip that message after guard code auth).
+            if (trimmed.startsWith("Steam>")) {
+                *loginOk = true;
+                quitTimer->stop();
+                if (procGuard && procGuard->state() == QProcess::Running) {
+                    qDebug() << "[steamcmd-setup] Steam> prompt seen, sending quit";
+                    procGuard->write("quit\n");
                 }
             }
             // Login failure messages from SteamCMD itself
@@ -1537,15 +1901,21 @@ void GameManager::loginSteamCmd() {
                 trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
                 trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
                 *loginOk = false;
-                if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
-                    m_steamCmdSetupProc->write("quit\n");
+                quitTimer->stop();
+                if (procGuard && procGuard->state() == QProcess::Running) {
+                    procGuard->write("quit\n");
                 }
             }
         }
     });
 
     connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, loginOk](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOk, quitTimer](int exitCode, QProcess::ExitStatus) {
+        // Always clean up the timer — it may still be running if the
+        // process exited before the timer fired (e.g. crash, kill).
+        quitTimer->stop();
+        quitTimer->deleteLater();
+
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
 
@@ -1578,5 +1948,9 @@ void GameManager::cancelSteamCmdSetup() {
         if (!m_steamCmdSetupProc->waitForFinished(3000)) {
             m_steamCmdSetupProc->kill();
         }
+    }
+    if (m_steamCmdSetupProc) {
+        m_steamCmdSetupProc->deleteLater();
+        m_steamCmdSetupProc = nullptr;
     }
 }

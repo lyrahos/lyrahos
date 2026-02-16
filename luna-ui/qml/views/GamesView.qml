@@ -7,7 +7,7 @@ Rectangle {
     id: gamesRoot
     color: "transparent"
 
-    property int activeTab: 0   // 0 = My Games, 1 = Game Stores
+    property int activeTab: 0   // 0 = My Games, 1 = Clients, 2 = Game Store
     onActiveTabChanged: if (activeTab === 0) refreshGames()
 
     ColumnLayout {
@@ -37,10 +37,10 @@ Rectangle {
                 height: parent.height
 
                 Repeater {
-                    model: ["My Games", "Game Stores"]
+                    model: ["My Games", "Clients", "Game Store"]
 
                     Rectangle {
-                        width: 160
+                        width: 140
                         height: tabRow.height
                         color: "transparent"
 
@@ -174,7 +174,7 @@ Rectangle {
                 }
             }
 
-            // ─── Tab 1: Game Stores ───
+            // ─── Tab 1: Clients ───
             Item {
                 id: gameStoresTab
 
@@ -1111,33 +1111,6 @@ Rectangle {
                                     Layout.fillWidth: true
                                     spacing: 10
 
-                                    // Scan library
-                                    Rectangle {
-                                        Layout.preferredWidth: scanLibLabel.width + 28
-                                        Layout.preferredHeight: 36
-                                        radius: 8
-                                        color: ThemeManager.getColor("primary")
-
-                                        Text {
-                                            id: scanLibLabel
-                                            anchors.centerIn: parent
-                                            text: "Scan Library"
-                                            font.pixelSize: ThemeManager.getFontSize("small")
-                                            font.family: ThemeManager.getFont("body")
-                                            font.bold: true
-                                            color: "white"
-                                        }
-
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                GameManager.scanAllStores()
-                                                refreshGames()
-                                            }
-                                        }
-                                    }
-
                                     // Fetch owned games (requires API key)
                                     Rectangle {
                                         visible: GameManager.hasSteamApiKey()
@@ -1193,6 +1166,33 @@ Rectangle {
                     }
                 }
             }
+
+            // ─── Tab 2: Game Store ───
+            Item {
+                id: gameStoreTab
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 16
+
+                    Text {
+                        text: "Game Store"
+                        font.pixelSize: ThemeManager.getFontSize("xlarge")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "Coming soon"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+            }
         }
     }
 
@@ -1212,8 +1212,12 @@ Rectangle {
         GameManager.ensureSteamRunning()
 
         // Check if we're returning from a Steam login (step 1 of wizard).
-        // The wizard sets "__setup_pending__" as API key before launching Steam.
-        if (GameManager.getSteamApiKey() === "__setup_pending__") {
+        // Two scenarios:
+        // A) User had no API key yet: marker is "__setup_pending__" → clear and resume wizard
+        // B) User already had a saved key (re-ran setup): key is preserved, but we
+        //    still need to detect the "just returned from Steam login" state.
+        var currentKey = GameManager.getSteamApiKey()
+        if (currentKey === "__setup_pending__") {
             GameManager.setSteamApiKey("")  // Clear the marker
             if (GameManager.isSteamAvailable()) {
                 // Steam login succeeded — jump to API key step

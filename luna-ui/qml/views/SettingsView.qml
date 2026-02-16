@@ -3,7 +3,56 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 Rectangle {
+    id: settingsRoot
     color: "transparent"
+    focus: true
+
+    // Controller / keyboard row navigation
+    // 0 = Wi-Fi, 1 = Bluetooth, 2 = Audio, 3 = Switch to Desktop,
+    // 4 = Log Out, 5 = Theme
+    property int focusedRow: 0
+    readonly property int rowCount: 6
+
+    Keys.onUpPressed: {
+        if (focusedRow > 0) focusedRow--
+    }
+    Keys.onDownPressed: {
+        if (focusedRow < rowCount - 1) focusedRow++
+    }
+    Keys.onReturnPressed: activateRow(focusedRow)
+    Keys.onEnterPressed: activateRow(focusedRow)
+
+    function activateRow(row) {
+        switch (row) {
+        case 0:
+            wifiExpanded = !wifiExpanded
+            if (wifiExpanded) {
+                wifiStatus = ""
+                selectedSsid = ""
+                settingsWifiPasswordField.text = ""
+                wifiScanning = true
+                settingsWifiModel.clear()
+                GameManager.scanWifiNetworks()
+            }
+            break
+        case 1:
+            btExpanded = !btExpanded
+            if (btExpanded) {
+                btStatus = ""
+                btScanning = true
+                settingsBtModel.clear()
+                GameManager.scanBluetoothDevices()
+            }
+            break
+        case 2:
+            audioExpanded = !audioExpanded
+            if (audioExpanded) refreshAudioDevices()
+            break
+        case 3: switchToDesktop(); break
+        case 4: GameManager.logout(); break
+        // case 5: theme — placeholder, no action yet
+        }
+    }
 
     // WiFi state
     property string connectedSsid: ""
@@ -14,10 +63,38 @@ Rectangle {
     property string wifiStatus: ""
     property string selectedSsid: ""
 
-    Component.onCompleted: refreshWifiStatus()
+    // Bluetooth state
+    property bool btExpanded: false
+    property bool btScanning: false
+    property bool btConnecting: false
+    property string btStatus: ""
+    property var connectedBtDevices: []
+
+    // Audio state
+    property bool audioExpanded: false
+    property string currentAudioOutput: ""
+    property string currentAudioInput: ""
+    property var audioOutputDevices: []
+    property var audioInputDevices: []
+
+    Component.onCompleted: {
+        refreshWifiStatus()
+        refreshBtStatus()
+    }
 
     function refreshWifiStatus() {
         connectedSsid = GameManager.getConnectedWifi()
+    }
+
+    function refreshBtStatus() {
+        connectedBtDevices = GameManager.getConnectedBluetoothDevices()
+    }
+
+    function refreshAudioDevices() {
+        audioOutputDevices = GameManager.getAudioOutputDevices()
+        audioInputDevices = GameManager.getAudioInputDevices()
+        currentAudioOutput = GameManager.getDefaultAudioOutput()
+        currentAudioInput = GameManager.getDefaultAudioInput()
     }
 
     Connections {
@@ -48,6 +125,35 @@ Rectangle {
             for (var i = 0; i < networks.length; i++)
                 settingsWifiModel.append(networks[i])
         }
+        function onBluetoothDevicesScanned(devices) {
+            btScanning = false
+            settingsBtModel.clear()
+            for (var i = 0; i < devices.length; i++)
+                settingsBtModel.append(devices[i])
+        }
+        function onBluetoothConnectResult(success, message) {
+            btConnecting = false
+            if (success) {
+                btStatus = "Connected!"
+                refreshBtStatus()
+            } else {
+                btStatus = "Failed: " + message
+            }
+        }
+        function onBluetoothDisconnectResult(success, message) {
+            if (success) {
+                btStatus = "Disconnected"
+                refreshBtStatus()
+            } else {
+                btStatus = "Failed: " + message
+            }
+        }
+        function onAudioOutputSet(success, message) {
+            if (success) refreshAudioDevices()
+        }
+        function onAudioInputSet(success, message) {
+            if (success) refreshAudioDevices()
+        }
     }
 
     // Refresh connection status periodically
@@ -55,12 +161,22 @@ Rectangle {
         interval: 5000
         running: true
         repeat: true
-        onTriggered: refreshWifiStatus()
+        onTriggered: {
+            refreshWifiStatus()
+            refreshBtStatus()
+        }
     }
 
-    ColumnLayout {
+    Flickable {
         anchors.fill: parent
         anchors.margins: 24
+        contentHeight: settingsCol.height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+    ColumnLayout {
+        id: settingsCol
+        width: parent.width
         spacing: 16
 
         Text {
@@ -77,6 +193,11 @@ Rectangle {
             Layout.preferredHeight: wifiCol.height + 32
             radius: 12
             color: ThemeManager.getColor("surface")
+            border.color: focusedRow === 0
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: focusedRow === 0 ? 2 : 0
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
 
             ColumnLayout {
                 id: wifiCol
@@ -550,19 +671,629 @@ Rectangle {
             }
         }
 
+        // ── Bluetooth Section ──
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: btCol.height + 32
+            radius: 12
+            color: ThemeManager.getColor("surface")
+            border.color: focusedRow === 1
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: focusedRow === 1 ? 2 : 0
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+            ColumnLayout {
+                id: btCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 16
+                spacing: 12
+
+                // Header row
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Text {
+                            text: "Bluetooth"
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        Text {
+                            text: {
+                                if (connectedBtDevices.length === 0) return "No devices connected"
+                                var names = []
+                                for (var i = 0; i < connectedBtDevices.length; i++)
+                                    names.push(connectedBtDevices[i].name)
+                                return "Connected to " + names.join(", ")
+                            }
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: connectedBtDevices.length > 0
+                                   ? ThemeManager.getColor("accent")
+                                   : ThemeManager.getColor("textSecondary")
+                        }
+                    }
+
+                    // Expand/collapse arrow
+                    Rectangle {
+                        Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        radius: 20
+                        color: expandBtArea.containsMouse
+                               ? ThemeManager.getColor("hover")
+                               : "transparent"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: btExpanded ? "v" : ">"
+                            font.pixelSize: 18
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        MouseArea {
+                            id: expandBtArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                btExpanded = !btExpanded
+                                if (btExpanded) {
+                                    btStatus = ""
+                                    btScanning = true
+                                    settingsBtModel.clear()
+                                    GameManager.scanBluetoothDevices()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Expanded Bluetooth device list ──
+                ColumnLayout {
+                    visible: btExpanded
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    // Status message
+                    Text {
+                        visible: btStatus !== ""
+                        text: btStatus
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: btStatus.startsWith("Failed")
+                               ? "#ff6b6b"
+                               : btStatus === "Connected!" || btStatus === "Disconnected"
+                                 ? ThemeManager.getColor("accent")
+                                 : ThemeManager.getColor("textSecondary")
+                    }
+
+                    // Refresh button
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Text {
+                            text: "Available Devices"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: ThemeManager.getColor("textSecondary")
+                            Layout.fillWidth: true
+                        }
+
+                        Rectangle {
+                            visible: !btScanning
+                            Layout.preferredWidth: btRefreshLabel.width + 24
+                            Layout.preferredHeight: 32
+                            radius: 8
+                            color: btRefreshArea.containsMouse
+                                   ? ThemeManager.getColor("hover")
+                                   : "transparent"
+
+                            Text {
+                                id: btRefreshLabel
+                                anchors.centerIn: parent
+                                text: "Refresh"
+                                font.pixelSize: ThemeManager.getFontSize("small")
+                                font.family: ThemeManager.getFont("body")
+                                color: ThemeManager.getColor("primary")
+                            }
+
+                            MouseArea {
+                                id: btRefreshArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    btScanning = true
+                                    settingsBtModel.clear()
+                                    GameManager.scanBluetoothDevices()
+                                }
+                            }
+                        }
+                    }
+
+                    // Scanning spinner
+                    RowLayout {
+                        visible: btScanning
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 48
+                        spacing: 12
+
+                        Item {
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 24
+                            Layout.alignment: Qt.AlignVCenter
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 22
+                                height: 22
+                                radius: 11
+                                color: "transparent"
+                                border.width: 3
+                                border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                                Rectangle {
+                                    width: 22
+                                    height: 22
+                                    radius: 11
+                                    color: "transparent"
+                                    border.width: 3
+                                    border.color: "transparent"
+
+                                    Rectangle {
+                                        width: 8
+                                        height: 3
+                                        radius: 1.5
+                                        color: ThemeManager.getColor("primary")
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        anchors.top: parent.top
+                                    }
+
+                                    RotationAnimation on rotation {
+                                        from: 0; to: 360
+                                        duration: 1000
+                                        loops: Animation.Infinite
+                                        running: btScanning
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "Scanning for devices..."
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+
+                            SequentialAnimation on opacity {
+                                running: btScanning
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.4; duration: 600 }
+                                NumberAnimation { to: 1.0; duration: 600 }
+                            }
+                        }
+                    }
+
+                    // Device list
+                    ListView {
+                        id: settingsBtList
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(settingsBtModel.count * 54, 270)
+                        clip: true
+                        spacing: 4
+                        model: ListModel { id: settingsBtModel }
+
+                        delegate: Rectangle {
+                            required property int index
+                            required property string address
+                            required property string name
+
+                            width: settingsBtList.width
+                            height: 50
+                            radius: 10
+
+                            property bool isConnected: {
+                                for (var i = 0; i < connectedBtDevices.length; i++) {
+                                    if (connectedBtDevices[i].address === address)
+                                        return true
+                                }
+                                return false
+                            }
+
+                            color: btItemArea.containsMouse
+                                   ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                             ThemeManager.getColor("primary").g,
+                                             ThemeManager.getColor("primary").b, 0.15)
+                                   : ThemeManager.getColor("hover")
+                            border.color: isConnected
+                                          ? ThemeManager.getColor("accent")
+                                          : btItemArea.containsMouse
+                                            ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: (isConnected || btItemArea.containsMouse) ? 1 : 0
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 12
+
+                                Text {
+                                    text: name
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: isConnected
+                                    color: ThemeManager.getColor("textPrimary")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                // "Connected" badge or "Connect" action
+                                Text {
+                                    visible: isConnected
+                                    text: "Connected"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("accent")
+                                }
+
+                                // Disconnect button for connected devices
+                                Rectangle {
+                                    visible: isConnected
+                                    Layout.preferredWidth: btDisconnLabel.width + 16
+                                    Layout.preferredHeight: 30
+                                    radius: 6
+                                    color: "transparent"
+                                    border.color: btDisconnArea.containsMouse
+                                                  ? "#ff6b6b" : Qt.rgba(1, 1, 1, 0.15)
+                                    border.width: 1
+
+                                    Text {
+                                        id: btDisconnLabel
+                                        anchors.centerIn: parent
+                                        text: "Disconnect"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: btDisconnArea.containsMouse
+                                               ? "#ff6b6b"
+                                               : ThemeManager.getColor("textSecondary")
+                                    }
+
+                                    MouseArea {
+                                        id: btDisconnArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: GameManager.disconnectBluetooth(address)
+                                    }
+                                }
+
+                                Text {
+                                    visible: !isConnected
+                                    text: address
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("textSecondary")
+                                }
+                            }
+
+                            MouseArea {
+                                id: btItemArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (isConnected) return
+                                    btConnecting = true
+                                    btStatus = "Connecting to " + name + "..."
+                                    GameManager.connectBluetooth(address)
+                                }
+                            }
+
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
+                        }
+                    }
+
+                    // Connecting indicator
+                    Text {
+                        visible: btConnecting
+                        text: btStatus
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("primary")
+
+                        SequentialAnimation on opacity {
+                            running: btConnecting
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.4; duration: 600 }
+                            NumberAnimation { to: 1.0; duration: 600 }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Audio Section ──
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: audioCol.height + 32
+            radius: 12
+            color: ThemeManager.getColor("surface")
+            border.color: focusedRow === 2
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: focusedRow === 2 ? 2 : 0
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+            ColumnLayout {
+                id: audioCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 16
+                spacing: 12
+
+                // Header row
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Text {
+                            text: "Audio"
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        Text {
+                            text: {
+                                // Find description for current output
+                                for (var i = 0; i < audioOutputDevices.length; i++) {
+                                    if (audioOutputDevices[i].name === currentAudioOutput)
+                                        return audioOutputDevices[i].description
+                                }
+                                return "Default"
+                            }
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+                    }
+
+                    // Expand/collapse arrow
+                    Rectangle {
+                        Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        radius: 20
+                        color: expandAudioArea.containsMouse
+                               ? ThemeManager.getColor("hover")
+                               : "transparent"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: audioExpanded ? "v" : ">"
+                            font.pixelSize: 18
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        MouseArea {
+                            id: expandAudioArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                audioExpanded = !audioExpanded
+                                if (audioExpanded) refreshAudioDevices()
+                            }
+                        }
+                    }
+                }
+
+                // ── Expanded Audio device selection ──
+                ColumnLayout {
+                    visible: audioExpanded
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    // ── Output (Speakers / Headset) ──
+                    Text {
+                        text: "Output"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+
+                    ListView {
+                        id: audioOutputList
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.max(audioOutputDevices.length * 54, 0)
+                        clip: true
+                        spacing: 4
+                        interactive: false
+                        model: audioOutputDevices
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+
+                            width: audioOutputList.width
+                            height: 50
+                            radius: 10
+
+                            property bool isCurrent: modelData.name === currentAudioOutput
+
+                            color: audioOutArea.containsMouse
+                                   ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                             ThemeManager.getColor("primary").g,
+                                             ThemeManager.getColor("primary").b, 0.15)
+                                   : ThemeManager.getColor("hover")
+                            border.color: isCurrent
+                                          ? ThemeManager.getColor("accent")
+                                          : audioOutArea.containsMouse
+                                            ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: (isCurrent || audioOutArea.containsMouse) ? 1 : 0
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 12
+
+                                Text {
+                                    text: modelData.description
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: isCurrent
+                                    color: ThemeManager.getColor("textPrimary")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    visible: isCurrent
+                                    text: "Active"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("accent")
+                                }
+                            }
+
+                            MouseArea {
+                                id: audioOutArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (!isCurrent)
+                                        GameManager.setAudioOutputDevice(modelData.name)
+                                }
+                            }
+
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
+                        }
+                    }
+
+                    // ── Input (Microphone) ──
+                    Text {
+                        text: "Microphone"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+
+                    ListView {
+                        id: audioInputList
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.max(audioInputDevices.length * 54, 0)
+                        clip: true
+                        spacing: 4
+                        interactive: false
+                        model: audioInputDevices
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+
+                            width: audioInputList.width
+                            height: 50
+                            radius: 10
+
+                            property bool isCurrent: modelData.name === currentAudioInput
+
+                            color: audioInArea.containsMouse
+                                   ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                             ThemeManager.getColor("primary").g,
+                                             ThemeManager.getColor("primary").b, 0.15)
+                                   : ThemeManager.getColor("hover")
+                            border.color: isCurrent
+                                          ? ThemeManager.getColor("accent")
+                                          : audioInArea.containsMouse
+                                            ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: (isCurrent || audioInArea.containsMouse) ? 1 : 0
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 12
+
+                                Text {
+                                    text: modelData.description
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    font.bold: isCurrent
+                                    color: ThemeManager.getColor("textPrimary")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    visible: isCurrent
+                                    text: "Active"
+                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("accent")
+                                }
+                            }
+
+                            MouseArea {
+                                id: audioInArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (!isCurrent)
+                                        GameManager.setAudioInputDevice(modelData.name)
+                                }
+                            }
+
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
+                        }
+                    }
+
+                    // Hint when no devices found
+                    Text {
+                        visible: audioOutputDevices.length === 0 && audioInputDevices.length === 0
+                        text: "No audio devices found"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+                }
+            }
+        }
+
         // ── Switch to Desktop Mode ──
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: switchArea.containsMouse
+            border.color: (switchArea.containsMouse || focusedRow === 3)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: switchArea.containsMouse ? 2 : 0
-
-            focus: true
-            Keys.onReturnPressed: switchToDesktop()
-            Keys.onEnterPressed: switchToDesktop()
+            border.width: (switchArea.containsMouse || focusedRow === 3) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -571,6 +1302,7 @@ Rectangle {
 
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
                     spacing: 4
 
                     Text {
@@ -591,6 +1323,7 @@ Rectangle {
                 Rectangle {
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 40
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 20
                     color: ThemeManager.getColor("primary")
 
@@ -608,7 +1341,75 @@ Rectangle {
                 id: switchArea
                 anchors.fill: parent
                 hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
                 onClicked: switchToDesktop()
+            }
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
+        }
+
+        // ── Log Out ──
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 72
+            radius: 12
+            color: ThemeManager.getColor("surface")
+            border.color: (logoutArea.containsMouse || focusedRow === 4)
+                          ? "#ff6b6b" : "transparent"
+            border.width: (logoutArea.containsMouse || focusedRow === 4) ? 2 : 0
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 16
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 4
+
+                    Text {
+                        text: "Log Out"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                    }
+                    Text {
+                        text: "Save session and return to login screen"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    Layout.alignment: Qt.AlignVCenter
+                    radius: 20
+                    color: (logoutArea.containsMouse || focusedRow === 4)
+                           ? "#ff6b6b" : Qt.rgba(1, 0.42, 0.42, 0.15)
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u23FB"
+                        font.pixelSize: 18
+                        font.bold: true
+                        color: (logoutArea.containsMouse || focusedRow === 4)
+                               ? "white" : "#ff6b6b"
+                    }
+
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                }
+            }
+
+            MouseArea {
+                id: logoutArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: GameManager.logout()
             }
 
             Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -620,6 +1421,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
+            border.color: focusedRow === 5
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: focusedRow === 5 ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -638,10 +1442,13 @@ Rectangle {
                     color: ThemeManager.getColor("textSecondary")
                 }
             }
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
         }
 
         Item { Layout.fillHeight: true }
     }
+    } // Flickable
 
     function switchToDesktop() {
         GameManager.switchToDesktop()

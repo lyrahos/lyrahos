@@ -82,7 +82,12 @@ Rectangle {
                     return coverArt
                 return ""
             }
-            fillMode: Image.PreserveAspectCrop
+            // Always use PreserveAspectFit so artwork is never zoomed or
+            // cropped. Some Steam games have non-standard cover art sizes
+            // that look wrong when AspectCrop zooms into a tiny slice.
+            // For proper 600x900 library images the card is nearly
+            // exactly 2:3, so the fit is virtually identical to crop.
+            fillMode: Image.PreserveAspectFit
             visible: status === Image.Ready
             opacity: isInstalled ? 1.0 : (downloadProgress >= 0 ? 0.7 : 0.5)
             asynchronous: true

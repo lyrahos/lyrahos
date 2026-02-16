@@ -61,7 +61,7 @@ QString ArtworkManager::getCoverArt(int gameId, const QString& url) {
     // Remote URL — kick off async download, return empty for now
     if (url.startsWith("http") && !m_pending.contains(gameId)) {
         log(QString("game %1: no cache, starting download -> %2").arg(gameId).arg(url));
-        downloadArtwork(gameId, url);
+        downloadArtwork(gameId, url, steamFallbackUrls(url));
     } else if (!url.startsWith("http")) {
         log(QString("game %1: local file MISSING -> %2").arg(gameId).arg(url));
     }
@@ -69,22 +69,32 @@ QString ArtworkManager::getCoverArt(int gameId, const QString& url) {
     return QString();
 }
 
-void ArtworkManager::downloadArtwork(int gameId, const QString& url) {
+void ArtworkManager::downloadArtwork(int gameId, const QString& url,
+                                     const QStringList& fallbacks) {
     m_pending.insert(gameId);
 
     QNetworkRequest req{QUrl(url)};
     req.setTransferTimeout(10000); // 10s timeout
     QNetworkReply *reply = m_nam->get(req);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, gameId, url]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, gameId, url, fallbacks]() {
         reply->deleteLater();
-        m_pending.remove(gameId);
 
         int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
         if (reply->error() != QNetworkReply::NoError) {
             log(QString("game %1: DOWNLOAD FAILED  http=%2  error=\"%3\"  url=%4")
                 .arg(gameId).arg(httpStatus).arg(reply->errorString(), url));
+
+            // Try the next fallback URL if available
+            if (!fallbacks.isEmpty()) {
+                QString next = fallbacks.first();
+                QStringList remaining = fallbacks.mid(1);
+                log(QString("game %1: trying fallback -> %2").arg(gameId).arg(next));
+                downloadArtwork(gameId, next, remaining);
+            } else {
+                m_pending.remove(gameId);
+            }
             return;
         }
 
@@ -92,6 +102,15 @@ void ArtworkManager::downloadArtwork(int gameId, const QString& url) {
         if (data.isEmpty()) {
             log(QString("game %1: DOWNLOAD EMPTY BODY  http=%2  url=%3")
                 .arg(gameId).arg(httpStatus).arg(url));
+
+            if (!fallbacks.isEmpty()) {
+                QString next = fallbacks.first();
+                QStringList remaining = fallbacks.mid(1);
+                log(QString("game %1: trying fallback -> %2").arg(gameId).arg(next));
+                downloadArtwork(gameId, next, remaining);
+            } else {
+                m_pending.remove(gameId);
+            }
             return;
         }
 
@@ -108,5 +127,55 @@ void ArtworkManager::downloadArtwork(int gameId, const QString& url) {
             log(QString("game %1: FILE WRITE FAILED  path=%2  error=\"%3\"")
                 .arg(gameId).arg(path, file.errorString()));
         }
+        m_pending.remove(gameId);
     });
+}
+
+QStringList ArtworkManager::steamFallbackUrls(const QString& url) {
+    // Build fallback URLs for Steam CDN images.
+    // Not all games have library_600x900_2x.jpg — older/smaller titles
+    // often only have header.jpg.
+    QStringList fallbacks;
+
+    // Only generate fallbacks for Steam CDN URLs
+    static const QStringList steamHosts = {
+        "steamcdn-a.akamaihd.net",
+        "cdn.akamai.steamstatic.com",
+        "cdn.cloudflare.steamstatic.com",
+    };
+
+    QUrl parsed(url);
+    bool isSteam = false;
+    for (const auto& host : steamHosts) {
+        if (parsed.host() == host) { isSteam = true; break; }
+    }
+    if (!isSteam) return fallbacks;
+
+    // Extract the appId from the path: /steam/apps/{appId}/...
+    QString path = parsed.path();          // e.g. /steam/apps/730/library_600x900_2x.jpg
+    int appsIdx = path.indexOf("/apps/");
+    if (appsIdx < 0) return fallbacks;
+    QString after = path.mid(appsIdx + 6); // e.g. 730/library_600x900_2x.jpg
+    int slash = after.indexOf('/');
+    if (slash < 0) return fallbacks;
+    QString appId = after.left(slash);
+    QString basePath = path.left(appsIdx + 6) + appId + "/";
+
+    // Ordered by quality: high-res vertical → standard vertical → header
+    QStringList candidates = {
+        basePath + "library_600x900_2x.jpg",
+        basePath + "library_600x900.jpg",
+        basePath + "header.jpg",
+    };
+
+    // Return only candidates that differ from the original URL
+    QString origPath = parsed.path();
+    for (const auto& candidate : candidates) {
+        if (candidate != origPath) {
+            QUrl fallback(url);
+            fallback.setPath(candidate);
+            fallbacks.append(fallback.toString());
+        }
+    }
+    return fallbacks;
 }

@@ -84,13 +84,13 @@ void Database::createTables() {
                "'steam steam://rungameid/', 'steam -silent steam://rungameid/') "
                "WHERE launch_command LIKE 'steam steam://rungameid/%'");
 
-    // Migration: add -nofriendsui -nochatui flags to suppress friends list
-    // and chat windows that appear alongside game launches.
+    // Migration: REMOVE -nofriendsui -nochatui flags — on modern Steam
+    // these prevent the client backend (CM connection) from initializing,
+    // causing "no internet" errors when launching games.
     query.exec("UPDATE games SET launch_command = REPLACE(launch_command, "
-               "'steam -silent steam://rungameid/', "
-               "'steam -silent -nofriendsui -nochatui steam://rungameid/') "
-               "WHERE launch_command LIKE 'steam -silent steam://rungameid/%' "
-               "AND launch_command NOT LIKE '%nofriendsui%'");
+               "'steam -silent -nofriendsui -nochatui steam://rungameid/', "
+               "'steam -silent steam://rungameid/') "
+               "WHERE launch_command LIKE '%nofriendsui%'");
 
     // FIX #6 + #28: Create FTS sync triggers using proper SQLite syntax
     query.exec("DROP TRIGGER IF EXISTS games_fts_insert");
@@ -201,11 +201,24 @@ Game Database::getGameByStoreAndAppId(const QString& storeSource, const QString&
 int Database::addOrUpdateGame(const Game& game) {
     Game existing = getGameByStoreAndAppId(game.storeSource, game.appId);
     if (existing.id > 0) {
-        // Update existing game, but preserve user data (favorites, hidden, last_played)
+        // Update existing game, but preserve user data and install state.
+        // A library scan or API fetch may temporarily fail to see a game's
+        // manifest (e.g. Steam client restart cleaning up SteamCMD copies)
+        // — never downgrade isInstalled from true to false here.
+        // Uninstallation must be an explicit operation, not a scan side-effect.
         Game updated = game;
         updated.id = existing.id;
         updated.isFavorite = existing.isFavorite;
         updated.isHidden = existing.isHidden;
+        if (existing.isInstalled && !game.isInstalled) {
+            updated.isInstalled = true;
+        }
+        if (existing.isInstalled && !existing.installPath.isEmpty() && game.installPath.isEmpty()) {
+            updated.installPath = existing.installPath;
+        }
+        if (existing.isInstalled && !existing.launchCommand.isEmpty() && game.launchCommand.isEmpty()) {
+            updated.launchCommand = existing.launchCommand;
+        }
         if (existing.lastPlayed > 0) {
             updated.lastPlayed = existing.lastPlayed;
         }

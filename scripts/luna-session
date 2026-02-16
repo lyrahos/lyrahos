@@ -53,10 +53,12 @@ export VKD3D_CONFIG=dxr
 # Signal files written by luna-ui before it exits:
 #   luna-switch-to-desktop  → user wants KDE, exit to SDDM
 #   luna-launch-steam       → user wants Steam login
+#   luna-logout             → user wants to log out (return to SDDM)
 SWITCH_SIGNAL="/tmp/luna-switch-to-desktop"
 STEAM_SIGNAL="/tmp/luna-launch-steam"
+LOGOUT_SIGNAL="/tmp/luna-logout"
 GAMESCOPE_OK="/tmp/luna-gamescope-ok"
-rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$GAMESCOPE_OK"
+rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$LOGOUT_SIGNAL" "$GAMESCOPE_OK"
 
 # Log everything for diagnostics.
 # Primary: file log (always works).  Secondary: systemd journal.
@@ -67,10 +69,19 @@ echo "luna-session: starting at $(date)"
 echo "luna-session: KWIN_DRM_DEVICES=${KWIN_DRM_DEVICES:-<unset>} LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-<unset>}"
 echo "luna-session: render nodes: $(ls /dev/dri/renderD* 2>/dev/null || echo 'NONE')"
 
+# ── Helper: handle logout (return to SDDM) ──
+try_logout() {
+    if [ -f "$LOGOUT_SIGNAL" ]; then
+        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$LOGOUT_SIGNAL" "$GAMESCOPE_OK"
+        echo "luna-session: logging out, returning to SDDM..."
+        exit 0
+    fi
+}
+
 # ── Helper: handle desktop switch ──
 try_desktop_switch() {
     if [ -f "$SWITCH_SIGNAL" ]; then
-        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$GAMESCOPE_OK"
+        rm -f "$SWITCH_SIGNAL" "$STEAM_SIGNAL" "$LOGOUT_SIGNAL" "$GAMESCOPE_OK"
         echo "luna-session: switching to Desktop Mode..."
         export XDG_CURRENT_DESKTOP=KDE
         export QT_QPA_PLATFORM=wayland
@@ -88,7 +99,49 @@ cat > "$GAMESCOPE_INNER" << 'INNER_EOF'
 #!/bin/bash
 SWITCH="/tmp/luna-switch-to-desktop"
 STEAM="/tmp/luna-launch-steam"
+LOGOUT="/tmp/luna-logout"
 LUNA_LOG="/tmp/luna-session.log"
+
+# ── Helper: suppress hardware survey in ALL registry.vdf locations ──
+# Steam may read from ~/.steam/ or ~/.local/share/Steam/ depending on
+# distro layout and whether ~/.steam is a symlink. Cover both.
+suppress_hardware_survey() {
+    local _paths="$HOME/.steam/registry.vdf $HOME/.local/share/Steam/registry.vdf"
+    mkdir -p "$HOME/.steam" "$HOME/.local/share/Steam"
+    for _reg in $_paths; do
+        if grep -q '"SurveyDate".*"2030-01-01"' "$_reg" 2>/dev/null; then
+            continue
+        fi
+        if [ -s "$_reg" ] && grep -q '"Steam"' "$_reg"; then
+            sed -i '/"SurveyDate"/d; /"SurveyDateVersion"/d' "$_reg"
+            sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
+\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
+\t\t\t\t\t"SurveyDateVersion"\t\t"999"
+}}' "$_reg"
+        else
+            cat > "$_reg" << 'REGEOF'
+"Registry"
+{
+	"HKLM"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"SurveyDate"		"2030-01-01"
+					"SurveyDateVersion"		"999"
+				}
+			}
+		}
+	}
+}
+REGEOF
+        fi
+        echo "suppress_hardware_survey: updated $_reg" >> "$LUNA_LOG"
+    done
+}
 
 # Signal that gamescope started successfully and the inner script ran
 touch /tmp/luna-gamescope-ok
@@ -134,31 +187,7 @@ while true; do
         [ -f "$STEAM_LIB" ] && STEAM_LIB_MTIME=$(stat -c %Y "$STEAM_LIB" 2>/dev/null)
 
         # Suppress the hardware survey dialog before Steam starts.
-        # Write a future date into Steam's registry so it skips the prompt.
-        STEAM_REG="$HOME/.steam/registry.vdf"
-        mkdir -p "$HOME/.steam"
-        if ! grep -q "SurveyDateVersion" "$STEAM_REG" 2>/dev/null; then
-            cat > "$STEAM_REG" << 'REGEOF'
-"Registry"
-{
-	"HKLM"
-	{
-		"Software"
-		{
-			"Valve"
-			{
-				"Steam"
-				{
-					"SurveyDate"		"2030-01-01"
-					"SurveyDateVersion"		"999"
-				}
-			}
-		}
-	}
-}
-REGEOF
-            echo "luna-inner: wrote hardware survey suppression to $STEAM_REG" >> "$LUNA_LOG"
-        fi
+        suppress_hardware_survey
 
         echo "luna-inner: launching Steam for login at $(date)" >> "$LUNA_LOG"
         # Use -gamepadui (Steam Deck UI) so the login screen renders at
@@ -266,6 +295,7 @@ gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope exited ($rc)"
 
+try_logout
 try_desktop_switch
 
 # Did the inner script run? If so, gamescope was working and the
@@ -286,6 +316,7 @@ gamescope "${GAMESCOPE_FLAGS[@]}" -- "$GAMESCOPE_INNER"
 rc=$?
 echo "luna-session: gamescope retry exited ($rc)"
 
+try_logout
 try_desktop_switch
 
 if [ -f "$GAMESCOPE_OK" ]; then
@@ -293,6 +324,47 @@ if [ -f "$GAMESCOPE_OK" ]; then
     echo "luna-session: gamescope session completed"
     exit 0
 fi
+
+# ── Helper: suppress hardware survey (outer script version) ──
+# Same logic as the gamescope inner script function, but available
+# in the kwin_wayland fallback path.
+suppress_hardware_survey_outer() {
+    local _paths="$HOME/.steam/registry.vdf $HOME/.local/share/Steam/registry.vdf"
+    mkdir -p "$HOME/.steam" "$HOME/.local/share/Steam"
+    for _reg in $_paths; do
+        if grep -q '"SurveyDate".*"2030-01-01"' "$_reg" 2>/dev/null; then
+            continue
+        fi
+        if [ -s "$_reg" ] && grep -q '"Steam"' "$_reg"; then
+            sed -i '/"SurveyDate"/d; /"SurveyDateVersion"/d' "$_reg"
+            sed -i '/"Steam"/{n;/^[[:space:]]*{/{a\
+\t\t\t\t\t"SurveyDate"\t\t"2030-01-01"\
+\t\t\t\t\t"SurveyDateVersion"\t\t"999"
+}}' "$_reg"
+        else
+            cat > "$_reg" << 'REGEOF'
+"Registry"
+{
+	"HKLM"
+	{
+		"Software"
+		{
+			"Valve"
+			{
+				"Steam"
+				{
+					"SurveyDate"		"2030-01-01"
+					"SurveyDateVersion"		"999"
+				}
+			}
+		}
+	}
+}
+REGEOF
+        fi
+        echo "suppress_hardware_survey: updated $_reg" >> "$LUNA_LOG"
+    done
+}
 
 # ── kwin_wayland fallback ──
 # gamescope can't get DRM at all (no Vulkan, VM, simpledrm, etc.).
@@ -324,10 +396,12 @@ while true; do
     kwin_wayland --no-lockscreen --no-global-shortcuts -- /usr/bin/luna-ui
     rc=$?
 
+    try_logout
     try_desktop_switch
 
     if [ -f "$STEAM_SIGNAL" ]; then
         rm -f "$STEAM_SIGNAL"
+        suppress_hardware_survey_outer
         echo "luna-session: launching Steam via kwin_wayland..."
         kwin_wayland --no-lockscreen --no-global-shortcuts -- steam
         echo "luna-session: Steam exited, restarting luna-ui..."

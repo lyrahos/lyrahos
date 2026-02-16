@@ -31,6 +31,7 @@ public:
     Q_INVOKABLE void launchSteam();
     Q_INVOKABLE void launchSteamLogin();
     Q_INVOKABLE void switchToDesktop();
+    Q_INVOKABLE void logout();
     Q_INVOKABLE int getGameCount();
     Q_INVOKABLE bool isNetworkAvailable();
     Q_INVOKABLE QVariantList getWifiNetworks();
@@ -38,6 +39,20 @@ public:
     Q_INVOKABLE void connectToWifi(const QString& ssid, const QString& password);
     Q_INVOKABLE QString getConnectedWifi();
     Q_INVOKABLE void disconnectWifi();
+
+    // Bluetooth
+    Q_INVOKABLE void scanBluetoothDevices();
+    Q_INVOKABLE void connectBluetooth(const QString& address);
+    Q_INVOKABLE void disconnectBluetooth(const QString& address);
+    Q_INVOKABLE QVariantList getConnectedBluetoothDevices();
+
+    // Audio device selection
+    Q_INVOKABLE QVariantList getAudioOutputDevices();
+    Q_INVOKABLE QVariantList getAudioInputDevices();
+    Q_INVOKABLE QString getDefaultAudioOutput();
+    Q_INVOKABLE QString getDefaultAudioInput();
+    Q_INVOKABLE void setAudioOutputDevice(const QString& name);
+    Q_INVOKABLE void setAudioInputDevice(const QString& name);
 
     // Steam API key & owned games
     Q_INVOKABLE QString getSteamApiKey();
@@ -78,6 +93,11 @@ signals:
     void wifiConnectResult(bool success, const QString& message);
     void wifiDisconnectResult(bool success, const QString& message);
     void wifiNetworksScanned(QVariantList networks);
+    void bluetoothDevicesScanned(QVariantList devices);
+    void bluetoothConnectResult(bool success, const QString& message);
+    void bluetoothDisconnectResult(bool success, const QString& message);
+    void audioOutputSet(bool success, const QString& message);
+    void audioInputSet(bool success, const QString& message);
     void steamOwnedGamesFetched(int gamesFound);
     void steamOwnedGamesFetchError(const QString& error);
     void downloadStarted(QString appId, int gameId);
