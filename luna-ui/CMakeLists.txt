@@ -57,6 +57,7 @@ qt_add_qml_module(luna-ui
         qml/components/StoreGameCard.qml
         qml/components/GameStoreDetailPopup.qml
         qml/components/ControllerProfileEditor.qml
+        qml/components/VirtualKeyboard.qml
 )
 
 target_link_libraries(luna-ui PRIVATE

@@ -123,6 +123,11 @@ Item {
     }
 
     function handleStoreKeys(event) {
+        // If virtual keyboard is open, it handles its own keys
+        if (storeVirtualKeyboard.visible) {
+            return
+        }
+
         // If detail popup is open, let it handle keys
         if (detailPopup.visible) {
             detailPopup.handleKeys(event)
@@ -155,7 +160,10 @@ Item {
             break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            searchInput.forceActiveFocus()
+            // Open virtual keyboard instead of focusing raw TextInput
+            // (directly focusing TextInput freezes controller navigation)
+            storeVirtualKeyboard.placeholderText = "Search games..."
+            storeVirtualKeyboard.open(searchInput.text)
             event.accepted = true
             break
         }
@@ -1742,6 +1750,29 @@ Item {
     GameStoreDetailPopup {
         id: detailPopup
         anchors.fill: parent
+    }
+
+    // ─── Virtual Keyboard for Search ───
+    VirtualKeyboard {
+        id: storeVirtualKeyboard
+        anchors.fill: parent
+
+        onAccepted: function(typedText) {
+            searchInput.text = typedText
+            if (typedText.trim().length > 0) {
+                storePage.searchQuery = typedText.trim()
+                storePage.isSearching = true
+                storePage.loadingSearch = true
+                StoreApi.searchGames(typedText.trim())
+                navZone = "backToStore"
+            }
+            storePage.forceActiveFocus()
+        }
+
+        onCancelled: {
+            navZone = "searchBar"
+            storePage.forceActiveFocus()
+        }
     }
 
     // ─── Helper Functions ───
