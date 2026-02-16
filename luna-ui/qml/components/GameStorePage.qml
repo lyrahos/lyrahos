@@ -16,6 +16,7 @@ Item {
     property string searchQuery: ""
     property string currentSort: "Deal Rating"
     property int currentPage: 0
+    property bool hasNetwork: GameManager.isNetworkAvailable()
 
     // Sort options
     property var sortOptions: [
@@ -26,9 +27,31 @@ Item {
         { label: "Newest",      value: "recent" }
     ]
 
+    // Periodically check network status
+    Timer {
+        id: storeNetworkCheck
+        interval: 3000
+        running: storePage.visible
+        repeat: true
+        onTriggered: {
+            var wasOffline = !storePage.hasNetwork
+            storePage.hasNetwork = GameManager.isNetworkAvailable()
+            // Auto-load deals when coming back online
+            if (wasOffline && storePage.hasNetwork) {
+                storePage.loadingTopDeals = true
+                storePage.loadingRecentDeals = true
+                StoreApi.fetchDeals(storePage.currentSort, 0, 60)
+                StoreApi.fetchRecentDeals(20)
+            }
+        }
+    }
+
     Component.onCompleted: {
-        StoreApi.fetchDeals("Deal Rating", 0, 60)
-        StoreApi.fetchRecentDeals(20)
+        hasNetwork = GameManager.isNetworkAvailable()
+        if (hasNetwork) {
+            StoreApi.fetchDeals("Deal Rating", 0, 60)
+            StoreApi.fetchRecentDeals(20)
+        }
     }
 
     // ─── API Connections ───
@@ -65,10 +88,83 @@ Item {
         }
     }
 
+    // ─── No Internet Overlay ───
+    ColumnLayout {
+        anchors.centerIn: parent
+        spacing: 16
+        visible: !storePage.hasNetwork
+
+        Rectangle {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: 64
+            Layout.preferredHeight: 64
+            radius: 32
+            color: ThemeManager.getColor("surface")
+
+            Text {
+                anchors.centerIn: parent
+                text: "\u26A0"
+                font.pixelSize: 28
+                color: ThemeManager.getColor("textSecondary")
+            }
+        }
+
+        Text {
+            text: "No Internet Connection"
+            font.pixelSize: ThemeManager.getFontSize("xlarge")
+            font.family: ThemeManager.getFont("heading")
+            font.bold: true
+            color: ThemeManager.getColor("textPrimary")
+            Layout.alignment: Qt.AlignHCenter
+        }
+
+        Text {
+            text: "Connect to the internet to browse game deals"
+            font.pixelSize: ThemeManager.getFontSize("medium")
+            font.family: ThemeManager.getFont("body")
+            color: ThemeManager.getColor("textSecondary")
+            Layout.alignment: Qt.AlignHCenter
+        }
+
+        Rectangle {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: settingsBtnLabel.width + 40
+            Layout.preferredHeight: 48
+            radius: 12
+            color: settingsBtnArea.containsMouse
+                   ? Qt.darker(ThemeManager.getColor("primary"), 1.1)
+                   : ThemeManager.getColor("primary")
+
+            Behavior on color { ColorAnimation { duration: 150 } }
+
+            Text {
+                id: settingsBtnLabel
+                anchors.centerIn: parent
+                text: "Open Settings"
+                font.pixelSize: ThemeManager.getFontSize("medium")
+                font.family: ThemeManager.getFont("ui")
+                font.bold: true
+                color: "#ffffff"
+            }
+
+            MouseArea {
+                id: settingsBtnArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    navBar.currentIndex = 3
+                    navBar.sectionChanged("Settings")
+                }
+            }
+        }
+    }
+
     // ─── Main Layout ───
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+        visible: storePage.hasNetwork
 
         // ─── Top bar: Search + Sort ───
         Rectangle {
@@ -349,7 +445,7 @@ Item {
 
                             StoreGameCard {
                                 width: Math.floor((mainFlickable.width - 48) / 4)
-                                height: width * 0.66
+                                height: width * 0.55
                                 gameTitle: modelData.title || ""
                                 headerImage: modelData.headerImage || modelData.thumb || ""
                                 salePrice: modelData.cheapest || ""
@@ -377,7 +473,7 @@ Item {
                     id: heroBanner
                     visible: !storePage.isSearching && topDeals.length > 0
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 280
+                    Layout.preferredHeight: 380
                     radius: 16
                     clip: true
                     color: ThemeManager.getColor("surface")
@@ -598,7 +694,7 @@ Item {
                 Rectangle {
                     visible: !storePage.isSearching && loadingTopDeals
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 280
+                    Layout.preferredHeight: 380
                     radius: 16
                     color: ThemeManager.getColor("surface")
 
@@ -721,7 +817,7 @@ Item {
                     ListView {
                         id: trendingList
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 180
+                        Layout.preferredHeight: 210
                         orientation: ListView.Horizontal
                         spacing: 12
                         clip: true
@@ -729,8 +825,8 @@ Item {
                         boundsBehavior: Flickable.StopAtBounds
 
                         delegate: StoreGameCard {
-                            width: 280
-                            height: 170
+                            width: 320
+                            height: 200
                             gameTitle: modelData.title || ""
                             headerImage: modelData.headerImage || modelData.thumb || ""
                             salePrice: modelData.salePrice || ""
@@ -807,7 +903,7 @@ Item {
 
                             StoreGameCard {
                                 width: Math.floor((mainFlickable.width - 36) / 4)
-                                height: width * 0.66
+                                height: width * 0.55
                                 gameTitle: modelData.title || ""
                                 headerImage: modelData.headerImage || modelData.thumb || ""
                                 salePrice: modelData.salePrice || ""
