@@ -72,8 +72,9 @@ Rectangle {
         loadingIGDB = true
         loadingProton = true
 
-        // Reset scroll position
+        // Reset scroll position and screenshot index
         contentFlick.contentY = 0
+        fullContent.currentScreenshotIndex = 0
 
         visible = true
 
@@ -225,136 +226,267 @@ Rectangle {
                 width: contentFlick.width
                 spacing: 0
 
-                // ─── Hero Image Section ───
-                Rectangle {
+                // Track current screenshot index
+                property int currentScreenshotIndex: 0
+
+                // ─── Top Section: Hero Image + Screenshot Viewer ───
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(popupCard.height * 0.4, 400)
-                    color: ThemeManager.getColor("surface")
-                    clip: true
+                    Layout.preferredHeight: Math.min(popupCard.height * 0.45, 420)
+                    spacing: 0
 
-                    Image {
-                        id: headerImg
-                        anchors.fill: parent
-                        source: headerImage
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        sourceSize.width: popupCard.width
-                        opacity: status === Image.Ready ? 1.0 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 300 } }
-                    }
-
-                    // Gradient overlays for readability
+                    // Left: Hero/Header image
                     Rectangle {
-                        anchors.fill: parent
-                        gradient: Gradient {
-                            GradientStop { position: 0.0; color: "transparent" }
-                            GradientStop { position: 0.5; color: "transparent" }
-                            GradientStop { position: 0.85; color: Qt.rgba(0, 0, 0, 0.6) }
-                            GradientStop { position: 1.0; color: ThemeManager.getColor("background") }
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: igdbScreenshots.length > 0
+                                               ? parent.width * 0.5 : parent.width
+                        color: ThemeManager.getColor("surface")
+                        clip: true
+
+                        Image {
+                            id: headerImg
+                            anchors.fill: parent
+                            source: headerImage
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            cache: true
+                            sourceSize.width: popupCard.width
+                            opacity: status === Image.Ready ? 1.0 : 0.0
+                            Behavior on opacity { NumberAnimation { duration: 300 } }
                         }
                     }
 
-                    // Title + info overlay at bottom
-                    ColumnLayout {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.leftMargin: 32
-                        anchors.rightMargin: 32
-                        anchors.bottomMargin: 16
-                        spacing: 10
+                    // Right: Screenshot viewer with navigation
+                    Rectangle {
+                        visible: igdbScreenshots.length > 0
+                        Layout.fillHeight: true
+                        Layout.fillWidth: true
+                        color: "#000000"
+                        clip: true
 
-                        Text {
-                            text: gameTitle
-                            font.pixelSize: 32
-                            font.family: ThemeManager.getFont("heading")
-                            font.bold: true
-                            color: "#ffffff"
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
+                        Image {
+                            id: screenshotViewer
+                            anchors.fill: parent
+                            source: igdbScreenshots.length > 0
+                                    ? igdbScreenshots[fullContent.currentScreenshotIndex] : ""
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            cache: true
+                            opacity: status === Image.Ready ? 1.0 : 0.0
+                            Behavior on opacity { NumberAnimation { duration: 200 } }
                         }
 
-                        RowLayout {
-                            spacing: 16
+                        // Previous button
+                        Rectangle {
+                            visible: igdbScreenshots.length > 1
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: 8
+                            width: 36
+                            height: 36
+                            radius: 18
+                            color: prevArea.containsMouse ? Qt.rgba(0, 0, 0, 0.8) : Qt.rgba(0, 0, 0, 0.5)
+                            Behavior on color { ColorAnimation { duration: 150 } }
 
-                            // Genre tags
                             Text {
-                                visible: igdbGenres !== ""
-                                text: igdbGenres
-                                font.pixelSize: 14
-                                font.family: ThemeManager.getFont("ui")
-                                color: Qt.rgba(1, 1, 1, 0.7)
-                            }
-
-                            // Separator
-                            Text {
-                                visible: igdbGenres !== "" && igdbReleaseDate !== ""
-                                text: "|"
-                                font.pixelSize: 14
-                                color: Qt.rgba(1, 1, 1, 0.3)
-                            }
-
-                            // Release date
-                            Text {
-                                visible: igdbReleaseDate !== ""
-                                text: igdbReleaseDate
-                                font.pixelSize: 14
-                                font.family: ThemeManager.getFont("ui")
-                                color: Qt.rgba(1, 1, 1, 0.7)
-                            }
-                        }
-
-                        // Price + badges row
-                        RowLayout {
-                            spacing: 12
-
-                            // Discount badge
-                            Rectangle {
-                                visible: {
-                                    var s = parseFloat(savings)
-                                    return !isNaN(s) && s > 0
-                                }
-                                Layout.preferredWidth: heroDiscText.width + 16
-                                Layout.preferredHeight: 32
-                                radius: 6
-                                color: "#4ade80"
-
-                                Text {
-                                    id: heroDiscText
-                                    anchors.centerIn: parent
-                                    text: "-" + Math.round(parseFloat(savings)) + "%"
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    color: "#0a0a0a"
-                                }
-                            }
-
-                            // Original price
-                            Text {
-                                visible: {
-                                    var s = parseFloat(savings)
-                                    return !isNaN(s) && s > 0
-                                }
-                                text: "$" + normalPrice
-                                font.pixelSize: 18
-                                font.family: ThemeManager.getFont("ui")
-                                color: Qt.rgba(1, 1, 1, 0.5)
-                                font.strikeout: true
-                            }
-
-                            // Sale price
-                            Text {
-                                text: {
-                                    if (salePrice === "0.00") return "FREE"
-                                    if (salePrice !== "") return "$" + salePrice
-                                    return ""
-                                }
-                                font.pixelSize: 24
-                                font.family: ThemeManager.getFont("ui")
+                                anchors.centerIn: parent
+                                text: "\u276E"
+                                font.pixelSize: 16
                                 font.bold: true
-                                color: "#4ade80"
+                                color: "#ffffff"
                             }
+
+                            MouseArea {
+                                id: prevArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (fullContent.currentScreenshotIndex > 0)
+                                        fullContent.currentScreenshotIndex--
+                                    else
+                                        fullContent.currentScreenshotIndex = igdbScreenshots.length - 1
+                                }
+                            }
+                        }
+
+                        // Next button
+                        Rectangle {
+                            visible: igdbScreenshots.length > 1
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.rightMargin: 8
+                            width: 36
+                            height: 36
+                            radius: 18
+                            color: nextArea.containsMouse ? Qt.rgba(0, 0, 0, 0.8) : Qt.rgba(0, 0, 0, 0.5)
+                            Behavior on color { ColorAnimation { duration: 150 } }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "\u276F"
+                                font.pixelSize: 16
+                                font.bold: true
+                                color: "#ffffff"
+                            }
+
+                            MouseArea {
+                                id: nextArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (fullContent.currentScreenshotIndex < igdbScreenshots.length - 1)
+                                        fullContent.currentScreenshotIndex++
+                                    else
+                                        fullContent.currentScreenshotIndex = 0
+                                }
+                            }
+                        }
+
+                        // Dot indicators
+                        Row {
+                            visible: igdbScreenshots.length > 1
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: 10
+                            spacing: 6
+
+                            Repeater {
+                                model: igdbScreenshots.length
+
+                                Rectangle {
+                                    width: index === fullContent.currentScreenshotIndex ? 18 : 8
+                                    height: 8
+                                    radius: 4
+                                    color: index === fullContent.currentScreenshotIndex
+                                           ? "#ffffff" : Qt.rgba(1, 1, 1, 0.4)
+                                    Behavior on width { NumberAnimation { duration: 150 } }
+                                    Behavior on color { ColorAnimation { duration: 150 } }
+                                }
+                            }
+                        }
+
+                        // Screenshot counter
+                        Rectangle {
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 10
+                            width: counterText.width + 16
+                            height: 26
+                            radius: 13
+                            color: Qt.rgba(0, 0, 0, 0.6)
+
+                            Text {
+                                id: counterText
+                                anchors.centerIn: parent
+                                text: (fullContent.currentScreenshotIndex + 1) + " / " + igdbScreenshots.length
+                                font.pixelSize: 12
+                                font.family: ThemeManager.getFont("ui")
+                                color: "#ffffff"
+                            }
+                        }
+                    }
+                }
+
+                // ─── Title, Pricing & Info Section ───
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 32
+                    Layout.rightMargin: 32
+                    Layout.topMargin: 20
+                    spacing: 12
+
+                    Text {
+                        text: gameTitle
+                        font.pixelSize: 32
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    RowLayout {
+                        spacing: 16
+
+                        // Genre tags
+                        Text {
+                            visible: igdbGenres !== ""
+                            text: igdbGenres
+                            font.pixelSize: 14
+                            font.family: ThemeManager.getFont("ui")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+
+                        // Separator
+                        Text {
+                            visible: igdbGenres !== "" && igdbReleaseDate !== ""
+                            text: "|"
+                            font.pixelSize: 14
+                            color: ThemeManager.getColor("textSecondary")
+                            opacity: 0.5
+                        }
+
+                        // Release date
+                        Text {
+                            visible: igdbReleaseDate !== ""
+                            text: igdbReleaseDate
+                            font.pixelSize: 14
+                            font.family: ThemeManager.getFont("ui")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+                    }
+
+                    // Price row
+                    RowLayout {
+                        spacing: 12
+
+                        // Discount badge
+                        Rectangle {
+                            visible: {
+                                var s = parseFloat(savings)
+                                return !isNaN(s) && s > 0
+                            }
+                            Layout.preferredWidth: heroDiscText.width + 16
+                            Layout.preferredHeight: 32
+                            radius: 6
+                            color: "#4ade80"
+
+                            Text {
+                                id: heroDiscText
+                                anchors.centerIn: parent
+                                text: "-" + Math.round(parseFloat(savings)) + "%"
+                                font.pixelSize: 15
+                                font.bold: true
+                                color: "#0a0a0a"
+                            }
+                        }
+
+                        // Original price
+                        Text {
+                            visible: {
+                                var s = parseFloat(savings)
+                                return !isNaN(s) && s > 0
+                            }
+                            text: "$" + normalPrice
+                            font.pixelSize: 18
+                            font.family: ThemeManager.getFont("ui")
+                            color: ThemeManager.getColor("textSecondary")
+                            font.strikeout: true
+                        }
+
+                        // Sale price
+                        Text {
+                            text: {
+                                if (salePrice === "0.00") return "FREE"
+                                if (salePrice !== "") return "$" + salePrice
+                                return ""
+                            }
+                            font.pixelSize: 24
+                            font.family: ThemeManager.getFont("ui")
+                            font.bold: true
+                            color: "#4ade80"
                         }
                     }
                 }
@@ -646,47 +778,6 @@ Rectangle {
                                         color: ThemeManager.getColor("textSecondary")
                                         wrapMode: Text.WordWrap
                                         lineHeight: 1.5
-                                    }
-                                }
-                            }
-
-                            // ─── Screenshots (from IGDB) ───
-                            ColumnLayout {
-                                visible: igdbScreenshots.length > 0
-                                Layout.fillWidth: true
-                                spacing: 10
-
-                                Text {
-                                    text: "Screenshots"
-                                    font.pixelSize: ThemeManager.getFontSize("large")
-                                    font.family: ThemeManager.getFont("heading")
-                                    font.bold: true
-                                    color: ThemeManager.getColor("textPrimary")
-                                }
-
-                                ListView {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 200
-                                    orientation: ListView.Horizontal
-                                    spacing: 12
-                                    clip: true
-                                    model: igdbScreenshots
-                                    boundsBehavior: Flickable.StopAtBounds
-
-                                    delegate: Rectangle {
-                                        width: 340
-                                        height: 196
-                                        radius: 10
-                                        color: ThemeManager.getColor("surface")
-                                        clip: true
-
-                                        Image {
-                                            anchors.fill: parent
-                                            source: modelData
-                                            fillMode: Image.PreserveAspectCrop
-                                            asynchronous: true
-                                            cache: true
-                                        }
                                     }
                                 }
                             }
