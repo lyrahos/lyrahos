@@ -42,6 +42,67 @@ Rectangle {
     property string dealsErrorMsg: ""
     property string igdbErrorMsg: ""
 
+    // ─── Keyboard Navigation ───
+    // Zones: "screenshots", "stores"
+    property string popupNavZone: "screenshots"
+    property int storeFocusIndex: 0
+
+    function handleKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Escape:
+            close()
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            if (popupNavZone === "screenshots" && igdbScreenshots.length > 1) {
+                if (fullContent.currentScreenshotIndex > 0)
+                    fullContent.currentScreenshotIndex--
+                else
+                    fullContent.currentScreenshotIndex = igdbScreenshots.length - 1
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (popupNavZone === "screenshots" && igdbScreenshots.length > 1) {
+                if (fullContent.currentScreenshotIndex < igdbScreenshots.length - 1)
+                    fullContent.currentScreenshotIndex++
+                else
+                    fullContent.currentScreenshotIndex = 0
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (popupNavZone === "screenshots") {
+                if (gameDeals.length > 0) {
+                    popupNavZone = "stores"
+                    storeFocusIndex = 0
+                }
+            } else if (popupNavZone === "stores") {
+                if (storeFocusIndex < gameDeals.length - 1)
+                    storeFocusIndex++
+            }
+            // Scroll down in the detail flickable
+            contentFlick.contentY = Math.min(contentFlick.contentY + 80, contentFlick.contentHeight - contentFlick.height)
+            event.accepted = true
+            break
+        case Qt.Key_Up:
+            if (popupNavZone === "stores") {
+                if (storeFocusIndex > 0) storeFocusIndex--
+                else popupNavZone = "screenshots"
+            } else if (popupNavZone === "screenshots") {
+                // Scroll up
+                contentFlick.contentY = Math.max(contentFlick.contentY - 80, 0)
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            // Currently just visual focus; store items don't have link actions
+            event.accepted = true
+            break
+        }
+    }
+
     function open(deal) {
         gameTitle = deal.title || ""
         gameID = deal.gameID || ""
@@ -72,9 +133,11 @@ Rectangle {
         loadingIGDB = true
         loadingProton = true
 
-        // Reset scroll position and screenshot index
+        // Reset scroll position, screenshot index, and keyboard nav
         contentFlick.contentY = 0
         fullContent.currentScreenshotIndex = 0
+        popupNavZone = "screenshots"
+        storeFocusIndex = 0
 
         visible = true
 
@@ -263,6 +326,9 @@ Rectangle {
                         Layout.fillWidth: true
                         color: "#000000"
                         clip: true
+                        border.color: (detailPopup.visible && popupNavZone === "screenshots")
+                                      ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: (detailPopup.visible && popupNavZone === "screenshots") ? 3 : 0
 
                         Image {
                             id: screenshotViewer
@@ -945,12 +1011,15 @@ Rectangle {
                                         model: gameDeals
 
                                         Rectangle {
+                                            property bool isKbFocused: detailPopup.visible && popupNavZone === "stores" && storeFocusIndex === index
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 64
                                             radius: 12
-                                            color: dealItemArea.containsMouse
+                                            color: (dealItemArea.containsMouse || isKbFocused)
                                                    ? ThemeManager.getColor("hover")
                                                    : ThemeManager.getColor("cardBackground")
+                                            border.color: isKbFocused ? ThemeManager.getColor("focus") : "transparent"
+                                            border.width: isKbFocused ? 2 : 0
 
                                             Behavior on color { ColorAnimation { duration: 150 } }
 

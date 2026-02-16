@@ -26,6 +26,7 @@ Rectangle {
     signal playClicked(int id)
     signal favoriteClicked(int id)
     signal cancelClicked(string appId)
+    signal cardHovered()
 
     // Resolve cover art through ArtworkManager (handles caching + async download)
     property string resolvedArt: {
@@ -213,6 +214,7 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onEntered: cardHovered()
         onClicked: function(mouse) {
             if (mouse.button === Qt.RightButton && downloadProgress >= 0) {
                 // Right-click on an active download → cancel
