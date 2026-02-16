@@ -5,13 +5,25 @@ import QtQuick.Layouts
 Rectangle {
     id: settingsRoot
     color: "transparent"
-    focus: true
+
+    // Signal to request focus back to NavBar
+    signal requestNavFocus()
 
     // Controller / keyboard row navigation
     // 0 = Wi-Fi, 1 = Bluetooth, 2 = Audio, 3 = Switch to Desktop,
     // 4 = Log Out, 5 = Theme
     property int focusedRow: 0
+    property int hoveredRow: -1
     readonly property int rowCount: 6
+
+    function gainFocus() {
+        focusedRow = 0
+        settingsRoot.forceActiveFocus()
+    }
+
+    function loseFocus() {
+        focusedRow = -1
+    }
 
     Keys.onUpPressed: {
         if (focusedRow > 0) focusedRow--
@@ -19,6 +31,7 @@ Rectangle {
     Keys.onDownPressed: {
         if (focusedRow < rowCount - 1) focusedRow++
     }
+    Keys.onLeftPressed: requestNavFocus()
     Keys.onReturnPressed: activateRow(focusedRow)
     Keys.onEnterPressed: activateRow(focusedRow)
 
@@ -193,11 +206,20 @@ Rectangle {
             Layout.preferredHeight: wifiCol.height + 32
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: focusedRow === 0
+            border.color: (focusedRow === 0 || hoveredRow === 0)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: focusedRow === 0 ? 2 : 0
+            border.width: (focusedRow === 0 || hoveredRow === 0) ? 2 : 0
 
             Behavior on border.color { ColorAnimation { duration: 150 } }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                z: -1
+                onEntered: hoveredRow = 0
+                onExited: hoveredRow = -1
+                onClicked: { focusedRow = 0; activateRow(0) }
+            }
 
             ColumnLayout {
                 id: wifiCol
@@ -677,11 +699,20 @@ Rectangle {
             Layout.preferredHeight: btCol.height + 32
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: focusedRow === 1
+            border.color: (focusedRow === 1 || hoveredRow === 1)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: focusedRow === 1 ? 2 : 0
+            border.width: (focusedRow === 1 || hoveredRow === 1) ? 2 : 0
 
             Behavior on border.color { ColorAnimation { duration: 150 } }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                z: -1
+                onEntered: hoveredRow = 1
+                onExited: hoveredRow = -1
+                onClicked: { focusedRow = 1; activateRow(1) }
+            }
 
             ColumnLayout {
                 id: btCol
@@ -1031,11 +1062,20 @@ Rectangle {
             Layout.preferredHeight: audioCol.height + 32
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: focusedRow === 2
+            border.color: (focusedRow === 2 || hoveredRow === 2)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: focusedRow === 2 ? 2 : 0
+            border.width: (focusedRow === 2 || hoveredRow === 2) ? 2 : 0
 
             Behavior on border.color { ColorAnimation { duration: 150 } }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                z: -1
+                onEntered: hoveredRow = 2
+                onExited: hoveredRow = -1
+                onClicked: { focusedRow = 2; activateRow(2) }
+            }
 
             ColumnLayout {
                 id: audioCol
@@ -1291,9 +1331,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: (switchArea.containsMouse || focusedRow === 3)
+            border.color: (switchArea.containsMouse || focusedRow === 3 || hoveredRow === 3)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: (switchArea.containsMouse || focusedRow === 3) ? 2 : 0
+            border.width: (switchArea.containsMouse || focusedRow === 3 || hoveredRow === 3) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -1354,9 +1394,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: (logoutArea.containsMouse || focusedRow === 4)
+            border.color: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
                           ? "#ff6b6b" : "transparent"
-            border.width: (logoutArea.containsMouse || focusedRow === 4) ? 2 : 0
+            border.width: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -1388,7 +1428,7 @@ Rectangle {
                     Layout.preferredHeight: 40
                     Layout.alignment: Qt.AlignVCenter
                     radius: 20
-                    color: (logoutArea.containsMouse || focusedRow === 4)
+                    color: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
                            ? "#ff6b6b" : Qt.rgba(1, 0.42, 0.42, 0.15)
 
                     Text {
@@ -1396,7 +1436,7 @@ Rectangle {
                         text: "\u23FB"
                         font.pixelSize: 18
                         font.bold: true
-                        color: (logoutArea.containsMouse || focusedRow === 4)
+                        color: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
                                ? "white" : "#ff6b6b"
                     }
 
@@ -1421,9 +1461,18 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: focusedRow === 5
+            border.color: (focusedRow === 5 || hoveredRow === 5)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: focusedRow === 5 ? 2 : 0
+            border.width: (focusedRow === 5 || hoveredRow === 5) ? 2 : 0
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                z: -1
+                onEntered: hoveredRow = 5
+                onExited: hoveredRow = -1
+                onClicked: { focusedRow = 5; activateRow(5) }
+            }
 
             RowLayout {
                 anchors.fill: parent

@@ -21,6 +21,7 @@ Rectangle {
     property string gameID: ""
     property string storeID: ""
     property string dealRating: ""
+    property bool isKeyboardFocused: false  // Set by parent when selected via keyboard
 
     signal clicked()
 
@@ -71,7 +72,7 @@ Rectangle {
         color: Qt.rgba(ThemeManager.getColor("primary").r,
                        ThemeManager.getColor("primary").g,
                        ThemeManager.getColor("primary").b, 0.0)
-        opacity: mouseArea.containsMouse ? 0.15 : 0.0
+        opacity: (mouseArea.containsMouse || isKeyboardFocused) ? 0.15 : 0.0
         Behavior on opacity { NumberAnimation { duration: 200 } }
     }
 
@@ -196,15 +197,15 @@ Rectangle {
         }
     }
 
-    // Hover effect
-    scale: mouseArea.containsMouse ? 1.04 : 1.0
+    // Hover/focus effect
+    scale: (mouseArea.containsMouse || isKeyboardFocused) ? 1.04 : 1.0
     Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-    // Focus border
-    border.color: mouseArea.containsMouse
+    // Focus border - purple outline on hover OR keyboard focus
+    border.color: (mouseArea.containsMouse || isKeyboardFocused)
                   ? ThemeManager.getColor("focus")
                   : "transparent"
-    border.width: mouseArea.containsMouse ? 3 : 0
+    border.width: (mouseArea.containsMouse || isKeyboardFocused) ? 3 : 0
     Behavior on border.color { ColorAnimation { duration: 150 } }
 
     MouseArea {
