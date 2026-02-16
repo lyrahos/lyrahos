@@ -1171,26 +1171,10 @@ Rectangle {
             Item {
                 id: gameStoreTab
 
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    spacing: 16
-
-                    Text {
-                        text: "Game Store"
-                        font.pixelSize: ThemeManager.getFontSize("xlarge")
-                        font.family: ThemeManager.getFont("heading")
-                        font.bold: true
-                        color: ThemeManager.getColor("textPrimary")
-                        Layout.alignment: Qt.AlignHCenter
-                    }
-
-                    Text {
-                        text: "Coming soon"
-                        font.pixelSize: ThemeManager.getFontSize("medium")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
-                        Layout.alignment: Qt.AlignHCenter
-                    }
+                Loader {
+                    anchors.fill: parent
+                    source: "../components/GameStorePage.qml"
+                    active: activeTab === 2
                 }
             }
         }
