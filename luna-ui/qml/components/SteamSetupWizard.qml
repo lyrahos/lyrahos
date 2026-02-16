@@ -19,6 +19,8 @@ Rectangle {
     z: 200
     visible: false
 
+    signal closed()
+
     property int currentStep: 0  // 0=intro, 1=steam-login, 2=api-key, 3=steamcmd-login, 4=done
 
     // Sub-states for step 2 (API key)
@@ -394,6 +396,7 @@ Rectangle {
         GameManager.closeApiKeyBrowser()
         GameManager.cancelSteamCmdSetup()
         visible = false
+        closed()
     }
 
     // ── Modal card ──

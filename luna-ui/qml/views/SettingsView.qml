@@ -42,6 +42,11 @@ Rectangle {
     }
 
     Keys.onPressed: function(event) {
+        // VirtualKeyboard handles its own keys
+        if (settingsVirtualKeyboard.visible) {
+            event.accepted = true
+            return
+        }
         if (focusMode === "rows") {
             handleRowKeys(event)
         } else if (focusMode === "expanded") {
@@ -122,7 +127,8 @@ Rectangle {
                         wifiStatus = "Connecting to " + net.ssid + "..."
                         GameManager.connectToWifi(net.ssid, "")
                     } else {
-                        settingsWifiPasswordField.forceActiveFocus()
+                        settingsVirtualKeyboard.placeholderText = "Enter WiFi password..."
+                        settingsVirtualKeyboard.open("", true)
                     }
                 }
             }
@@ -824,7 +830,8 @@ Rectangle {
                                         wifiStatus = "Connecting to " + model.ssid + "..."
                                         GameManager.connectToWifi(model.ssid, "")
                                     } else {
-                                        settingsWifiPasswordField.forceActiveFocus()
+                                        settingsVirtualKeyboard.placeholderText = "Enter WiFi password..."
+                                        settingsVirtualKeyboard.open("", true)
                                     }
                                 }
                             }
@@ -2099,5 +2106,26 @@ Rectangle {
 
     function switchToDesktop() {
         GameManager.switchToDesktop()
+    }
+
+    // ─── Virtual Keyboard for WiFi password ───
+    VirtualKeyboard {
+        id: settingsVirtualKeyboard
+        anchors.fill: parent
+        z: 1000
+
+        onAccepted: function(text) {
+            // Use the entered text as WiFi password
+            settingsWifiPasswordField.text = text
+            if (text.length > 0 && !wifiConnecting) {
+                wifiConnecting = true
+                wifiStatus = "Connecting to " + selectedSsid + "..."
+                GameManager.connectToWifi(selectedSsid, text)
+            }
+            settingsRoot.forceActiveFocus()
+        }
+        onCancelled: {
+            settingsRoot.forceActiveFocus()
+        }
     }
 }
