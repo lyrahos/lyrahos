@@ -167,7 +167,7 @@ Rectangle {
         anchors.centerIn: parent
         width: parent.width - 60
         height: parent.height - 40
-        radius: 16
+        radius: 20
         color: ThemeManager.getColor("background")
         border.color: Qt.rgba(ThemeManager.getColor("primary").r,
                               ThemeManager.getColor("primary").g,
@@ -183,10 +183,10 @@ Rectangle {
             id: closeBtn
             anchors.top: parent.top
             anchors.right: parent.right
-            anchors.margins: 16
-            width: 40
-            height: 40
-            radius: 20
+            anchors.margins: 20
+            width: 56
+            height: 56
+            radius: 28
             z: 10
             color: closeBtnArea.containsMouse
                    ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(0, 0, 0, 0.6)
@@ -196,7 +196,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: "\u2715"
-                font.pixelSize: 18
+                font.pixelSize: 28
                 font.bold: true
                 color: "#ffffff"
             }
@@ -214,7 +214,7 @@ Rectangle {
         Flickable {
             id: contentFlick
             anchors.fill: parent
-            contentHeight: fullContent.height + 32
+            contentHeight: fullContent.height + 40
             clip: true
             flickableDirection: Flickable.VerticalFlick
             boundsBehavior: Flickable.StopAtBounds
@@ -281,17 +281,17 @@ Rectangle {
                             visible: igdbScreenshots.length > 1
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: 8
-                            width: 36
-                            height: 36
-                            radius: 18
+                            anchors.leftMargin: 12
+                            width: 48
+                            height: 48
+                            radius: 24
                             color: prevArea.containsMouse ? Qt.rgba(0, 0, 0, 0.8) : Qt.rgba(0, 0, 0, 0.5)
                             Behavior on color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\u276E"
-                                font.pixelSize: 16
+                                font.pixelSize: 24
                                 font.bold: true
                                 color: "#ffffff"
                             }
@@ -315,17 +315,17 @@ Rectangle {
                             visible: igdbScreenshots.length > 1
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            anchors.rightMargin: 8
-                            width: 36
-                            height: 36
-                            radius: 18
+                            anchors.rightMargin: 12
+                            width: 48
+                            height: 48
+                            radius: 24
                             color: nextArea.containsMouse ? Qt.rgba(0, 0, 0, 0.8) : Qt.rgba(0, 0, 0, 0.5)
                             Behavior on color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\u276F"
-                                font.pixelSize: 16
+                                font.pixelSize: 24
                                 font.bold: true
                                 color: "#ffffff"
                             }
@@ -349,16 +349,16 @@ Rectangle {
                             visible: igdbScreenshots.length > 1
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.bottom: parent.bottom
-                            anchors.bottomMargin: 10
-                            spacing: 6
+                            anchors.bottomMargin: 14
+                            spacing: 8
 
                             Repeater {
                                 model: igdbScreenshots.length
 
                                 Rectangle {
-                                    width: index === fullContent.currentScreenshotIndex ? 18 : 8
-                                    height: 8
-                                    radius: 4
+                                    width: index === fullContent.currentScreenshotIndex ? 24 : 12
+                                    height: 12
+                                    radius: 6
                                     color: index === fullContent.currentScreenshotIndex
                                            ? "#ffffff" : Qt.rgba(1, 1, 1, 0.4)
                                     Behavior on width { NumberAnimation { duration: 150 } }
@@ -371,17 +371,17 @@ Rectangle {
                         Rectangle {
                             anchors.top: parent.top
                             anchors.right: parent.right
-                            anchors.margins: 10
-                            width: counterText.width + 20
-                            height: 30
-                            radius: 15
+                            anchors.margins: 14
+                            width: counterText.width + 28
+                            height: 40
+                            radius: 20
                             color: Qt.rgba(0, 0, 0, 0.6)
 
                             Text {
                                 id: counterText
                                 anchors.centerIn: parent
                                 text: (fullContent.currentScreenshotIndex + 1) + " / " + igdbScreenshots.length
-                                font.pixelSize: ThemeManager.getFontSize("small")
+                                font.pixelSize: 22
                                 font.family: ThemeManager.getFont("ui")
                                 color: "#ffffff"
                             }
@@ -392,14 +392,14 @@ Rectangle {
                 // ─── Title, Pricing & Info Section ───
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 32
-                    Layout.rightMargin: 32
-                    Layout.topMargin: 20
-                    spacing: 12
+                    Layout.leftMargin: 36
+                    Layout.rightMargin: 36
+                    Layout.topMargin: 24
+                    spacing: 14
 
                     Text {
                         text: gameTitle
-                        font.pixelSize: 32
+                        font.pixelSize: 48
                         font.family: ThemeManager.getFont("heading")
                         font.bold: true
                         color: ThemeManager.getColor("textPrimary")
@@ -414,7 +414,7 @@ Rectangle {
                         Text {
                             visible: igdbGenres !== ""
                             text: igdbGenres
-                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.pixelSize: 24
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                         }
@@ -423,7 +423,7 @@ Rectangle {
                         Text {
                             visible: igdbGenres !== "" && igdbReleaseDate !== ""
                             text: "|"
-                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.pixelSize: 24
                             color: ThemeManager.getColor("textSecondary")
                             opacity: 0.5
                         }
@@ -432,7 +432,7 @@ Rectangle {
                         Text {
                             visible: igdbReleaseDate !== ""
                             text: igdbReleaseDate
-                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.pixelSize: 24
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                         }
@@ -440,7 +440,7 @@ Rectangle {
 
                     // Price row
                     RowLayout {
-                        spacing: 12
+                        spacing: 14
 
                         // Discount badge
                         Rectangle {
@@ -448,16 +448,16 @@ Rectangle {
                                 var s = parseFloat(savings)
                                 return !isNaN(s) && s > 0
                             }
-                            Layout.preferredWidth: heroDiscText.width + 16
-                            Layout.preferredHeight: 32
-                            radius: 6
+                            Layout.preferredWidth: heroDiscText.width + 24
+                            Layout.preferredHeight: 44
+                            radius: 10
                             color: "#4ade80"
 
                             Text {
                                 id: heroDiscText
                                 anchors.centerIn: parent
                                 text: "-" + Math.round(parseFloat(savings)) + "%"
-                                font.pixelSize: ThemeManager.getFontSize("medium")
+                                font.pixelSize: 28
                                 font.bold: true
                                 color: "#0a0a0a"
                             }
@@ -470,7 +470,7 @@ Rectangle {
                                 return !isNaN(s) && s > 0
                             }
                             text: "$" + normalPrice
-                            font.pixelSize: 18
+                            font.pixelSize: 28
                             font.family: ThemeManager.getFont("ui")
                             color: ThemeManager.getColor("textSecondary")
                             font.strikeout: true
@@ -483,7 +483,7 @@ Rectangle {
                                 if (salePrice !== "") return "$" + salePrice
                                 return ""
                             }
-                            font.pixelSize: 24
+                            font.pixelSize: 36
                             font.family: ThemeManager.getFont("ui")
                             font.bold: true
                             color: "#4ade80"
@@ -494,33 +494,33 @@ Rectangle {
                 // ─── Content body ───
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 32
-                    Layout.rightMargin: 32
-                    Layout.topMargin: 16
-                    spacing: 20
+                    Layout.leftMargin: 36
+                    Layout.rightMargin: 36
+                    Layout.topMargin: 20
+                    spacing: 24
 
                     // ─── Info badges row ───
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 10
+                        spacing: 14
 
                         // Metacritic badge
                         Rectangle {
                             visible: metacriticScore !== "" && metacriticScore !== "0"
-                            Layout.preferredWidth: metaRow.width + 20
-                            Layout.preferredHeight: 44
-                            radius: 10
+                            Layout.preferredWidth: metaRow.width + 28
+                            Layout.preferredHeight: 56
+                            radius: 12
                             color: ThemeManager.getColor("surface")
 
                             RowLayout {
                                 id: metaRow
                                 anchors.centerIn: parent
-                                spacing: 8
+                                spacing: 10
 
                                 Rectangle {
-                                    Layout.preferredWidth: 32
-                                    Layout.preferredHeight: 32
-                                    radius: 6
+                                    Layout.preferredWidth: 40
+                                    Layout.preferredHeight: 40
+                                    radius: 8
                                     color: {
                                         var score = parseInt(metacriticScore)
                                         if (score >= 75) return "#4ade80"
@@ -531,7 +531,7 @@ Rectangle {
                                     Text {
                                         anchors.centerIn: parent
                                         text: metacriticScore
-                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.pixelSize: 22
                                         font.bold: true
                                         color: "#0a0a0a"
                                     }
@@ -539,7 +539,7 @@ Rectangle {
 
                                 Text {
                                     text: "Metacritic"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.pixelSize: 24
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
@@ -549,20 +549,20 @@ Rectangle {
                         // Steam rating badge
                         Rectangle {
                             visible: steamRatingText !== "" && steamRatingText !== "null"
-                            Layout.preferredWidth: ratingRow.width + 20
-                            Layout.preferredHeight: 44
-                            radius: 10
+                            Layout.preferredWidth: ratingRow.width + 28
+                            Layout.preferredHeight: 56
+                            radius: 12
                             color: ThemeManager.getColor("surface")
 
                             RowLayout {
                                 id: ratingRow
                                 anchors.centerIn: parent
-                                spacing: 8
+                                spacing: 10
 
                                 Text {
                                     text: (steamRatingPercent !== "" && steamRatingPercent !== "0")
                                           ? steamRatingPercent + "%" : ""
-                                    font.pixelSize: ThemeManager.getFontSize("medium")
+                                    font.pixelSize: 28
                                     font.bold: true
                                     color: {
                                         var pct = parseInt(steamRatingPercent)
@@ -575,7 +575,7 @@ Rectangle {
 
                                 Text {
                                     text: steamRatingText
-                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.pixelSize: 24
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
@@ -585,20 +585,20 @@ Rectangle {
                         // ProtonDB compatibility badge
                         Rectangle {
                             visible: protonTier !== "" || loadingProton
-                            Layout.preferredWidth: protonRow.width + 20
-                            Layout.preferredHeight: 44
-                            radius: 10
+                            Layout.preferredWidth: protonRow.width + 28
+                            Layout.preferredHeight: 56
+                            radius: 12
                             color: ThemeManager.getColor("surface")
 
                             RowLayout {
                                 id: protonRow
                                 anchors.centerIn: parent
-                                spacing: 8
+                                spacing: 10
 
                                 Rectangle {
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
-                                    radius: 7
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
+                                    radius: 8
                                     color: {
                                         switch (protonTier.toLowerCase()) {
                                             case "platinum": return "#b4c7dc"
@@ -619,7 +619,7 @@ Rectangle {
                                         var t = protonTier.charAt(0).toUpperCase() + protonTier.slice(1)
                                         return "Linux: " + t
                                     }
-                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.pixelSize: 24
                                     font.family: ThemeManager.getFont("ui")
                                     font.bold: true
                                     color: {
@@ -637,7 +637,7 @@ Rectangle {
                                 Text {
                                     visible: protonTotalReports > 0
                                     text: "(" + protonTotalReports + " reports)"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.pixelSize: 22
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                     opacity: 0.7
@@ -648,25 +648,25 @@ Rectangle {
                         // Cheapest ever badge
                         Rectangle {
                             visible: cheapestEverPrice !== "" && cheapestEverPrice !== "0.00"
-                            Layout.preferredWidth: cheapestRow.width + 20
-                            Layout.preferredHeight: 44
-                            radius: 10
+                            Layout.preferredWidth: cheapestRow.width + 28
+                            Layout.preferredHeight: 56
+                            radius: 12
                             color: ThemeManager.getColor("surface")
 
                             RowLayout {
                                 id: cheapestRow
                                 anchors.centerIn: parent
-                                spacing: 6
+                                spacing: 10
 
                                 Text {
                                     text: "Cheapest ever:"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                    font.pixelSize: 24
                                     font.family: ThemeManager.getFont("ui")
                                     color: ThemeManager.getColor("textSecondary")
                                 }
                                 Text {
                                     text: "$" + cheapestEverPrice
-                                    font.pixelSize: ThemeManager.getFontSize("medium")
+                                    font.pixelSize: 28
                                     font.family: ThemeManager.getFont("ui")
                                     font.bold: true
                                     color: ThemeManager.getColor("accent")
@@ -680,20 +680,20 @@ Rectangle {
                     // ─── Two-column layout: Left (description/screenshots) + Right (store prices) ───
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 20
+                        spacing: 24
 
                         // Left column
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.preferredWidth: parent.width * 0.55
-                            spacing: 16
+                            spacing: 20
 
                             // ─── IGDB Description ───
                             Rectangle {
                                 visible: igdbSummary !== "" || loadingIGDB || igdbErrorMsg !== ""
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: descCol.height + 28
-                                radius: 12
+                                Layout.preferredHeight: descCol.height + 36
+                                radius: 14
                                 color: ThemeManager.getColor("surface")
 
                                 ColumnLayout {
@@ -701,12 +701,12 @@ Rectangle {
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.top: parent.top
-                                    anchors.margins: 14
-                                    spacing: 10
+                                    anchors.margins: 18
+                                    spacing: 12
 
                                     Text {
                                         text: "About"
-                                        font.pixelSize: ThemeManager.getFontSize("large")
+                                        font.pixelSize: 36
                                         font.family: ThemeManager.getFont("heading")
                                         font.bold: true
                                         color: ThemeManager.getColor("textPrimary")
@@ -715,7 +715,7 @@ Rectangle {
                                     Text {
                                         visible: loadingIGDB && igdbSummary === ""
                                         text: "Loading description..."
-                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.pixelSize: 24
                                         font.family: ThemeManager.getFont("body")
                                         color: ThemeManager.getColor("textSecondary")
                                         font.italic: true
@@ -725,20 +725,20 @@ Rectangle {
                                     RowLayout {
                                         visible: !loadingIGDB && igdbErrorMsg !== "" && igdbSummary === ""
                                         Layout.fillWidth: true
-                                        spacing: 10
+                                        spacing: 14
 
                                         Text {
                                             text: "Could not load description"
-                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.pixelSize: 24
                                             font.family: ThemeManager.getFont("body")
                                             color: ThemeManager.getColor("textSecondary")
                                             font.italic: true
                                         }
 
                                         Rectangle {
-                                            Layout.preferredWidth: retryIgdbLabel.width + 20
-                                            Layout.preferredHeight: 28
-                                            radius: 6
+                                            Layout.preferredWidth: retryIgdbLabel.width + 28
+                                            Layout.preferredHeight: 44
+                                            radius: 10
                                             color: retryIgdbArea.containsMouse
                                                    ? ThemeManager.getColor("primary")
                                                    : ThemeManager.getColor("hover")
@@ -747,7 +747,7 @@ Rectangle {
                                                 id: retryIgdbLabel
                                                 anchors.centerIn: parent
                                                 text: "Retry"
-                                                font.pixelSize: ThemeManager.getFontSize("small")
+                                                font.pixelSize: 24
                                                 font.family: ThemeManager.getFont("ui")
                                                 font.bold: true
                                                 color: retryIgdbArea.containsMouse
@@ -773,7 +773,7 @@ Rectangle {
                                         visible: igdbSummary !== ""
                                         Layout.fillWidth: true
                                         text: igdbSummary
-                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.pixelSize: 26
                                         font.family: ThemeManager.getFont("body")
                                         color: ThemeManager.getColor("textSecondary")
                                         wrapMode: Text.WordWrap
@@ -786,8 +786,8 @@ Rectangle {
                             Rectangle {
                                 visible: protonTier !== ""
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: protonCol.height + 28
-                                radius: 12
+                                Layout.preferredHeight: protonCol.height + 36
+                                radius: 14
                                 color: ThemeManager.getColor("surface")
 
                                 ColumnLayout {
@@ -795,24 +795,24 @@ Rectangle {
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.top: parent.top
-                                    anchors.margins: 14
-                                    spacing: 10
+                                    anchors.margins: 18
+                                    spacing: 12
 
                                     Text {
                                         text: "Linux Compatibility (ProtonDB)"
-                                        font.pixelSize: ThemeManager.getFontSize("large")
+                                        font.pixelSize: 36
                                         font.family: ThemeManager.getFont("heading")
                                         font.bold: true
                                         color: ThemeManager.getColor("textPrimary")
                                     }
 
                                     RowLayout {
-                                        spacing: 16
+                                        spacing: 20
 
                                         Rectangle {
-                                            Layout.preferredWidth: 80
-                                            Layout.preferredHeight: 80
-                                            radius: 12
+                                            Layout.preferredWidth: 90
+                                            Layout.preferredHeight: 90
+                                            radius: 14
                                             color: {
                                                 switch (protonTier.toLowerCase()) {
                                                     case "platinum": return Qt.rgba(0.71, 0.78, 0.86, 0.2)
@@ -838,7 +838,7 @@ Rectangle {
                                             Text {
                                                 anchors.centerIn: parent
                                                 text: protonTier.charAt(0).toUpperCase() + protonTier.slice(1)
-                                                font.pixelSize: ThemeManager.getFontSize("medium")
+                                                font.pixelSize: 24
                                                 font.family: ThemeManager.getFont("heading")
                                                 font.bold: true
                                                 color: {
@@ -855,7 +855,7 @@ Rectangle {
                                         }
 
                                         ColumnLayout {
-                                            spacing: 4
+                                            spacing: 6
                                             Layout.fillWidth: true
 
                                             Text {
@@ -869,7 +869,7 @@ Rectangle {
                                                         default:         return "Unknown compatibility"
                                                     }
                                                 }
-                                                font.pixelSize: ThemeManager.getFontSize("medium")
+                                                font.pixelSize: 26
                                                 font.family: ThemeManager.getFont("body")
                                                 color: ThemeManager.getColor("textPrimary")
                                                 Layout.fillWidth: true
@@ -879,7 +879,7 @@ Rectangle {
                                             Text {
                                                 visible: protonConfidence !== ""
                                                 text: "Confidence: " + protonConfidence.charAt(0).toUpperCase() + protonConfidence.slice(1)
-                                                font.pixelSize: ThemeManager.getFontSize("small")
+                                                font.pixelSize: 24
                                                 font.family: ThemeManager.getFont("ui")
                                                 color: ThemeManager.getColor("textSecondary")
                                             }
@@ -887,7 +887,7 @@ Rectangle {
                                             Text {
                                                 visible: protonTotalReports > 0
                                                 text: "Based on " + protonTotalReports + " user reports"
-                                                font.pixelSize: ThemeManager.getFontSize("small")
+                                                font.pixelSize: 24
                                                 font.family: ThemeManager.getFont("ui")
                                                 color: ThemeManager.getColor("textSecondary")
                                             }
@@ -901,12 +901,12 @@ Rectangle {
                         ColumnLayout {
                             Layout.preferredWidth: parent.width * 0.40
                             Layout.alignment: Qt.AlignTop
-                            spacing: 10
+                            spacing: 14
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: storePricesContent.height + 28
-                                radius: 12
+                                Layout.preferredHeight: storePricesContent.height + 36
+                                radius: 14
                                 color: ThemeManager.getColor("surface")
 
                                 ColumnLayout {
@@ -914,15 +914,15 @@ Rectangle {
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.top: parent.top
-                                    anchors.margins: 14
-                                    spacing: 10
+                                    anchors.margins: 18
+                                    spacing: 12
 
                                     RowLayout {
-                                        spacing: 8
+                                        spacing: 12
 
                                         Text {
                                             text: "Store Prices"
-                                            font.pixelSize: ThemeManager.getFontSize("large")
+                                            font.pixelSize: 36
                                             font.family: ThemeManager.getFont("heading")
                                             font.bold: true
                                             color: ThemeManager.getColor("textPrimary")
@@ -931,7 +931,7 @@ Rectangle {
                                         Text {
                                             visible: loadingDeals
                                             text: "Loading..."
-                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.pixelSize: 24
                                             font.family: ThemeManager.getFont("body")
                                             color: ThemeManager.getColor("textSecondary")
                                             font.italic: true
@@ -946,8 +946,8 @@ Rectangle {
 
                                         Rectangle {
                                             Layout.fillWidth: true
-                                            Layout.preferredHeight: 56
-                                            radius: 10
+                                            Layout.preferredHeight: 64
+                                            radius: 12
                                             color: dealItemArea.containsMouse
                                                    ? ThemeManager.getColor("hover")
                                                    : ThemeManager.getColor("cardBackground")
@@ -963,14 +963,14 @@ Rectangle {
 
                                             RowLayout {
                                                 anchors.fill: parent
-                                                anchors.leftMargin: 14
-                                                anchors.rightMargin: 14
-                                                spacing: 10
+                                                anchors.leftMargin: 16
+                                                anchors.rightMargin: 16
+                                                spacing: 12
 
                                                 // Store icon
                                                 Image {
-                                                    Layout.preferredWidth: 20
-                                                    Layout.preferredHeight: 20
+                                                    Layout.preferredWidth: 24
+                                                    Layout.preferredHeight: 24
                                                     source: modelData.storeIcon || ""
                                                     asynchronous: true
                                                     cache: true
@@ -981,7 +981,7 @@ Rectangle {
                                                 // Store name
                                                 Text {
                                                     text: modelData.storeName || ("Store #" + modelData.storeID)
-                                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                                    font.pixelSize: 24
                                                     font.family: ThemeManager.getFont("body")
                                                     font.bold: true
                                                     color: ThemeManager.getColor("textPrimary")
@@ -994,16 +994,16 @@ Rectangle {
                                                         var s = parseFloat(modelData.savings)
                                                         return !isNaN(s) && s > 0
                                                     }
-                                                    Layout.preferredWidth: dealSavingsText.width + 12
-                                                    Layout.preferredHeight: 24
-                                                    radius: 6
+                                                    Layout.preferredWidth: dealSavingsText.width + 18
+                                                    Layout.preferredHeight: 36
+                                                    radius: 8
                                                     color: "#4ade80"
 
                                                     Text {
                                                         id: dealSavingsText
                                                         anchors.centerIn: parent
                                                         text: "-" + Math.round(parseFloat(modelData.savings)) + "%"
-                                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                                        font.pixelSize: 22
                                                         font.bold: true
                                                         color: "#0a0a0a"
                                                     }
@@ -1016,7 +1016,7 @@ Rectangle {
                                                         return !isNaN(s) && s > 0
                                                     }
                                                     text: "$" + (modelData.retailPrice || "")
-                                                    font.pixelSize: ThemeManager.getFontSize("small")
+                                                    font.pixelSize: 22
                                                     font.family: ThemeManager.getFont("ui")
                                                     color: ThemeManager.getColor("textSecondary")
                                                     font.strikeout: true
@@ -1028,7 +1028,7 @@ Rectangle {
                                                         if (modelData.price === "0.00") return "FREE"
                                                         return "$" + (modelData.price || "")
                                                     }
-                                                    font.pixelSize: ThemeManager.getFontSize("medium")
+                                                    font.pixelSize: 28
                                                     font.family: ThemeManager.getFont("ui")
                                                     font.bold: true
                                                     color: (modelData.price === "0.00" || parseFloat(modelData.savings) > 0)
@@ -1043,19 +1043,19 @@ Rectangle {
                                     ColumnLayout {
                                         visible: !loadingDeals && dealsErrorMsg !== ""
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: 10
 
                                         Text {
                                             text: "Failed to load store prices"
-                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.pixelSize: 24
                                             font.family: ThemeManager.getFont("body")
                                             color: "#ff6b6b"
                                         }
 
                                         Rectangle {
-                                            Layout.preferredWidth: retryDealsLabel.width + 24
-                                            Layout.preferredHeight: 32
-                                            radius: 8
+                                            Layout.preferredWidth: retryDealsLabel.width + 32
+                                            Layout.preferredHeight: 44
+                                            radius: 10
                                             color: retryDealsArea.containsMouse
                                                    ? ThemeManager.getColor("primary")
                                                    : ThemeManager.getColor("hover")
@@ -1066,7 +1066,7 @@ Rectangle {
                                                 id: retryDealsLabel
                                                 anchors.centerIn: parent
                                                 text: "Retry"
-                                                font.pixelSize: ThemeManager.getFontSize("small")
+                                                font.pixelSize: 24
                                                 font.family: ThemeManager.getFont("ui")
                                                 font.bold: true
                                                 color: retryDealsArea.containsMouse
@@ -1092,7 +1092,7 @@ Rectangle {
                                     Text {
                                         visible: !loadingDeals && dealsErrorMsg === "" && gameDeals.length === 0
                                         text: "No deals found for this game"
-                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.pixelSize: 24
                                         font.family: ThemeManager.getFont("body")
                                         color: ThemeManager.getColor("textSecondary")
                                         font.italic: true
@@ -1103,7 +1103,7 @@ Rectangle {
                     }
 
                     // Bottom spacer
-                    Item { Layout.preferredHeight: 24 }
+                    Item { Layout.preferredHeight: 32 }
                 }
             }
         }
