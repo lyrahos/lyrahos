@@ -7,8 +7,10 @@ Rectangle {
     color: ThemeManager.getColor("surface")
 
     signal sectionChanged(string section)
+    signal enterContent()
 
     property int currentIndex: 0
+    property int hoveredIndex: -1
 
     // Accept keyboard focus
     focus: true
@@ -21,7 +23,7 @@ Rectangle {
         { name: "Settings", section: "Settings" }
     ]
 
-    // Keyboard navigation: Up/Down to move, Enter/Right to select
+    // Keyboard navigation: Up/Down to move, Enter/Right to select and enter content
     Keys.onUpPressed: {
         if (currentIndex > 0) {
             currentIndex--
@@ -34,8 +36,9 @@ Rectangle {
             sectionChanged(sections[currentIndex].section)
         }
     }
-    Keys.onReturnPressed: sectionChanged(sections[currentIndex].section)
-    Keys.onEnterPressed: sectionChanged(sections[currentIndex].section)
+    Keys.onReturnPressed: enterContent()
+    Keys.onEnterPressed: enterContent()
+    Keys.onRightPressed: enterContent()
 
     Column {
         anchors.fill: parent
@@ -57,38 +60,54 @@ Rectangle {
 
             // FIX #15: Use explicit width instead of anchors inside Column
             Rectangle {
+                id: navItem
                 width: navBar.width - 16
                 height: 56
                 x: 8  // Center manually instead of using anchors
                 radius: 8
-                color: currentIndex === index
+
+                property bool isSelected: currentIndex === index
+                property bool isHovered: hoveredIndex === index
+
+                color: isSelected
                        ? Qt.rgba(ThemeManager.getColor("primary").r,
                                  ThemeManager.getColor("primary").g,
                                  ThemeManager.getColor("primary").b, 0.2)
-                       : "transparent"
-                border.color: currentIndex === index ? ThemeManager.getColor("focus") : "transparent"
-                border.width: currentIndex === index ? 2 : 0
+                       : isHovered
+                         ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                   ThemeManager.getColor("primary").g,
+                                   ThemeManager.getColor("primary").b, 0.1)
+                         : "transparent"
+                border.color: (isSelected || isHovered)
+                              ? ThemeManager.getColor("focus") : "transparent"
+                border.width: (isSelected || isHovered) ? 2 : 0
 
                 Text {
                     anchors.centerIn: parent
                     text: modelData.name
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
-                    font.bold: currentIndex === index
-                    color: currentIndex === index
+                    font.bold: isSelected
+                    color: isSelected
                            ? ThemeManager.getColor("textPrimary")
                            : ThemeManager.getColor("textSecondary")
                 }
 
                 MouseArea {
                     anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onEntered: hoveredIndex = index
+                    onExited: hoveredIndex = -1
                     onClicked: {
                         currentIndex = index
                         sectionChanged(modelData.section)
+                        enterContent()
                     }
                 }
 
                 Behavior on color { ColorAnimation { duration: 150 } }
+                Behavior on border.color { ColorAnimation { duration: 150 } }
             }
         }
     }

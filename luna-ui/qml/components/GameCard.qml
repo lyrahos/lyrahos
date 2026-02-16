@@ -7,8 +7,11 @@ Rectangle {
     height: 270
     radius: 12
     color: ThemeManager.getColor("surface")
-    border.color: focus ? ThemeManager.getColor("focus") : "transparent"
-    border.width: focus ? 2 : 0
+
+    // Purple outline when keyboard-focused OR mouse-hovered
+    border.color: (isKeyboardFocused || mouseArea.containsMouse)
+                  ? ThemeManager.getColor("focus") : "transparent"
+    border.width: (isKeyboardFocused || mouseArea.containsMouse) ? 2 : 0
 
     property string gameTitle: ""
     property string coverArt: ""
@@ -18,10 +21,12 @@ Rectangle {
     property string appId: ""
     property double downloadProgress: -1.0  // -1 = not downloading, 0..1 = progress
     property string installError: ""        // non-empty = error during install
+    property bool isKeyboardFocused: false  // Set by parent grid when this card is selected via keyboard
 
     signal playClicked(int id)
     signal favoriteClicked(int id)
     signal cancelClicked(string appId)
+    signal cardHovered()
 
     // Resolve cover art through ArtworkManager (handles caching + async download)
     property string resolvedArt: {
@@ -199,15 +204,17 @@ Rectangle {
         anchors.margins: 8
     }
 
-    // Hover effect: scale 1.05x
-    scale: mouseArea.containsMouse ? 1.05 : 1.0
+    // Hover/focus effect: scale 1.05x
+    scale: (mouseArea.containsMouse || isKeyboardFocused) ? 1.05 : 1.0
     Behavior on scale { NumberAnimation { duration: 150 } }
+    Behavior on border.color { ColorAnimation { duration: 150 } }
 
     MouseArea {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onEntered: cardHovered()
         onClicked: function(mouse) {
             if (mouse.button === Qt.RightButton && downloadProgress >= 0) {
                 // Right-click on an active download → cancel

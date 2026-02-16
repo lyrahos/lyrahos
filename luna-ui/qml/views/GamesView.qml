@@ -7,8 +7,205 @@ Rectangle {
     id: gamesRoot
     color: "transparent"
 
+    // Signal to request focus back to NavBar
+    signal requestNavFocus()
+
     property int activeTab: 0   // 0 = My Games, 1 = Clients, 2 = Game Store
     onActiveTabChanged: if (activeTab === 0) refreshGames()
+
+    // Focus state: "tabs" = tab bar focused, "content" = content area focused
+    property string focusState: "tabs"
+    property int focusedTabIndex: 0
+    property int hoveredTabIndex: -1
+
+    // Clients tab focus
+    property int clientsFocusIndex: 0
+    readonly property int clientsItemCount: 4  // Steam, Epic, GOG, Heroic
+
+    function gainFocus() {
+        focusState = "tabs"
+        focusedTabIndex = activeTab
+        gamesRoot.forceActiveFocus()
+    }
+
+    function loseFocus() {
+        focusState = ""
+        focusedTabIndex = -1
+        // Clean up Game Store focus if active
+        if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+            gameStoreLoader.item.loseFocus()
+    }
+
+    // Master keyboard handler
+    Keys.onPressed: function(event) {
+        if (focusState === "tabs") {
+            handleTabKeys(event)
+        } else if (focusState === "content") {
+            handleContentKeys(event)
+        }
+    }
+
+    function handleTabKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (focusedTabIndex > 0) {
+                focusedTabIndex--
+                activeTab = focusedTabIndex
+            } else {
+                // At leftmost tab, go back to NavBar
+                requestNavFocus()
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (focusedTabIndex < 2) {
+                focusedTabIndex++
+                activeTab = focusedTabIndex
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            // Enter content area
+            focusState = "content"
+            enterContentArea()
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleContentKeys(event) {
+        if (activeTab === 0) {
+            // My Games grid
+            handleMyGamesKeys(event)
+        } else if (activeTab === 1) {
+            // Clients
+            handleClientsKeys(event)
+        } else if (activeTab === 2) {
+            // Game Store — forward keys to GameStorePage
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.handleStoreKeys === "function") {
+                // Check if at top zone and pressing Up → go back to tab bar
+                var zone = gameStoreLoader.item.navZone
+                if (event.key === Qt.Key_Up && (zone === "searchBar" || zone === "")) {
+                    focusState = "tabs"
+                    focusedTabIndex = activeTab
+                    if (typeof gameStoreLoader.item.loseFocus === "function")
+                        gameStoreLoader.item.loseFocus()
+                    event.accepted = true
+                    return
+                }
+                gameStoreLoader.item.handleStoreKeys(event)
+            }
+        }
+    }
+
+    function handleMyGamesKeys(event) {
+        var cols = Math.floor(gameGrid.width / gameGrid.cellWidth)
+        if (cols < 1) cols = 1
+        var idx = gameGrid.currentIndex
+        var count = gameGrid.count
+
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (idx % cols === 0) {
+                // At left edge, go back to NavBar
+                requestNavFocus()
+            } else if (idx > 0) {
+                gameGrid.currentIndex = idx - 1
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (idx < count - 1) {
+                gameGrid.currentIndex = idx + 1
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Up:
+            if (idx - cols < 0) {
+                // At top row, go back to tab bar
+                focusState = "tabs"
+                focusedTabIndex = activeTab
+            } else {
+                gameGrid.currentIndex = idx - cols
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (idx + cols < count) {
+                gameGrid.currentIndex = idx + cols
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            // Activate current game
+            if (count > 0 && idx >= 0 && idx < count) {
+                var game = gamesModel.get(idx)
+                if (game) GameManager.launchGame(game.id)
+            }
+            event.accepted = true
+            break
+        }
+    }
+
+    function handleClientsKeys(event) {
+        switch (event.key) {
+        case Qt.Key_Left:
+            if (clientsFocusIndex === 0) {
+                requestNavFocus()
+            } else {
+                clientsFocusIndex--
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Right:
+            if (clientsFocusIndex < clientsItemCount - 1) {
+                clientsFocusIndex++
+            }
+            event.accepted = true
+            break
+        case Qt.Key_Up:
+            focusState = "tabs"
+            focusedTabIndex = activeTab
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            // No further rows below clients cards
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            // Activate Steam card (index 0)
+            if (clientsFocusIndex === 0) {
+                if (!GameManager.isSteamInstalled()) return
+                if (!GameManager.isSteamAvailable()) {
+                    steamSetupWizard.open()
+                } else {
+                    gameStoresTab.steamSettingsOpen = !gameStoresTab.steamSettingsOpen
+                }
+            }
+            event.accepted = true
+            break
+        }
+    }
+
+    function enterContentArea() {
+        if (activeTab === 0) {
+            // Focus the game grid
+            if (gameGrid.count > 0) {
+                gameGrid.currentIndex = 0
+            }
+        } else if (activeTab === 1) {
+            clientsFocusIndex = 0
+        } else if (activeTab === 2) {
+            // Game Store — hand focus to GameStorePage
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.gainFocus === "function") {
+                gameStoreLoader.item.gainFocus()
+            }
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -44,6 +241,21 @@ Rectangle {
                         height: tabRow.height
                         color: "transparent"
 
+                        property bool isTabFocused: focusState === "tabs" && focusedTabIndex === index
+                        property bool isTabHovered: hoveredTabIndex === index
+
+                        // Purple outline when keyboard-focused or mouse-hovered on tab
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: 2
+                            radius: 6
+                            color: "transparent"
+                            border.color: (isTabFocused || isTabHovered)
+                                          ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: (isTabFocused || isTabHovered) ? 2 : 0
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                        }
+
                         Rectangle {
                             anchors.bottom: parent.bottom
                             width: parent.width
@@ -67,8 +279,21 @@ Rectangle {
 
                         MouseArea {
                             anchors.fill: parent
+                            hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: activeTab = index
+                            onEntered: {
+                                hoveredTabIndex = index
+                                focusedTabIndex = index
+                                focusState = "tabs"
+                                gamesRoot.forceActiveFocus()
+                            }
+                            onExited: hoveredTabIndex = -1
+                            onClicked: {
+                                activeTab = index
+                                focusedTabIndex = index
+                                focusState = "tabs"
+                                gamesRoot.forceActiveFocus()
+                            }
                         }
                     }
                 }
@@ -149,6 +374,9 @@ Rectangle {
                     cellHeight: 290
                     clip: true
                     model: ListModel { id: gamesModel }
+                    highlight: Item {}  // We handle highlight in delegate
+                    highlightFollowsCurrentItem: false
+                    currentIndex: -1
 
                     delegate: GameCard {
                         gameTitle: model.title
@@ -160,11 +388,19 @@ Rectangle {
                         downloadProgress: model.downloadProgress !== undefined ? model.downloadProgress : -1.0
                         installError: model.installError !== undefined ? model.installError : ""
 
+                        // Keyboard focus: this card is focused when it's the grid's current item and we're in content mode
+                        isKeyboardFocused: gameGrid.currentIndex === index && focusState === "content" && activeTab === 0
+
                         onPlayClicked: function(id) {
                             GameManager.launchGame(id)
                         }
                         onCancelClicked: function(appId) {
                             GameManager.cancelDownload(appId)
+                        }
+                        onCardHovered: {
+                            gameGrid.currentIndex = index
+                            focusState = "content"
+                            gamesRoot.forceActiveFocus()
                         }
                     }
 
@@ -620,9 +856,9 @@ Rectangle {
                                 height: 72
                                 radius: 12
                                 color: ThemeManager.getColor("surface")
-                                border.color: steamCardArea.containsMouse
+                                border.color: (steamCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 0))
                                               ? ThemeManager.getColor("focus") : "transparent"
-                                border.width: steamCardArea.containsMouse ? 2 : 0
+                                border.width: (steamCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 0)) ? 2 : 0
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -723,6 +959,11 @@ Rectangle {
                                     z: -1
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
+                                    onEntered: {
+                                        clientsFocusIndex = 0
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
                                     onClicked: {
                                         if (!GameManager.isSteamInstalled())
                                             return
@@ -745,6 +986,9 @@ Rectangle {
                                 color: Qt.rgba(ThemeManager.getColor("surface").r,
                                                ThemeManager.getColor("surface").g,
                                                ThemeManager.getColor("surface").b, 0.4)
+                                border.color: (epicCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 1))
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: (epicCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 1)) ? 2 : 0
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -786,6 +1030,19 @@ Rectangle {
                                         }
                                     }
                                 }
+
+                                MouseArea {
+                                    id: epicCardArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: {
+                                        clientsFocusIndex = 1
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
+                                }
+
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
                             }
 
                             // ── GOG (placeholder) ──
@@ -796,6 +1053,9 @@ Rectangle {
                                 color: Qt.rgba(ThemeManager.getColor("surface").r,
                                                ThemeManager.getColor("surface").g,
                                                ThemeManager.getColor("surface").b, 0.4)
+                                border.color: (gogCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 2))
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: (gogCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 2)) ? 2 : 0
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -837,6 +1097,19 @@ Rectangle {
                                         }
                                     }
                                 }
+
+                                MouseArea {
+                                    id: gogCardArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: {
+                                        clientsFocusIndex = 2
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
+                                }
+
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
                             }
 
                             // ── Heroic (placeholder) ──
@@ -847,6 +1120,9 @@ Rectangle {
                                 color: Qt.rgba(ThemeManager.getColor("surface").r,
                                                ThemeManager.getColor("surface").g,
                                                ThemeManager.getColor("surface").b, 0.4)
+                                border.color: (heroicCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 3))
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: (heroicCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 3)) ? 2 : 0
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -888,6 +1164,19 @@ Rectangle {
                                         }
                                     }
                                 }
+
+                                MouseArea {
+                                    id: heroicCardArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: {
+                                        clientsFocusIndex = 3
+                                        focusState = "content"
+                                        gamesRoot.forceActiveFocus()
+                                    }
+                                }
+
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
                             }
                         }
 
@@ -1172,9 +1461,16 @@ Rectangle {
                 id: gameStoreTab
 
                 Loader {
+                    id: gameStoreLoader
                     anchors.fill: parent
                     source: "../components/GameStorePage.qml"
                     active: activeTab === 2
+
+                    onLoaded: {
+                        if (item) {
+                            item.requestNavFocus.connect(gamesRoot.requestNavFocus)
+                        }
+                    }
                 }
             }
         }

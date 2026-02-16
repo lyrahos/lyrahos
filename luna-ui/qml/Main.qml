@@ -13,6 +13,31 @@ ApplicationWindow {
     flags: Qt.FramelessWindowHint
     visibility: Window.FullScreen
 
+    // Track which zone has focus: "nav" or "content"
+    property string focusZone: "nav"
+    property bool pendingContentFocus: false
+
+    function enterContent() {
+        focusZone = "content"
+        navBar.focus = false
+        if (contentLoader.status === Loader.Loading) {
+            pendingContentFocus = true
+            return
+        }
+        pendingContentFocus = false
+        if (contentLoader.item && typeof contentLoader.item.gainFocus === "function") {
+            contentLoader.item.gainFocus()
+        }
+    }
+
+    function enterNav() {
+        focusZone = "nav"
+        if (contentLoader.item && typeof contentLoader.item.loseFocus === "function") {
+            contentLoader.item.loseFocus()
+        }
+        navBar.forceActiveFocus()
+    }
+
     Rectangle {
         anchors.fill: parent
         color: ThemeManager.getColor("background")
@@ -29,6 +54,7 @@ ApplicationWindow {
                 onSectionChanged: function(section) {
                     contentLoader.source = "views/" + section + "View.qml"
                 }
+                onEnterContent: root.enterContent()
             }
 
             Loader {
@@ -36,6 +62,16 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 source: "views/GamesView.qml"
+
+                onLoaded: {
+                    if (item && typeof item.requestNavFocus === "object") {
+                        item.requestNavFocus.connect(root.enterNav)
+                    }
+                    if (root.pendingContentFocus) {
+                        root.pendingContentFocus = false
+                        root.enterContent()
+                    }
+                }
             }
         }
     }
