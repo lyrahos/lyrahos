@@ -6,7 +6,7 @@ Rectangle {
     id: storeCard
     width: 240
     height: 160
-    radius: 12
+    radius: 16
     color: ThemeManager.getColor("cardBackground")
     clip: true
 
@@ -48,7 +48,7 @@ Rectangle {
         Text {
             anchors.centerIn: parent
             text: gameTitle.length > 0 ? gameTitle.charAt(0).toUpperCase() : "?"
-            font.pixelSize: 36
+            font.pixelSize: 56
             font.bold: true
             color: ThemeManager.getColor("primary")
             opacity: 0.5
@@ -60,8 +60,8 @@ Rectangle {
         anchors.fill: parent
         gradient: Gradient {
             GradientStop { position: 0.0; color: "transparent" }
-            GradientStop { position: 0.4; color: "transparent" }
-            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.85) }
+            GradientStop { position: 0.3; color: "transparent" }
+            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.9) }
         }
     }
 
@@ -83,18 +83,18 @@ Rectangle {
         }
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.topMargin: 8
-        anchors.rightMargin: 8
-        width: discountText.width + 14
-        height: 24
-        radius: 6
+        anchors.topMargin: 12
+        anchors.rightMargin: 12
+        width: discountText.width + 28
+        height: 44
+        radius: 10
         color: "#4ade80"
 
         Text {
             id: discountText
             anchors.centerIn: parent
             text: "-" + Math.round(parseFloat(savings)) + "%"
-            font.pixelSize: 12
+            font.pixelSize: 24
             font.family: ThemeManager.getFont("ui")
             font.bold: true
             color: "#0a0a0a"
@@ -106,11 +106,11 @@ Rectangle {
         visible: metacriticScore !== "" && metacriticScore !== "0"
         anchors.top: parent.top
         anchors.left: parent.left
-        anchors.topMargin: 8
-        anchors.leftMargin: 8
-        width: 32
-        height: 32
-        radius: 6
+        anchors.topMargin: 12
+        anchors.leftMargin: 12
+        width: 56
+        height: 56
+        radius: 10
         color: {
             var score = parseInt(metacriticScore)
             if (score >= 75) return Qt.rgba(0.29, 0.85, 0.37, 0.9)
@@ -121,7 +121,7 @@ Rectangle {
         Text {
             anchors.centerIn: parent
             text: metacriticScore
-            font.pixelSize: 11
+            font.pixelSize: 24
             font.family: ThemeManager.getFont("ui")
             font.bold: true
             color: "#0a0a0a"
@@ -133,14 +133,14 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: 10
-        spacing: 4
+        anchors.margins: 16
+        spacing: 6
 
         // Game title
         Text {
             Layout.fillWidth: true
             text: gameTitle
-            font.pixelSize: 13
+            font.pixelSize: 28
             font.family: ThemeManager.getFont("body")
             font.bold: true
             color: "#ffffff"
@@ -150,7 +150,7 @@ Rectangle {
 
         // Price row
         RowLayout {
-            spacing: 8
+            spacing: 12
 
             // Strikethrough original price
             Text {
@@ -159,7 +159,7 @@ Rectangle {
                     return !isNaN(s) && s > 0
                 }
                 text: "$" + normalPrice
-                font.pixelSize: 12
+                font.pixelSize: 24
                 font.family: ThemeManager.getFont("ui")
                 color: ThemeManager.getColor("textSecondary")
                 font.strikeout: true
@@ -171,7 +171,7 @@ Rectangle {
                     if (salePrice === "0.00") return "FREE"
                     return "$" + salePrice
                 }
-                font.pixelSize: 14
+                font.pixelSize: 28
                 font.family: ThemeManager.getFont("ui")
                 font.bold: true
                 color: {
@@ -188,7 +188,7 @@ Rectangle {
             Text {
                 visible: steamRatingText !== "" && steamRatingText !== "null"
                 text: steamRatingText
-                font.pixelSize: 10
+                font.pixelSize: 22
                 font.family: ThemeManager.getFont("ui")
                 color: ThemeManager.getColor("textSecondary")
                 opacity: 0.8
@@ -204,7 +204,7 @@ Rectangle {
     border.color: mouseArea.containsMouse
                   ? ThemeManager.getColor("focus")
                   : "transparent"
-    border.width: mouseArea.containsMouse ? 2 : 0
+    border.width: mouseArea.containsMouse ? 3 : 0
     Behavior on border.color { ColorAnimation { duration: 150 } }
 
     MouseArea {

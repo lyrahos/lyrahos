@@ -83,6 +83,7 @@ public:
     Q_INVOKABLE void cancelSteamCmdSetup();
     Q_INVOKABLE bool isSteamSetupComplete();
     Q_INVOKABLE void ensureSteamRunning();
+    Q_INVOKABLE void restartSteam();
 
 signals:
     void gamesUpdated();

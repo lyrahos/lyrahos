@@ -237,6 +237,20 @@ void GameManager::ensureSteamRunning() {
     QProcess::startDetached("steam", QStringList() << "-silent");
 }
 
+void GameManager::restartSteam() {
+    // After initial setup, Steam's running instance may have stale config
+    // and report "no internet". Kill it and relaunch silently so it picks
+    // up the new configuration (login tokens, library paths, etc.).
+    qDebug() << "Restarting Steam to pick up new configuration...";
+    QProcess::execute("pkill", QStringList() << "-x" << "steam");
+    QProcess::execute("pkill", QStringList() << "-f" << "steamwebhelper");
+
+    // Give Steam a moment to fully shut down before relaunching.
+    QTimer::singleShot(2000, this, [this]() {
+        ensureSteamRunning();
+    });
+}
+
 void GameManager::suppressSteamHardwareSurvey() {
     // Inject a future SurveyDate and high SurveyDateVersion into Steam's
     // registry.vdf so the hardware survey dialog never appears.

@@ -1295,6 +1295,7 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
+                                GameManager.restartSteam()
                                 GameManager.scanAllStores()
                                 GameManager.fetchSteamOwnedGames()
                                 wizard.close()
