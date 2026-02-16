@@ -16,6 +16,7 @@
 #include <QFileSystemWatcher>
 #include <QPointer>
 #include <QTextStream>
+#include <QDateTime>
 #include <QRegularExpression>
 #include <memory>
 #include <unistd.h>
@@ -1797,22 +1798,45 @@ void GameManager::loginSteamCmd() {
         return;
     }
 
+    // ── Log file setup ──
+    // Writes a timestamped log to ~/.config/luna-ui/steamcmd-setup.log
+    // so users can inspect the full SteamCMD output after login attempts.
+    QString logDir = QDir::homePath() + "/.config/luna-ui";
+    QDir().mkpath(logDir);
+    auto logFile = std::make_shared<QFile>(logDir + "/steamcmd-setup.log");
+    logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    auto writeLog = [logFile](const QString& msg) {
+        if (!logFile->isOpen()) return;
+        QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+        QTextStream out(logFile.get());
+        out << "[" << ts << "] " << msg << "\n";
+        out.flush();
+    };
+
+    writeLog("═══════════════════════════════════════════════════════");
+    writeLog("SteamCMD setup login started");
+
     QString steamcmdBin = findSteamCmdBin();
     if (steamcmdBin.isEmpty()) {
+        writeLog("ERROR: SteamCMD binary not found");
         emit steamCmdSetupLoginError("SteamCMD not found. It will be downloaded first.");
         // Trigger auto-download, then the QML wizard can retry
         ensureSteamCmd(-1);  // -1 = no game, just download steamcmd
         return;
     }
+    writeLog("Binary: " + steamcmdBin);
 
     QString username = getSteamUsername();
     if (username.isEmpty()) {
+        writeLog("ERROR: No Steam username detected");
         emit steamCmdSetupLoginError("No Steam account detected. Please complete Step 2 first.");
         return;
     }
+    writeLog("Username: " + username);
 
     // Clean up any previous process that finished but wasn't fully cleaned
     if (m_steamCmdSetupProc) {
+        writeLog("Cleaning up previous process");
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
     }
@@ -1820,13 +1844,24 @@ void GameManager::loginSteamCmd() {
     m_steamCmdSetupProc = new QProcess(this);
     // Always use the consistent data directory so login tokens are stored
     // where installGame() will find them — survives reboots and logouts.
-    m_steamCmdSetupProc->setWorkingDirectory(steamCmdDataDir());
+    QString dataDir = steamCmdDataDir();
+    m_steamCmdSetupProc->setWorkingDirectory(dataDir);
+    writeLog("Working directory: " + dataDir);
+
+    // Check for existing token
+    QString tokenFile = dataDir + "/config/config.vdf";
+    QFileInfo tokenInfo(tokenFile);
+    writeLog("Token file: " + tokenFile + " (exists=" +
+             (tokenInfo.exists() ? "yes" : "no") +
+             ", size=" + QString::number(tokenInfo.size()) + ")");
+
     // Don't pass +quit on the command line. SteamCMD needs time to
     // save the login token after a successful auth. If +quit is queued
     // upfront, it fires before the token is persisted and exits with
     // code 5. Instead, we write "quit" to stdin after login succeeds.
     QStringList args;
     args << "+login" << username;
+    writeLog("Args: +login " + username);
 
     // Track whether we saw a successful login in stdout, because
     // SteamCMD's exit codes are unreliable (often exits 5 even on success).
@@ -1851,26 +1886,44 @@ void GameManager::loginSteamCmd() {
     quitTimer->setSingleShot(true);
     quitTimer->setInterval(5000);
     QPointer<QTimer> quitTimerGuard = quitTimer;
-    connect(quitTimer, &QTimer::timeout, this, [procGuard]() {
+    connect(quitTimer, &QTimer::timeout, this, [procGuard, writeLog]() {
         // Don't deleteLater() here — the finished handler owns cleanup.
         // Deleting the timer here would cause a use-after-free when
         // the finished handler tries to stop/delete it.
+        writeLog("Quit timer fired (5s)");
         if (procGuard && procGuard->state() == QProcess::Running) {
             qDebug() << "[steamcmd-setup] quit timer fired, sending quit";
+            writeLog("Sending 'quit' to SteamCMD");
             procGuard->write("quit\n");
+        } else {
+            writeLog("Process no longer running, skipping quit");
         }
     });
 
-    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, procGuard, loginOk, awaitingGuard, quitTimerGuard]() {
+    // Capture stderr for the log
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardError, this, [procGuard, writeLog]() {
+        if (!procGuard) return;
+        QString output = QString::fromUtf8(procGuard->readAllStandardError());
+        for (const QString& line : output.split('\n')) {
+            QString trimmed = line.trimmed();
+            if (trimmed.isEmpty()) continue;
+            writeLog("[stderr] " + trimmed);
+            qDebug() << "[steamcmd-setup stderr]" << trimmed;
+        }
+    });
+
+    connect(m_steamCmdSetupProc, &QProcess::readyReadStandardOutput, this, [this, procGuard, loginOk, awaitingGuard, quitTimerGuard, writeLog]() {
         if (!procGuard) return;
         QString output = QString::fromUtf8(procGuard->readAllStandardOutput());
         for (const QString& line : output.split('\n')) {
             QString trimmed = line.trimmed();
             if (trimmed.isEmpty()) continue;
+            writeLog("[stdout] " + trimmed);
             qDebug() << "[steamcmd-setup]" << trimmed;
 
             // Password prompt
             if (trimmed.contains("password:", Qt::CaseInsensitive)) {
+                writeLog(">> Password prompt detected");
                 emit steamCmdSetupCredentialNeeded("password");
                 continue;
             }
@@ -1880,6 +1933,7 @@ void GameManager::loginSteamCmd() {
             // actually logged in yet.
             if (trimmed.contains("Steam Guard", Qt::CaseInsensitive) ||
                 trimmed.contains("Two-factor", Qt::CaseInsensitive)) {
+                writeLog(">> Steam Guard prompt detected — resetting loginOk, stopping quit timer");
                 *loginOk = false;
                 *awaitingGuard = true;
                 if (quitTimerGuard)
@@ -1895,6 +1949,7 @@ void GameManager::loginSteamCmd() {
             // "OK" lines which appear during the auth handshake before
             // login is complete.
             if (trimmed.contains("Logged in OK", Qt::CaseInsensitive)) {
+                writeLog(">> 'Logged in OK' detected — starting 5s quit timer");
                 *loginOk = true;
                 *awaitingGuard = false;
                 if (quitTimerGuard && !quitTimerGuard->isActive()) {
@@ -1908,6 +1963,7 @@ void GameManager::loginSteamCmd() {
             // we never saw "Logged in OK" explicitly (modern SteamCMD
             // versions may skip that message after guard code auth).
             if (trimmed.startsWith("Steam>")) {
+                writeLog(">> Steam> prompt detected — login succeeded, sending quit");
                 *loginOk = true;
                 *awaitingGuard = false;
                 if (quitTimerGuard)
@@ -1921,6 +1977,7 @@ void GameManager::loginSteamCmd() {
             if (trimmed.contains("FAILED login", Qt::CaseInsensitive) ||
                 trimmed.contains("Invalid Password", Qt::CaseInsensitive) ||
                 trimmed.contains("Login Failure", Qt::CaseInsensitive)) {
+                writeLog(">> LOGIN FAILED: " + trimmed);
                 *loginOk = false;
                 *awaitingGuard = false;
                 if (quitTimerGuard)
@@ -1933,7 +1990,7 @@ void GameManager::loginSteamCmd() {
     });
 
     connect(m_steamCmdSetupProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, loginOk, quitTimerGuard](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOk, quitTimerGuard, writeLog](int exitCode, QProcess::ExitStatus exitStatus) {
         // Always clean up the timer — it may still be running if the
         // process exited before the timer fired (e.g. crash, kill).
         // Use QPointer guard to avoid use-after-free.
@@ -1942,6 +1999,17 @@ void GameManager::loginSteamCmd() {
             quitTimerGuard->deleteLater();
         }
 
+        writeLog("Process exited — code=" + QString::number(exitCode) +
+                 " status=" + (exitStatus == QProcess::NormalExit ? "normal" : "crashed") +
+                 " loginOk=" + (*loginOk ? "true" : "false"));
+
+        // Check token file after exit
+        QString tokenFile = steamCmdDataDir() + "/config/config.vdf";
+        QFileInfo tokenInfo(tokenFile);
+        writeLog("Token file after exit: exists=" +
+                 QString(tokenInfo.exists() ? "yes" : "no") +
+                 " size=" + QString::number(tokenInfo.size()));
+
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
 
@@ -1949,26 +2017,48 @@ void GameManager::loginSteamCmd() {
         // SteamCMD frequently exits with code 5 even after a successful
         // login+quit sequence.
         if (*loginOk || exitCode == 0) {
+            writeLog("RESULT: LOGIN SUCCESS");
             qDebug() << "SteamCMD setup login successful (exit code:" << exitCode << ")";
             emit steamCmdSetupLoginSuccess();
         } else {
+            writeLog("RESULT: LOGIN FAILED");
             qDebug() << "SteamCMD setup login failed, exit code:" << exitCode;
             emit steamCmdSetupLoginError(
                 "Login failed. Check your password or Steam Guard code and try again.");
         }
+        writeLog("───────────────────────────────────────────────────────");
     });
 
     m_steamCmdSetupProc->start(steamcmdBin, args);
+    writeLog("Process started (PID: " + QString::number(m_steamCmdSetupProc->processId()) + ")");
     qDebug() << "Started steamcmd setup login for user:" << username;
 }
 
 void GameManager::provideSteamCmdSetupCredential(const QString& credential) {
+    // Append to the same log file for a complete timeline.
+    QFile log(QDir::homePath() + "/.config/luna-ui/steamcmd-setup.log");
+    if (log.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+        // Mask the credential — show type/length but not the value.
+        QString masked = (credential.length() <= 6)
+            ? "guard code (" + QString::number(credential.length()) + " chars)"
+            : "password (" + QString::number(credential.length()) + " chars)";
+        QTextStream(&log) << "[" << ts << "] Credential sent: " << masked << "\n";
+    }
+
     if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
         m_steamCmdSetupProc->write((credential + "\n").toUtf8());
     }
 }
 
 void GameManager::cancelSteamCmdSetup() {
+    QFile log(QDir::homePath() + "/.config/luna-ui/steamcmd-setup.log");
+    if (log.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+        QTextStream(&log) << "[" << ts << "] Setup cancelled by user\n"
+                          << "[" << ts << "] ───────────────────────────────────────────────────────\n";
+    }
+
     if (m_steamCmdSetupProc && m_steamCmdSetupProc->state() == QProcess::Running) {
         m_steamCmdSetupProc->terminate();
         if (!m_steamCmdSetupProc->waitForFinished(3000)) {
