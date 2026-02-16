@@ -14,6 +14,7 @@ Item {
 
     property string text: ""
     property string placeholderText: "Type here..."
+    property bool passwordMode: false
     property bool isShifted: false
     property bool showNumbers: false
     property int focusRow: 0
@@ -40,8 +41,9 @@ Item {
 
     readonly property var currentRows: showNumbers ? numberRows : letterRows
 
-    function open(initialText) {
+    function open(initialText, isPassword) {
         text = initialText || ""
+        passwordMode = isPassword || false
         isShifted = false
         showNumbers = false
         focusRow = 0
@@ -216,7 +218,11 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        text: vk.text.length > 0 ? vk.text : vk.placeholderText
+                        text: {
+                            if (vk.text.length === 0) return vk.placeholderText
+                            if (vk.passwordMode) return "\u2022".repeat(vk.text.length)
+                            return vk.text
+                        }
                         font.pixelSize: 28
                         font.family: ThemeManager.getFont("body")
                         color: vk.text.length > 0

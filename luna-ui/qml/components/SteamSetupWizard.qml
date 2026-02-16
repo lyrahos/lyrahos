@@ -4,9 +4,14 @@ import QtQuick.Layouts
 import QtWebEngine
 
 // Full-screen modal wizard for first-time Steam setup.
-// Step 1: Intro explaining the multi-login process
-// Step 2: Steam client login → API key retrieval via browser
+// Step 0: Intro explaining the multi-login process
+// Step 1: Steam client login
+// Step 2: API key retrieval via browser
 // Step 3: SteamCMD login with password + authenticator approval
+// Step 4: Done
+//
+// Fully controller-navigable: D-pad moves between items,
+// A/Enter activates, B/Escape goes back or closes.
 Rectangle {
     id: wizard
     anchors.fill: parent
@@ -30,6 +35,276 @@ Rectangle {
     property bool steamCmdVerifyingGuard: false // true after guard code submitted, waiting for result
     property string steamCmdError: ""
 
+    // ─── Controller Navigation ───
+    property int wizFocusIndex: 0
+    property int overlayFocusIdx: 0
+
+    onCurrentStepChanged: { wizFocusIndex = 0; wizard.forceActiveFocus() }
+    onShowManualInputChanged: wizFocusIndex = 0
+    onSteamCmdPromptTypeChanged: wizFocusIndex = 0
+    onSteamCmdWaitingChanged: wizFocusIndex = 0
+    onApiKeyBrowserOpenChanged: wizFocusIndex = 0
+
+    function wizFocusCount() {
+        if (apiKeyConfirmOverlay.visible) return 2
+        if (apiKeyBrowserOpen && currentStep === 2) return 1
+        switch (currentStep) {
+        case 0: return 2  // Cancel, Next
+        case 1: return 2  // Back, Open Steam
+        case 2:
+            if (detectedApiKey !== "" && !showManualInput) return 2  // Yes, No
+            if (showManualInput && detectedApiKey === "") return 4  // Input, Retry, Back, Skip
+            return 3  // Get API Key, Back, Skip
+        case 3:
+            if (steamCmdPromptType === "password") return 4  // Input, Submit, Back, Skip
+            if (steamCmdPromptType === "steamguard") return 4  // Input, Submit, Back, Skip
+            if (steamCmdPromptType === "" && !steamCmdWaiting && !steamCmdAwaitingGuard && !steamCmdVerifyingGuard)
+                return 3  // Start Login, Back, Skip
+            return 2  // Waiting states: Back, Skip
+        case 4: return 1  // Start Playing
+        }
+        return 0
+    }
+
+    function isWizFocused(idx) {
+        return wizard.visible && !wizardVirtualKeyboard.visible
+               && !apiKeyConfirmOverlay.visible && !(apiKeyBrowserOpen && currentStep === 2)
+               && wizFocusIndex === idx
+    }
+
+    function isOverlayFocused(idx) {
+        return apiKeyConfirmOverlay.visible && overlayFocusIdx === idx
+    }
+
+    function isBrowserBtnFocused() {
+        return apiKeyBrowserOpen && currentStep === 2 && !apiKeyConfirmOverlay.visible
+    }
+
+    function wizActivate(idx) {
+        switch (currentStep) {
+        case 0:
+            if (idx === 0) wizard.close()
+            else if (idx === 1) wizard.currentStep = 1
+            break
+        case 1:
+            if (idx === 0) wizard.currentStep = 0
+            else if (idx === 1) {
+                if (!GameManager.hasSteamApiKey())
+                    GameManager.setSteamApiKey("__setup_pending__")
+                GameManager.launchSteamLogin()
+            }
+            break
+        case 2:
+            if (detectedApiKey !== "" && !showManualInput) {
+                if (idx === 0) {
+                    apiKeyWebView.url = "about:blank"
+                    wizard.apiKeyBrowserOpen = false
+                    GameManager.setSteamApiKey(wizard.detectedApiKey)
+                    wizard.currentStep = 3
+                } else if (idx === 1) {
+                    wizard.detectedApiKey = ""
+                    wizard.showManualInput = true
+                }
+            } else if (showManualInput && detectedApiKey === "") {
+                if (idx === 0) {
+                    wizardVirtualKeyboard.placeholderText = "Steam API key..."
+                    wizardVirtualKeyboard.open(manualKeyInput.text)
+                } else if (idx === 1) {
+                    wizard.showManualInput = false
+                    wizard.apiKeyScrapeErrorMsg = ""
+                    wizard.apiKeyBrowserOpen = true
+                    apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                } else if (idx === 2) {
+                    wizard.currentStep = 0
+                } else if (idx === 3) {
+                    if (GameManager.getSteamApiKey() === "__setup_pending__")
+                        GameManager.setSteamApiKey("")
+                    wizard.currentStep = 3
+                }
+            } else {
+                if (idx === 0) {
+                    wizard.apiKeyBrowserOpen = true
+                    apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                } else if (idx === 1) {
+                    wizard.currentStep = 0
+                } else if (idx === 2) {
+                    if (GameManager.getSteamApiKey() === "__setup_pending__")
+                        GameManager.setSteamApiKey("")
+                    wizard.currentStep = 3
+                }
+            }
+            break
+        case 3:
+            if (steamCmdPromptType === "password") {
+                if (idx === 0) {
+                    wizardVirtualKeyboard.placeholderText = "Enter password..."
+                    wizardVirtualKeyboard.open("", true)
+                } else if (idx === 1) {
+                    if (setupCredInput.text.length > 0) {
+                        GameManager.provideSteamCmdSetupCredential(setupCredInput.text)
+                        setupCredInput.text = ""
+                        wizard.steamCmdPromptType = ""
+                        wizard.steamCmdAwaitingGuard = true
+                        wizard.steamCmdWaiting = false
+                    }
+                } else if (idx === 2) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.steamCmdPromptType = ""
+                    wizard.steamCmdWaiting = false
+                    wizard.currentStep = 2
+                } else if (idx === 3) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.close()
+                }
+            } else if (steamCmdPromptType === "steamguard") {
+                if (idx === 0) {
+                    wizardVirtualKeyboard.placeholderText = "Enter code..."
+                    wizardVirtualKeyboard.open("")
+                } else if (idx === 1) {
+                    if (guardCodeInput.text.length > 0) {
+                        GameManager.provideSteamCmdSetupCredential(guardCodeInput.text)
+                        guardCodeInput.text = ""
+                        wizard.steamCmdPromptType = ""
+                        wizard.steamCmdWaiting = true
+                        wizard.steamCmdVerifyingGuard = true
+                    }
+                } else if (idx === 2) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.steamCmdPromptType = ""
+                    wizard.steamCmdWaiting = false
+                    wizard.currentStep = 2
+                } else if (idx === 3) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.close()
+                }
+            } else if (steamCmdPromptType === "" && !steamCmdWaiting && !steamCmdAwaitingGuard && !steamCmdVerifyingGuard) {
+                if (idx === 0) {
+                    wizard.steamCmdWaiting = true
+                    wizard.steamCmdError = ""
+                    GameManager.loginSteamCmd()
+                } else if (idx === 1) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.steamCmdPromptType = ""
+                    wizard.steamCmdWaiting = false
+                    wizard.currentStep = 2
+                } else if (idx === 2) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.close()
+                }
+            } else {
+                // Waiting states: Back=0, Skip=1
+                if (idx === 0) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.steamCmdPromptType = ""
+                    wizard.steamCmdWaiting = false
+                    wizard.currentStep = 2
+                } else if (idx === 1) {
+                    GameManager.cancelSteamCmdSetup()
+                    wizard.close()
+                }
+            }
+            break
+        case 4:
+            if (idx === 0) {
+                GameManager.restartSteam()
+                GameManager.scanAllStores()
+                GameManager.fetchSteamOwnedGames()
+                wizard.close()
+            }
+            break
+        }
+    }
+
+    // ─── Key Handler ───
+    Keys.onPressed: function(event) {
+        if (wizardVirtualKeyboard.visible) return
+
+        // Overlay navigation
+        if (apiKeyConfirmOverlay.visible) {
+            switch (event.key) {
+            case Qt.Key_Left:
+                if (overlayFocusIdx > 0) overlayFocusIdx--
+                event.accepted = true; break
+            case Qt.Key_Right:
+                if (overlayFocusIdx < 1) overlayFocusIdx++
+                event.accepted = true; break
+            case Qt.Key_Return:
+            case Qt.Key_Enter:
+                if (overlayFocusIdx === 0) {
+                    apiKeyConfirmOverlay.visible = false
+                    apiKeyWebView.url = "about:blank"
+                    GameManager.setSteamApiKey(apiKeyConfirmOverlay.overlayKey)
+                    wizard.detectedApiKey = apiKeyConfirmOverlay.overlayKey
+                    wizard.apiKeyBrowserOpen = false
+                    wizard.currentStep = 3
+                } else {
+                    apiKeyConfirmOverlay.visible = false
+                    apiKeyWebView.url = "about:blank"
+                    wizard.detectedApiKey = ""
+                    wizard.apiKeyBrowserOpen = false
+                    wizard.showManualInput = true
+                }
+                event.accepted = true; break
+            case Qt.Key_Escape:
+                apiKeyConfirmOverlay.visible = false
+                event.accepted = true; break
+            }
+            return
+        }
+
+        // Browser navigation
+        if (apiKeyBrowserOpen && currentStep === 2) {
+            switch (event.key) {
+            case Qt.Key_Return:
+            case Qt.Key_Enter:
+                wizard.apiKeyBrowserOpen = false
+                apiKeyPollTimer.stop()
+                apiKeyWebView.url = "about:blank"
+                wizard.showManualInput = true
+                event.accepted = true; break
+            case Qt.Key_Escape:
+                wizard.apiKeyBrowserOpen = false
+                apiKeyPollTimer.stop()
+                apiKeyWebView.url = "about:blank"
+                event.accepted = true; break
+            }
+            return
+        }
+
+        // Main wizard navigation
+        var count = wizFocusCount()
+        switch (event.key) {
+        case Qt.Key_Up:
+        case Qt.Key_Left:
+            if (wizFocusIndex > 0) wizFocusIndex--
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+        case Qt.Key_Right:
+            if (wizFocusIndex < count - 1) wizFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            wizActivate(wizFocusIndex)
+            event.accepted = true
+            break
+        case Qt.Key_Escape:
+            if (currentStep === 0) wizard.close()
+            else if (currentStep === 1) wizard.currentStep = 0
+            else if (currentStep === 2) wizard.currentStep = 0
+            else if (currentStep === 3) {
+                GameManager.cancelSteamCmdSetup()
+                wizard.steamCmdPromptType = ""
+                wizard.steamCmdWaiting = false
+                wizard.currentStep = 2
+            }
+            else if (currentStep === 4) wizard.close()
+            event.accepted = true
+            break
+        }
+    }
+
     // Click blocker
     MouseArea { anchors.fill: parent; onClicked: {} }
 
@@ -37,14 +312,12 @@ Rectangle {
     Connections {
         target: GameManager
 
-        // Legacy signal handlers (kept for compatibility but no longer
-        // used — the embedded WebEngineView handles API key detection
-        // directly via JavaScript polling).
         function onApiKeyScraped(key) {
             wizard.apiKeyScraping = false
             wizard.detectedApiKey = key
             apiKeyConfirmOverlay.overlayKey = key
             apiKeyConfirmOverlay.visible = true
+            wizard.overlayFocusIdx = 0
         }
 
         function onApiKeyScrapeError(error) {
@@ -60,9 +333,8 @@ Rectangle {
             wizard.steamCmdVerifyingGuard = false
             wizard.steamCmdError = ""
             setupCredInput.text = ""
-            if (promptType === "password") {
-                setupCredInput.forceActiveFocus()
-            }
+            wizard.wizFocusIndex = 0
+            wizard.forceActiveFocus()
         }
 
         function onSteamCmdSetupLoginSuccess() {
@@ -85,6 +357,8 @@ Rectangle {
 
     function reset() {
         currentStep = 0
+        wizFocusIndex = 0
+        overlayFocusIdx = 0
         apiKeyScraping = false
         apiKeyScrapeErrorMsg = ""
         apiKeyBrowserOpen = false
@@ -100,28 +374,20 @@ Rectangle {
 
     function open() {
         reset()
-        // Smart step skipping: jump to the first incomplete step.
-        // This prevents forcing the user through already-completed steps
-        // (e.g., re-entering an API key they already saved).
         if (GameManager.isSteamAvailable()) {
-            // Start downloading SteamCMD in the background so it's ready
-            // by the time the user reaches step 3.
             if (!GameManager.isSteamCmdAvailable()) {
                 GameManager.downloadSteamCmd()
             }
             if (GameManager.hasSteamApiKey() && GameManager.isSteamCmdAvailable()) {
-                // Everything is done — show the "done" step
                 currentStep = 4
             } else if (GameManager.hasSteamApiKey()) {
-                // API key saved, just need SteamCMD
                 currentStep = 3
             } else {
-                // Need API key
                 currentStep = 2
             }
         }
-        // If Steam is not available (not logged in), stay at step 0
         visible = true
+        wizard.forceActiveFocus()
     }
 
     function close() {
@@ -331,8 +597,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
+                        border.color: isWizFocused(0) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                        border.width: isWizFocused(0) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: cancelIntroLabel
@@ -355,6 +622,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: ThemeManager.getColor("primary")
+                        border.color: isWizFocused(1) ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: isWizFocused(1) ? 3 : 0
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: nextIntroLabel
@@ -369,9 +639,7 @@ Rectangle {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                wizard.currentStep = 1
-                            }
+                            onClicked: wizard.currentStep = 1
                         }
                     }
                 }
@@ -415,8 +683,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
+                        border.color: isWizFocused(0) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                        border.width: isWizFocused(0) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: backStep1Label
@@ -439,6 +708,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "#1b2838"
+                        border.color: isWizFocused(1) ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: isWizFocused(1) ? 3 : 0
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: launchSteamLabel
@@ -454,13 +726,6 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                // This quits luna-ui; luna-session launches Steam,
-                                // then restarts luna-ui. On restart, the wizard
-                                // should auto-advance to step 2 if Steam is available.
-                                // We save a flag so the wizard knows to reopen.
-                                // IMPORTANT: Only set the marker if no real key exists.
-                                // If the user already has an API key (re-running setup
-                                // for a different reason), don't overwrite it.
                                 if (!GameManager.hasSteamApiKey()) {
                                     GameManager.setSteamApiKey("__setup_pending__")
                                 }
@@ -504,6 +769,10 @@ Rectangle {
                     Layout.preferredHeight: 44
                     radius: 8
                     color: ThemeManager.getColor("primary")
+                    border.color: isWizFocused(0) && !wizard.apiKeyBrowserOpen && wizard.detectedApiKey === "" && !wizard.showManualInput
+                                  ? ThemeManager.getColor("focus") : "transparent"
+                    border.width: isWizFocused(0) && !wizard.apiKeyBrowserOpen && wizard.detectedApiKey === "" && !wizard.showManualInput ? 3 : 0
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
 
                     Text {
                         id: openBrowserLabel
@@ -589,6 +858,10 @@ Rectangle {
                                 Layout.preferredHeight: 40
                                 radius: 8
                                 color: ThemeManager.getColor("accent")
+                                border.color: isWizFocused(0) && wizard.detectedApiKey !== "" && !wizard.showManualInput
+                                              ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: isWizFocused(0) && wizard.detectedApiKey !== "" && !wizard.showManualInput ? 3 : 0
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
 
                                 Text {
                                     id: yesKeyLabel
@@ -617,8 +890,10 @@ Rectangle {
                                 Layout.preferredHeight: 40
                                 radius: 8
                                 color: "transparent"
-                                border.color: Qt.rgba(1, 1, 1, 0.15)
-                                border.width: 1
+                                border.color: isWizFocused(1) && wizard.detectedApiKey !== "" && !wizard.showManualInput
+                                              ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                                border.width: isWizFocused(1) && wizard.detectedApiKey !== "" && !wizard.showManualInput ? 3 : 1
+                                Behavior on border.color { ColorAnimation { duration: 150 } }
 
                                 Text {
                                     id: noKeyLabel
@@ -635,7 +910,6 @@ Rectangle {
                                     onClicked: {
                                         wizard.detectedApiKey = ""
                                         wizard.showManualInput = true
-                                        manualKeyInput.forceActiveFocus()
                                     }
                                 }
                             }
@@ -674,10 +948,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: ThemeManager.getColor("hover")
-                        border.color: manualKeyInput.activeFocus
+                        border.color: (manualKeyInput.activeFocus || (isWizFocused(0) && wizard.showManualInput))
                                       ? ThemeManager.getColor("focus") : "transparent"
-                        border.width: manualKeyInput.activeFocus ? 2 : 0
-
+                        border.width: (manualKeyInput.activeFocus || (isWizFocused(0) && wizard.showManualInput)) ? 3 : 0
                         Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         TextInput {
@@ -745,8 +1018,10 @@ Rectangle {
                         Layout.preferredHeight: 36
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.12)
-                        border.width: 1
+                        border.color: (isWizFocused(1) && wizard.showManualInput)
+                                      ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.12)
+                        border.width: (isWizFocused(1) && wizard.showManualInput) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: retryDetectLabel
@@ -779,12 +1054,14 @@ Rectangle {
                     Item { Layout.fillWidth: true }
 
                     Rectangle {
+                        property int myIdx: wizard.showManualInput ? 2 : 1
                         Layout.preferredWidth: backStep2Label.width + 32
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
+                        border.color: isWizFocused(myIdx) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                        border.width: isWizFocused(myIdx) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: backStep2Label
@@ -804,13 +1081,15 @@ Rectangle {
 
                     // Skip button
                     Rectangle {
+                        property int myIdx: wizard.showManualInput ? 3 : 2
                         visible: !GameManager.hasSteamApiKey() || GameManager.getSteamApiKey() === "__setup_pending__"
                         Layout.preferredWidth: skipApiLabel.width + 32
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.08)
-                        border.width: 1
+                        border.color: isWizFocused(myIdx) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.08)
+                        border.width: isWizFocused(myIdx) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: skipApiLabel
@@ -867,6 +1146,10 @@ Rectangle {
                     Layout.preferredHeight: 44
                     radius: 8
                     color: ThemeManager.getColor("primary")
+                    border.color: isWizFocused(0) && wizard.steamCmdPromptType === "" && !wizard.steamCmdWaiting
+                                  ? ThemeManager.getColor("focus") : "transparent"
+                    border.width: isWizFocused(0) && wizard.steamCmdPromptType === "" && !wizard.steamCmdWaiting ? 3 : 0
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
 
                     Text {
                         id: startLoginLabel
@@ -889,7 +1172,7 @@ Rectangle {
                     }
                 }
 
-                // Waiting spinner text (only shown before password prompt, not after)
+                // Waiting spinner text
                 Text {
                     visible: wizard.steamCmdWaiting && wizard.steamCmdPromptType === "" && !wizard.steamCmdAwaitingGuard && !wizard.steamCmdVerifyingGuard
                     text: "Starting SteamCMD..."
@@ -949,9 +1232,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: ThemeManager.getColor("hover")
-                        border.color: setupCredInput.activeFocus
+                        border.color: (setupCredInput.activeFocus || (isWizFocused(0) && wizard.steamCmdPromptType === "password"))
                                       ? ThemeManager.getColor("focus") : "transparent"
-                        border.width: setupCredInput.activeFocus ? 2 : 0
+                        border.width: (setupCredInput.activeFocus || (isWizFocused(0) && wizard.steamCmdPromptType === "password")) ? 3 : 0
                         Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         TextInput {
@@ -970,7 +1253,6 @@ Rectangle {
                                     GameManager.provideSteamCmdSetupCredential(text)
                                     text = ""
                                     if (wizard.steamCmdPromptType === "password") {
-                                        // After password, show "approve on your phone" message
                                         wizard.steamCmdPromptType = ""
                                         wizard.steamCmdAwaitingGuard = true
                                         wizard.steamCmdWaiting = false
@@ -996,6 +1278,10 @@ Rectangle {
                         Layout.preferredHeight: 40
                         radius: 8
                         color: ThemeManager.getColor("primary")
+                        border.color: (isWizFocused(1) && wizard.steamCmdPromptType === "password")
+                                      ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: (isWizFocused(1) && wizard.steamCmdPromptType === "password") ? 3 : 0
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: submitPassLabel
@@ -1014,7 +1300,6 @@ Rectangle {
                                 if (setupCredInput.text.length > 0) {
                                     GameManager.provideSteamCmdSetupCredential(setupCredInput.text)
                                     setupCredInput.text = ""
-                                    // After password, show "approve on your phone" message
                                     wizard.steamCmdPromptType = ""
                                     wizard.steamCmdAwaitingGuard = true
                                     wizard.steamCmdWaiting = false
@@ -1094,9 +1379,9 @@ Rectangle {
                             Layout.preferredHeight: 44
                             radius: 8
                             color: ThemeManager.getColor("hover")
-                            border.color: guardCodeInput.activeFocus
+                            border.color: (guardCodeInput.activeFocus || (isWizFocused(0) && wizard.steamCmdPromptType === "steamguard"))
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: guardCodeInput.activeFocus ? 2 : 0
+                            border.width: (guardCodeInput.activeFocus || (isWizFocused(0) && wizard.steamCmdPromptType === "steamguard")) ? 3 : 0
                             Behavior on border.color { ColorAnimation { duration: 150 } }
 
                             TextInput {
@@ -1108,7 +1393,6 @@ Rectangle {
                                 font.family: "monospace"
                                 color: ThemeManager.getColor("textPrimary")
                                 clip: true
-                                focus: wizard.steamCmdPromptType === "steamguard"
                                 onAccepted: {
                                     if (text.length > 0) {
                                         GameManager.provideSteamCmdSetupCredential(text)
@@ -1137,6 +1421,10 @@ Rectangle {
                             Layout.preferredHeight: 44
                             radius: 8
                             color: ThemeManager.getColor("primary")
+                            border.color: (isWizFocused(1) && wizard.steamCmdPromptType === "steamguard")
+                                          ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: (isWizFocused(1) && wizard.steamCmdPromptType === "steamguard") ? 3 : 0
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 id: submitGuardLabel
@@ -1185,12 +1473,21 @@ Rectangle {
                     Item { Layout.fillWidth: true }
 
                     Rectangle {
+                        // Back index depends on the current sub-state
+                        property int myIdx: {
+                            if (wizard.steamCmdPromptType === "password" || wizard.steamCmdPromptType === "steamguard")
+                                return 2
+                            if (wizard.steamCmdPromptType === "" && !wizard.steamCmdWaiting && !wizard.steamCmdAwaitingGuard && !wizard.steamCmdVerifyingGuard)
+                                return 1
+                            return 0  // Waiting states
+                        }
                         Layout.preferredWidth: backStep3Label.width + 32
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
+                        border.color: isWizFocused(myIdx) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                        border.width: isWizFocused(myIdx) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: backStep3Label
@@ -1214,12 +1511,20 @@ Rectangle {
                     }
 
                     Rectangle {
+                        property int myIdx: {
+                            if (wizard.steamCmdPromptType === "password" || wizard.steamCmdPromptType === "steamguard")
+                                return 3
+                            if (wizard.steamCmdPromptType === "" && !wizard.steamCmdWaiting && !wizard.steamCmdAwaitingGuard && !wizard.steamCmdVerifyingGuard)
+                                return 2
+                            return 1  // Waiting states
+                        }
                         Layout.preferredWidth: skipCmdLabel.width + 32
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.08)
-                        border.width: 1
+                        border.color: isWizFocused(myIdx) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.08)
+                        border.width: isWizFocused(myIdx) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: skipCmdLabel
@@ -1280,6 +1585,9 @@ Rectangle {
                         Layout.preferredHeight: 48
                         radius: 8
                         color: ThemeManager.getColor("primary")
+                        border.color: isWizFocused(0) ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: isWizFocused(0) ? 3 : 0
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: doneLabel
@@ -1308,9 +1616,6 @@ Rectangle {
     }
 
     // ── Embedded browser for Steam API key page ──
-    // Loads the Steam API key page inside Luna UI. A JS timer polls
-    // the DOM for the 32-char hex key. When found, the confirmation
-    // overlay appears directly on top — no window management needed.
     Rectangle {
         id: apiKeyBrowser
         visible: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
@@ -1346,8 +1651,9 @@ Rectangle {
                 height: 34
                 radius: 8
                 color: "transparent"
-                border.color: Qt.rgba(1, 1, 1, 0.15)
-                border.width: 1
+                border.color: isBrowserBtnFocused() ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                border.width: isBrowserBtnFocused() ? 3 : 1
+                Behavior on border.color { ColorAnimation { duration: 150 } }
 
                 Text {
                     id: manualEntryLabel
@@ -1386,7 +1692,6 @@ Rectangle {
             }
         }
 
-        // Poll the page for a 32-char hex API key every 2 seconds
         Timer {
             id: apiKeyPollTimer
             interval: 2000
@@ -1406,6 +1711,7 @@ Rectangle {
                             apiKeyPollTimer.stop()
                             apiKeyConfirmOverlay.overlayKey = result
                             apiKeyConfirmOverlay.visible = true
+                            wizard.overlayFocusIdx = 0
                         }
                     }
                 )
@@ -1414,8 +1720,6 @@ Rectangle {
     }
 
     // ── API Key confirmation overlay ──
-    // Appears on top of the embedded browser when a key is detected.
-    // The browser stays visible behind the semi-transparent backdrop.
     Rectangle {
         id: apiKeyConfirmOverlay
         visible: false
@@ -1486,6 +1790,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: ThemeManager.getColor("accent")
+                        border.color: isOverlayFocused(0) ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: isOverlayFocused(0) ? 3 : 0
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             anchors.centerIn: parent
@@ -1514,8 +1821,9 @@ Rectangle {
                         Layout.preferredHeight: 44
                         radius: 8
                         color: "transparent"
-                        border.color: Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
+                        border.color: isOverlayFocused(1) ? ThemeManager.getColor("focus") : Qt.rgba(1, 1, 1, 0.15)
+                        border.width: isOverlayFocused(1) ? 3 : 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             anchors.centerIn: parent
@@ -1538,6 +1846,46 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // ─── Virtual Keyboard for Wizard Text Inputs ───
+    VirtualKeyboard {
+        id: wizardVirtualKeyboard
+        anchors.fill: parent
+
+        onAccepted: function(typedText) {
+            // Route typed text to the correct input based on current state
+            if (wizard.currentStep === 2 && wizard.showManualInput) {
+                manualKeyInput.text = typedText
+                if (typedText.trim().length >= 20) {
+                    GameManager.setSteamApiKey(typedText.trim())
+                    wizard.currentStep = 3
+                }
+            } else if (wizard.currentStep === 3 && wizard.steamCmdPromptType === "password") {
+                setupCredInput.text = typedText
+                if (typedText.length > 0) {
+                    GameManager.provideSteamCmdSetupCredential(typedText)
+                    setupCredInput.text = ""
+                    wizard.steamCmdPromptType = ""
+                    wizard.steamCmdAwaitingGuard = true
+                    wizard.steamCmdWaiting = false
+                }
+            } else if (wizard.currentStep === 3 && wizard.steamCmdPromptType === "steamguard") {
+                guardCodeInput.text = typedText
+                if (typedText.length > 0) {
+                    GameManager.provideSteamCmdSetupCredential(typedText)
+                    guardCodeInput.text = ""
+                    wizard.steamCmdPromptType = ""
+                    wizard.steamCmdWaiting = true
+                    wizard.steamCmdVerifyingGuard = true
+                }
+            }
+            wizard.forceActiveFocus()
+        }
+
+        onCancelled: {
+            wizard.forceActiveFocus()
         }
     }
 }
