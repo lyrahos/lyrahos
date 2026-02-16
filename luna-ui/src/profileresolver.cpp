@@ -1,4 +1,5 @@
 #include "profileresolver.h"
+#include <SDL2/SDL.h>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QJsonDocument>
