@@ -633,11 +633,12 @@ Item {
                             color: currentSort === modelData.value
                                    ? ThemeManager.getColor("primary")
                                    : ThemeManager.getColor("surface")
-                            border.color: (sortChipArea.containsMouse || isKbFocused) && currentSort !== modelData.value
+                            border.color: (sortChipArea.containsMouse || isKbFocused)
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (sortChipArea.containsMouse || isKbFocused) && currentSort !== modelData.value ? 2 : 0
+                            border.width: (sortChipArea.containsMouse || isKbFocused) ? 3 : 0
 
                             Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 id: sortChipText
@@ -731,7 +732,8 @@ Item {
                             color: ThemeManager.getColor("surface")
                             border.color: (backBtnArea.containsMouse || isKbFocused)
                                           ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (backBtnArea.containsMouse || isKbFocused) ? 2 : 0
+                            border.width: (backBtnArea.containsMouse || isKbFocused) ? 3 : 0
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
 
                             Text {
                                 id: backLabel
@@ -1459,6 +1461,7 @@ Item {
                         border.width: (loadMoreArea.containsMouse || isKbFocused) ? 3 : 2
 
                         Behavior on color { ColorAnimation { duration: 200 } }
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
                         Text {
                             id: loadMoreLabel
