@@ -6,6 +6,7 @@ include = [
     "kernel-core",
     "kernel-modules",
     "kernel-modules-core",
+    "kernel-modules-extra",
     "grub2-efi-x64",
     "grub2-efi-x64-modules",
     "efibootmgr",

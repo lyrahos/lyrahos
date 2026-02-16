@@ -365,7 +365,7 @@ jobs:
           # or kernel-modules for the old version are no longer available.
           # The "Sync ISO boot kernel" step later replaces the ISO's vmlinuz and
           # initramfs with the installed version, so the boot kernel always matches.
-          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core kernel-devel"
+          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core kernel-modules-extra kernel-devel"
           echo "Installing latest kernel from repos (Sync step will update ISO boot files)"
 
           docker run --rm \
