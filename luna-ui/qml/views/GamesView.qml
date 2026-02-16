@@ -1908,6 +1908,17 @@ Rectangle {
             launchOverlay.errorMessage = ""
             launchOverlay.visible = true
             launchDismissTimer.start()
+
+            // Load game-specific controller profile context
+            var game = GameManager.getGameById(gameId)
+            if (game) {
+                ControllerManager.setGameContext(game.storeSource || "", gameId)
+            }
+        }
+
+        function onGameExited(gameId) {
+            // Revert to UI navigation controller profile
+            ControllerManager.clearGameContext()
         }
 
         function onGameLaunchError(gameId, gameTitle, error) {

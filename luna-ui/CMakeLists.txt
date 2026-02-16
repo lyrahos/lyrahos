@@ -15,6 +15,7 @@ qt_add_executable(luna-ui
     src/gamemanager.cpp
     src/database.cpp
     src/controllermanager.cpp
+    src/profileresolver.cpp
     src/thememanager.cpp
     src/artworkmanager.cpp
     src/storebackends/steambackend.cpp
@@ -55,6 +56,7 @@ qt_add_qml_module(luna-ui
         qml/components/GameStorePage.qml
         qml/components/StoreGameCard.qml
         qml/components/GameStoreDetailPopup.qml
+        qml/components/ControllerProfileEditor.qml
 )
 
 target_link_libraries(luna-ui PRIVATE
