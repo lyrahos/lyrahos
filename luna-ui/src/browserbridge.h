@@ -75,7 +75,7 @@ private:
 
     void discoverTarget();
     void injectNavigationScript();
-    int sendCdpCommand(const QString &method, const QJsonObject &params = {});
+    int sendCdpCommand(const QString &method, const QJsonObject &params = QJsonObject());
     void handleCdpEvent(const QJsonObject &msg);
     void handleCdpResult(int id, const QJsonObject &result);
 
