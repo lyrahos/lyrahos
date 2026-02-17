@@ -1450,6 +1450,7 @@ void GameManager::openApiKeyInBrowser() {
             m_apiKeyBrowserPid = pid;
             m_apiKeyBrowserType = b.bin;
             qDebug() << "Opened API key page with" << b.bin << "(kiosk" << geom << ", pid:" << pid << ")";
+            emit browserOpened();
             return;
         }
     }
@@ -1459,12 +1460,14 @@ void GameManager::openApiKeyInBrowser() {
     QProcess::startDetached("xdg-open", QStringList() << url, QString(), &pid);
     m_apiKeyBrowserPid = pid;
     qDebug() << "Opened API key page with xdg-open (pid:" << pid << ")";
+    emit browserOpened();
 }
 
 void GameManager::closeApiKeyBrowser() {
     // Delegate to the force-close implementation which uses SIGTERM,
     // falls back to SIGKILL, and waits for all browser processes to die.
     forceCloseApiKeyBrowser();
+    emit browserClosed();
 }
 
 void GameManager::forceCloseApiKeyBrowser() {

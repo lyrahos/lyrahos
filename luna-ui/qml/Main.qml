@@ -94,5 +94,17 @@ ApplicationWindow {
                 }
             }
         }
+
+        // ─── Browser Controller Overlay ───
+        // Shown when an external browser is launched (e.g. for Steam API key).
+        // Captures controller input and relays it to the browser via CDP.
+        BrowserOverlay {
+            id: browserOverlay
+            onClosed: {
+                BrowserBridge.setActive(false)
+                GameManager.closeApiKeyBrowser()
+                root.enterNav()
+            }
+        }
     }
 }
