@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components"
 
 Rectangle {
     id: settingsRoot
@@ -10,11 +11,17 @@ Rectangle {
     signal requestNavFocus()
 
     // Controller / keyboard row navigation
-    // 0 = Wi-Fi, 1 = Bluetooth, 2 = Audio, 3 = Switch to Desktop,
-    // 4 = Log Out, 5 = Theme
+    // 0 = Wi-Fi, 1 = Bluetooth, 2 = Audio, 3 = Controller,
+    // 4 = Switch to Desktop, 5 = Log Out, 6 = Theme
     property int focusedRow: 0
     property int hoveredRow: -1
-    readonly property int rowCount: 6
+    readonly property int rowCount: 7
+
+    // Controller profile editor state
+    property bool controllerEditorOpen: false
+    property int editingProfileId: -1
+    property string editingProfileName: ""
+    property bool editingProfileIsDefault: false
 
     // "rows" = navigating between settings rows
     // "expanded" = navigating inside an expanded WiFi/BT/Audio panel
@@ -35,6 +42,11 @@ Rectangle {
     }
 
     Keys.onPressed: function(event) {
+        // VirtualKeyboard handles its own keys
+        if (settingsVirtualKeyboard.visible) {
+            event.accepted = true
+            return
+        }
         if (focusMode === "rows") {
             handleRowKeys(event)
         } else if (focusMode === "expanded") {
@@ -75,6 +87,7 @@ Rectangle {
             if (focusedRow === 0) handleWifiExpandedKeys(event)
             else if (focusedRow === 1) handleBtExpandedKeys(event)
             else if (focusedRow === 2) handleAudioExpandedKeys(event)
+            else if (focusedRow === 3) handleControllerExpandedKeys(event)
             break
         }
     }
@@ -114,7 +127,8 @@ Rectangle {
                         wifiStatus = "Connecting to " + net.ssid + "..."
                         GameManager.connectToWifi(net.ssid, "")
                     } else {
-                        settingsWifiPasswordField.forceActiveFocus()
+                        settingsVirtualKeyboard.placeholderText = "Enter WiFi password..."
+                        settingsVirtualKeyboard.open("", true)
                     }
                 }
             }
@@ -249,9 +263,21 @@ Rectangle {
                 focusMode = "expanded"
             }
             break
-        case 3: switchToDesktop(); break
-        case 4: GameManager.logout(); break
-        // case 5: theme — placeholder, no action yet
+        case 3:
+            // Controller — expand to show profile list
+            if (!controllerExpanded) {
+                controllerExpanded = true
+                refreshControllerProfiles()
+                controllerFocusIndex = 0
+                focusMode = "expanded"
+            } else {
+                controllerFocusIndex = 0
+                focusMode = "expanded"
+            }
+            break
+        case 4: switchToDesktop(); break
+        case 5: GameManager.logout(); break
+        // case 6: theme — placeholder, no action yet
         }
     }
 
@@ -277,6 +303,57 @@ Rectangle {
     property string currentAudioInput: ""
     property var audioOutputDevices: []
     property var audioInputDevices: []
+
+    // Controller state
+    property bool controllerExpanded: false
+    property int controllerFocusIndex: 0
+    property var controllerProfiles: []
+
+    function refreshControllerProfiles() {
+        controllerProfiles = ProfileResolver.getProfiles()
+    }
+
+    // Controller expanded navigation
+    function handleControllerExpandedKeys(event) {
+        var count = controllerProfiles.length
+        switch (event.key) {
+        case Qt.Key_Up:
+            if (controllerFocusIndex > 0) controllerFocusIndex--
+            else exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Down:
+            if (controllerFocusIndex < count - 1) controllerFocusIndex++
+            event.accepted = true
+            break
+        case Qt.Key_Left:
+            exitExpanded()
+            event.accepted = true
+            break
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            if (count > 0 && controllerFocusIndex >= 0 && controllerFocusIndex < count) {
+                var profile = controllerProfiles[controllerFocusIndex]
+                openProfileEditor(profile.id, profile.name, profile.isDefault)
+            }
+            event.accepted = true
+            break
+        }
+    }
+
+    function openProfileEditor(profileId, name, isDefault) {
+        editingProfileId = profileId
+        editingProfileName = name
+        editingProfileIsDefault = isDefault
+        controllerEditorOpen = true
+    }
+
+    function closeProfileEditor() {
+        controllerEditorOpen = false
+        editingProfileId = -1
+        refreshControllerProfiles()
+        settingsRoot.forceActiveFocus()
+    }
 
     Component.onCompleted: {
         refreshWifiStatus()
@@ -753,7 +830,8 @@ Rectangle {
                                         wifiStatus = "Connecting to " + model.ssid + "..."
                                         GameManager.connectToWifi(model.ssid, "")
                                     } else {
-                                        settingsWifiPasswordField.forceActiveFocus()
+                                        settingsVirtualKeyboard.placeholderText = "Enter WiFi password..."
+                                        settingsVirtualKeyboard.open("", true)
                                     }
                                 }
                             }
@@ -1520,15 +1598,345 @@ Rectangle {
             }
         }
 
+        // ── Controller Section ──
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: controllerCol.height + 32
+            radius: 12
+            color: ThemeManager.getColor("surface")
+            border.color: (focusedRow === 3 || hoveredRow === 3)
+                          ? ThemeManager.getColor("focus") : "transparent"
+            border.width: (focusedRow === 3 || hoveredRow === 3) ? 2 : 0
+
+            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                z: -1
+                onEntered: { hoveredRow = 3; focusedRow = 3; settingsRoot.forceActiveFocus() }
+                onExited: hoveredRow = -1
+                onClicked: { focusedRow = 3; activateRow(3) }
+            }
+
+            ColumnLayout {
+                id: controllerCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 16
+                spacing: 12
+
+                // Header row
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Text {
+                            text: "Controller"
+                            font.pixelSize: ThemeManager.getFontSize("medium")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        Text {
+                            text: ControllerManager.controllerConnected
+                                  ? ControllerManager.controllerName + " (" + ControllerManager.controllerFamily + ")"
+                                  : "No controller connected"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ControllerManager.controllerConnected
+                                   ? ThemeManager.getColor("accent")
+                                   : ThemeManager.getColor("textSecondary")
+                        }
+                    }
+
+                    // Expand/collapse arrow
+                    Rectangle {
+                        Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        radius: 20
+                        color: expandControllerArea.containsMouse
+                               ? ThemeManager.getColor("hover")
+                               : "transparent"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: controllerExpanded ? "v" : ">"
+                            font.pixelSize: 18
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        MouseArea {
+                            id: expandControllerArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                controllerExpanded = !controllerExpanded
+                                if (controllerExpanded) refreshControllerProfiles()
+                            }
+                        }
+                    }
+                }
+
+                // ── Expanded controller profile list ──
+                ColumnLayout {
+                    visible: controllerExpanded && !controllerEditorOpen
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    // Section headers for profile categories
+                    Text {
+                        text: "Profiles"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textSecondary")
+                    }
+
+                    // Profile list
+                    ListView {
+                        id: controllerProfileList
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(controllerProfiles.length * 60, 420)
+                        clip: true
+                        spacing: 4
+                        model: controllerProfiles
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+
+                            property bool isKbFocused: focusMode === "expanded" && focusedRow === 3
+                                                       && controllerFocusIndex === index
+
+                            width: controllerProfileList.width
+                            height: 56
+                            radius: 10
+                            color: (controllerItemArea.containsMouse || isKbFocused)
+                                   ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                             ThemeManager.getColor("primary").g,
+                                             ThemeManager.getColor("primary").b, 0.15)
+                                   : ThemeManager.getColor("hover")
+                            border.color: (controllerItemArea.containsMouse || isKbFocused)
+                                          ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: (controllerItemArea.containsMouse || isKbFocused) ? 2 : 0
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 12
+
+                                // Profile scope icon
+                                Rectangle {
+                                    Layout.preferredWidth: 36
+                                    Layout.preferredHeight: 36
+                                    radius: 8
+                                    color: Qt.rgba(ThemeManager.getColor("primary").r,
+                                                   ThemeManager.getColor("primary").g,
+                                                   ThemeManager.getColor("primary").b, 0.15)
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: {
+                                            var scope = modelData.scope
+                                            if (scope === "global") return "G"
+                                            if (scope === "family") return "F"
+                                            if (scope === "client") return "C"
+                                            if (scope === "game") return "#"
+                                            return "?"
+                                        }
+                                        font.pixelSize: 14
+                                        font.bold: true
+                                        color: ThemeManager.getColor("primary")
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    Text {
+                                        text: modelData.name
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: ThemeManager.getColor("textPrimary")
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Text {
+                                        text: {
+                                            var parts = []
+                                            parts.push(modelData.scope)
+                                            if (modelData.controllerFamily && modelData.controllerFamily !== "any")
+                                                parts.push(modelData.controllerFamily)
+                                            if (modelData.isDefault) parts.push("built-in")
+                                            return parts.join(" · ")
+                                        }
+                                        font.pixelSize: 12
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                    }
+                                }
+
+                                // Default badge
+                                Rectangle {
+                                    visible: modelData.isDefault
+                                    Layout.preferredWidth: defaultLabel.width + 16
+                                    Layout.preferredHeight: 24
+                                    radius: 12
+                                    color: Qt.rgba(ThemeManager.getColor("accent").r,
+                                                   ThemeManager.getColor("accent").g,
+                                                   ThemeManager.getColor("accent").b, 0.15)
+
+                                    Text {
+                                        id: defaultLabel
+                                        anchors.centerIn: parent
+                                        text: "Default"
+                                        font.pixelSize: 11
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("accent")
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: controllerItemArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    openProfileEditor(modelData.id, modelData.name, modelData.isDefault)
+                                }
+                            }
+
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
+                        }
+                    }
+
+                    // Create new profile button
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 10
+                        color: newProfileArea.containsMouse
+                               ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                         ThemeManager.getColor("primary").g,
+                                         ThemeManager.getColor("primary").b, 0.15)
+                               : ThemeManager.getColor("hover")
+                        border.color: newProfileArea.containsMouse
+                                      ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: newProfileArea.containsMouse ? 1 : 0
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "+ Create Custom Profile"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("primary")
+                        }
+
+                        MouseArea {
+                            id: newProfileArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                var id = ProfileResolver.createProfile(
+                                    "Custom Profile", "global",
+                                    ControllerManager.controllerFamily || "any")
+                                if (id > 0) {
+                                    refreshControllerProfiles()
+                                    openProfileEditor(id, "Custom Profile", false)
+                                }
+                            }
+                        }
+                    }
+                    // Export all profiles button
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 10
+                        color: exportArea.containsMouse
+                               ? Qt.rgba(ThemeManager.getColor("secondary").r,
+                                         ThemeManager.getColor("secondary").g,
+                                         ThemeManager.getColor("secondary").b, 0.15)
+                               : ThemeManager.getColor("hover")
+                        border.color: exportArea.containsMouse
+                                      ? ThemeManager.getColor("secondary") : "transparent"
+                        border.width: exportArea.containsMouse ? 1 : 0
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Export All Profiles to ~/.config/luna-ui/profiles/"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("secondary")
+                        }
+
+                        MouseArea {
+                            id: exportArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                ProfileResolver.exportAllProfiles()
+                                exportStatus.visible = true
+                                exportStatusTimer.restart()
+                            }
+                        }
+                    }
+
+                    // Export status message
+                    Text {
+                        id: exportStatus
+                        visible: false
+                        text: "Profiles exported successfully"
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("accent")
+
+                        Timer {
+                            id: exportStatusTimer
+                            interval: 3000
+                            onTriggered: exportStatus.visible = false
+                        }
+                    }
+                }
+
+                // ── Embedded profile editor ──
+                ControllerProfileEditor {
+                    visible: controllerExpanded && controllerEditorOpen
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 600
+                    profileId: editingProfileId
+                    profileName: editingProfileName
+                    isDefault: editingProfileIsDefault
+                    onBackRequested: closeProfileEditor()
+                }
+            }
+        }
+
         // ── Switch to Desktop Mode ──
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: (switchArea.containsMouse || focusedRow === 3 || hoveredRow === 3)
+            border.color: (switchArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: (switchArea.containsMouse || focusedRow === 3 || hoveredRow === 3) ? 2 : 0
+            border.width: (switchArea.containsMouse || focusedRow === 4 || hoveredRow === 4) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -1577,7 +1985,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onEntered: { focusedRow = 3; settingsRoot.forceActiveFocus() }
+                onEntered: { focusedRow = 4; settingsRoot.forceActiveFocus() }
                 onClicked: switchToDesktop()
             }
 
@@ -1590,9 +1998,9 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
+            border.color: (logoutArea.containsMouse || focusedRow === 5 || hoveredRow === 5)
                           ? "#ff6b6b" : "transparent"
-            border.width: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4) ? 2 : 0
+            border.width: (logoutArea.containsMouse || focusedRow === 5 || hoveredRow === 5) ? 2 : 0
 
             RowLayout {
                 anchors.fill: parent
@@ -1624,7 +2032,7 @@ Rectangle {
                     Layout.preferredHeight: 40
                     Layout.alignment: Qt.AlignVCenter
                     radius: 20
-                    color: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
+                    color: (logoutArea.containsMouse || focusedRow === 5 || hoveredRow === 5)
                            ? "#ff6b6b" : Qt.rgba(1, 0.42, 0.42, 0.15)
 
                     Text {
@@ -1632,7 +2040,7 @@ Rectangle {
                         text: "\u23FB"
                         font.pixelSize: 18
                         font.bold: true
-                        color: (logoutArea.containsMouse || focusedRow === 4 || hoveredRow === 4)
+                        color: (logoutArea.containsMouse || focusedRow === 5 || hoveredRow === 5)
                                ? "white" : "#ff6b6b"
                     }
 
@@ -1645,7 +2053,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onEntered: { focusedRow = 4; settingsRoot.forceActiveFocus() }
+                onEntered: { focusedRow = 5; settingsRoot.forceActiveFocus() }
                 onClicked: GameManager.logout()
             }
 
@@ -1658,17 +2066,17 @@ Rectangle {
             Layout.preferredHeight: 72
             radius: 12
             color: ThemeManager.getColor("surface")
-            border.color: (focusedRow === 5 || hoveredRow === 5)
+            border.color: (focusedRow === 6 || hoveredRow === 6)
                           ? ThemeManager.getColor("focus") : "transparent"
-            border.width: (focusedRow === 5 || hoveredRow === 5) ? 2 : 0
+            border.width: (focusedRow === 6 || hoveredRow === 6) ? 2 : 0
 
             MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
                 z: -1
-                onEntered: { hoveredRow = 5; focusedRow = 5; settingsRoot.forceActiveFocus() }
+                onEntered: { hoveredRow = 6; focusedRow = 6; settingsRoot.forceActiveFocus() }
                 onExited: hoveredRow = -1
-                onClicked: { focusedRow = 5; activateRow(5) }
+                onClicked: { focusedRow = 6; activateRow(6) }
             }
 
             RowLayout {
@@ -1698,5 +2106,26 @@ Rectangle {
 
     function switchToDesktop() {
         GameManager.switchToDesktop()
+    }
+
+    // ─── Virtual Keyboard for WiFi password ───
+    VirtualKeyboard {
+        id: settingsVirtualKeyboard
+        anchors.fill: parent
+        z: 1000
+
+        onAccepted: function(text) {
+            // Use the entered text as WiFi password
+            settingsWifiPasswordField.text = text
+            if (text.length > 0 && !wifiConnecting) {
+                wifiConnecting = true
+                wifiStatus = "Connecting to " + selectedSsid + "..."
+                GameManager.connectToWifi(selectedSsid, text)
+            }
+            settingsRoot.forceActiveFocus()
+        }
+        onCancelled: {
+            settingsRoot.forceActiveFocus()
+        }
     }
 }

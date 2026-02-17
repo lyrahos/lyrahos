@@ -1,4 +1,4 @@
--- Lyrah OS Luna UI Game Library Database
+-- Lyrah OS Luna UI Game Library & Controller Profile Database
 
 CREATE TABLE IF NOT EXISTS games (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +28,37 @@ CREATE TABLE IF NOT EXISTS game_sessions (
     duration_minutes INTEGER DEFAULT 0,
     FOREIGN KEY (game_id) REFERENCES games(id)
 );
+
+-- ── Controller Profile System ──────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS controller_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                  -- User-facing profile name
+    scope TEXT NOT NULL,                 -- 'global', 'family', 'client', 'game'
+    controller_family TEXT DEFAULT 'any', -- 'xbox', 'playstation', 'switch', 'luna', 'generic', 'any'
+    client_id TEXT,                      -- 'steam', 'epic', 'gog', 'lutris', 'custom' (NULL for non-client)
+    game_id INTEGER,                     -- FK to games(id) (NULL for non-game)
+    is_default BOOLEAN DEFAULT 0,        -- Read-only built-in default
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_scope
+    ON controller_profiles(scope, controller_family, client_id, game_id);
+
+CREATE TABLE IF NOT EXISTS controller_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,         -- FK to controller_profiles(id)
+    physical_input TEXT NOT NULL,         -- SDL positional: 'button_south', 'trigger_left', etc.
+    action TEXT NOT NULL,                 -- Semantic: 'confirm', 'back', 'navigate_up', etc.
+    parameters TEXT,                      -- JSON: {"deadzone": 8000, "threshold": 16000}
+    FOREIGN KEY (profile_id) REFERENCES controller_profiles(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mapping_input
+    ON controller_mappings(profile_id, physical_input);
+
+-- ── Full-Text Search ──────────────────────────────────────────────────
 
 -- FIX #6: SQLite does not support CREATE TRIGGER IF NOT EXISTS.
 -- Use DROP TRIGGER IF EXISTS + CREATE TRIGGER instead.

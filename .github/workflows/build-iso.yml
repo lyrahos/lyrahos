@@ -365,7 +365,7 @@ jobs:
           # or kernel-modules for the old version are no longer available.
           # The "Sync ISO boot kernel" step later replaces the ISO's vmlinuz and
           # initramfs with the installed version, so the boot kernel always matches.
-          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core kernel-devel"
+          KERNEL_PKGS="kernel-core kernel-modules kernel-modules-core kernel-modules-extra kernel-devel"
           echo "Installing latest kernel from repos (Sync step will update ISO boot files)"
 
           docker run --rm \
@@ -707,6 +707,10 @@ jobs:
           # on startup; placing it in /etc/skel gives every new user the defaults.
           sudo mkdir -p squashfs-root/etc/skel/.config
           sudo cp configs/common/brave-flags.conf squashfs-root/etc/skel/.config/brave-flags.conf
+
+          # Luna controller udev rule (proper identification over xpad)
+          sudo mkdir -p squashfs-root/etc/udev/rules.d
+          sudo cp configs/common/71-luna-controller.rules squashfs-root/etc/udev/rules.d/
 
           # Logrotate
           sudo mkdir -p squashfs-root/etc/logrotate.d

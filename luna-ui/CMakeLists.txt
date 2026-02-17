@@ -15,6 +15,7 @@ qt_add_executable(luna-ui
     src/gamemanager.cpp
     src/database.cpp
     src/controllermanager.cpp
+    src/profileresolver.cpp
     src/thememanager.cpp
     src/artworkmanager.cpp
     src/storebackends/steambackend.cpp
@@ -55,6 +56,8 @@ qt_add_qml_module(luna-ui
         qml/components/GameStorePage.qml
         qml/components/StoreGameCard.qml
         qml/components/GameStoreDetailPopup.qml
+        qml/components/ControllerProfileEditor.qml
+        qml/components/VirtualKeyboard.qml
 )
 
 target_link_libraries(luna-ui PRIVATE
@@ -68,6 +71,7 @@ target_link_libraries(luna-ui PRIVATE
 )
 
 install(TARGETS luna-ui DESTINATION /usr/bin)
+install(FILES resources/gamecontrollerdb.txt DESTINATION /usr/share/luna-ui)
 install(DIRECTORY resources/themes DESTINATION /usr/share/luna-ui)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
     install(DIRECTORY resources/fonts DESTINATION /usr/share/luna-ui)

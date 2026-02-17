@@ -1,0 +1,13 @@
+# Game Controller DB for Luna UI
+# https://github.com/gabomdq/SDL_GameControllerDB
+#
+# Mappings listed here supplement SDL2's built-in database.
+# The "hint:SDL_GAMECONTROLLER_TYPE=..." field tells SDL2 the true
+# controller type so SDL_GameControllerGetType() returns the correct
+# enum instead of falling back to the xpad driver's Xbox identity.
+
+# Amazon Luna Controller (USB) — VID 0x1949 PID 0x0419
+03000000491900001904000011010000,Amazon Luna Controller,a:b0,b:b1,back:b6,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b8,leftshoulder:b4,leftstick:b9,lefttrigger:a2,leftx:a0,lefty:a1,misc1:b12,rightshoulder:b5,rightstick:b10,righttrigger:a5,rightx:a3,righty:a4,start:b7,hint:SDL_GAMECONTROLLER_TYPE=SDL_CONTROLLER_TYPE_AMAZON_LUNA,platform:Linux,
+
+# Amazon Luna Controller (Bluetooth) — VID 0x1949 PID 0x0419
+05000000491900001904000000000000,Amazon Luna Controller,a:b0,b:b1,back:b6,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b8,leftshoulder:b4,leftstick:b9,lefttrigger:a2,leftx:a0,lefty:a1,misc1:b12,rightshoulder:b5,rightstick:b10,righttrigger:a5,rightx:a3,righty:a4,start:b7,hint:SDL_GAMECONTROLLER_TYPE=SDL_CONTROLLER_TYPE_AMAZON_LUNA,platform:Linux,

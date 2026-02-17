@@ -28,6 +28,7 @@ int main(int argc, char *argv[]) {
     GameManager gameManager(&db);
     ControllerManager controllerManager;
     controllerManager.initialize();
+    controllerManager.setDatabase(&db);
     ArtworkManager artworkManager;
     StoreApiManager storeApiManager;
 
@@ -35,6 +36,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
     engine.rootContext()->setContextProperty("ControllerManager", &controllerManager);
+    engine.rootContext()->setContextProperty("ProfileResolver", controllerManager.profileResolver());
     engine.rootContext()->setContextProperty("ArtworkManager", &artworkManager);
     engine.rootContext()->setContextProperty("StoreApi", &storeApiManager);
 
