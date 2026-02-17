@@ -2,6 +2,7 @@
 #define BROWSERBRIDGE_H
 
 #include <QObject>
+#include <QJsonObject>
 #include <QWebSocket>
 #include <QNetworkAccessManager>
 #include <QTimer>
