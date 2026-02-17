@@ -46,6 +46,8 @@ Rectangle {
             event.accepted = true
             return
         }
+        // Setup wizard handles its own keys
+        if (steamSetupWizard.visible) return
         // Credential dialog navigation
         if (credentialDialog.visible) {
             handleCredDialogKeys(event)
