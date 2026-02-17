@@ -8,8 +8,8 @@ License:        MIT
 # Source tarball is created from the GitHub repository via spectool or Copr webhook
 Source0:        https://github.com/lyrah-os/lyrah-os/archive/v%{version}/%{name}-%{version}.tar.gz
 
-BuildRequires:  cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel SDL2-devel sqlite-devel
-Requires:       qt6-qtbase qt6-qtdeclarative SDL2 sqlite
+BuildRequires:  cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwebsockets-devel SDL2-devel sqlite-devel
+Requires:       qt6-qtbase qt6-qtdeclarative qt6-qtwebsockets SDL2 sqlite
 Requires:       google-noto-sans-fonts
 Requires:       xdotool
 
