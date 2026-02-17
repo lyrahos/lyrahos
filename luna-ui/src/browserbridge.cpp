@@ -94,6 +94,37 @@ void BrowserBridge::clearTextField() {
         {{"expression", "window.__lunaNav && window.__lunaNav.setText('')"}});
 }
 
+// ── Direct Action Handling ────────────────────────────────────────────
+// When the browser has window focus, Luna-UI's QML focus system can't
+// receive synthetic key events (focusObject() is null).  This slot
+// receives actions directly from ControllerManager::actionTriggered,
+// which fires regardless of window focus.
+
+void BrowserBridge::handleAction(const QString &action) {
+    if (!m_active || !m_connected) return;
+
+    // When VirtualKeyboard is showing (text field focused + Luna-UI raised),
+    // let the normal QML key handlers drive the VK.  Only intercept
+    // system_menu to allow closing the browser from VK mode.
+    if (m_textFieldFocused) {
+        if (action == "system_menu") emit browserClosed();
+        return;
+    }
+
+    if (action == "navigate_up")         navigate("up");
+    else if (action == "navigate_down")  navigate("down");
+    else if (action == "navigate_left")  navigate("left");
+    else if (action == "navigate_right") navigate("right");
+    else if (action == "confirm")        confirmElement();
+    else if (action == "back")           goBack();
+    else if (action == "scroll_up")      scrollPage("up");
+    else if (action == "scroll_down")    scrollPage("down");
+    else if (action == "system_menu") {
+        // System menu button closes browser and returns to Luna-UI
+        emit browserClosed();
+    }
+}
+
 // ── Connection Logic ─────────────────────────────────────────────────
 
 void BrowserBridge::attemptConnection() {
@@ -240,6 +271,8 @@ void BrowserBridge::handleCdpEvent(const QJsonObject &msg) {
                 bool wasFocused = m_textFieldFocused;
                 m_textFieldFocused = true;
                 if (!wasFocused) emit textFieldFocusedChanged();
+                // Raise Luna-UI's window so the VirtualKeyboard is visible
+                emit raiseRequested();
                 emit textInputRequested(
                     data["value"].toString(),
                     data["isPassword"].toBool());
