@@ -52,6 +52,16 @@ ApplicationWindow {
             }
         }
 
+        // D-Pad Left fallback: if a content view doesn't consume the Left
+        // key (e.g. already at the left edge of a grid, or a view with no
+        // horizontal navigation), navigate back to the sidebar.
+        Keys.onLeftPressed: function(event) {
+            if (root.focusZone === "content") {
+                root.enterNav()
+                event.accepted = true
+            }
+        }
+
         RowLayout {
             anchors.fill: parent
             spacing: 0
@@ -82,6 +92,18 @@ ApplicationWindow {
                         root.enterContent()
                     }
                 }
+            }
+        }
+
+        // ─── Browser Controller Overlay ───
+        // Shown when an external browser is launched (e.g. for Steam API key).
+        // Captures controller input and relays it to the browser via CDP.
+        BrowserOverlay {
+            id: browserOverlay
+            onClosed: {
+                BrowserBridge.setActive(false)
+                GameManager.closeApiKeyBrowser()
+                root.enterNav()
             }
         }
     }

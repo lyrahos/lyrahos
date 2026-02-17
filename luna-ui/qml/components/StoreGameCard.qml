@@ -201,18 +201,23 @@ Rectangle {
     scale: (mouseArea.containsMouse || isKeyboardFocused) ? 1.04 : 1.0
     Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-    // Focus border - purple outline on hover OR keyboard focus
-    border.color: (mouseArea.containsMouse || isKeyboardFocused)
-                  ? ThemeManager.getColor("focus")
-                  : "transparent"
-    border.width: (mouseArea.containsMouse || isKeyboardFocused) ? 3 : 0
-    Behavior on border.color { ColorAnimation { duration: 150 } }
-
     MouseArea {
         id: mouseArea
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: storeCard.clicked()
+    }
+
+    // Focus border - drawn last so it renders on top of image/gradient overlays
+    Rectangle {
+        anchors.fill: parent
+        radius: storeCard.radius
+        color: "transparent"
+        border.color: (mouseArea.containsMouse || isKeyboardFocused)
+                      ? ThemeManager.getColor("focus")
+                      : "transparent"
+        border.width: (mouseArea.containsMouse || isKeyboardFocused) ? 3 : 0
+        Behavior on border.color { ColorAnimation { duration: 150 } }
     }
 }

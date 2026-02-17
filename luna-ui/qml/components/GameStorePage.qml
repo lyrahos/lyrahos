@@ -378,6 +378,49 @@ Item {
         else if (targetX + 420 > viewRight) trendingList.contentX = targetX + 420 - trendingList.width + 10
     }
 
+    // Scroll the main Flickable so the active navZone is visible on screen
+    onNavZoneChanged: if (hasKeyboardFocus) ensureZoneVisible()
+
+    function ensureZoneVisible() {
+        var targetY = -1
+        var targetH = 0
+
+        switch (navZone) {
+        case "hero":
+            targetY = heroBanner.y
+            targetH = heroBanner.height
+            break
+        case "trending":
+            targetY = trendingSection.y
+            targetH = trendingSection.height
+            break
+        case "dealsGrid":
+            targetY = dealsGridSection.y
+            targetH = Math.min(dealsGridSection.height, mainFlickable.height)
+            break
+        case "loadMore":
+            // loadMore is at the bottom of dealsGridSection
+            targetY = dealsGridSection.y + dealsGridSection.height - 56
+            targetH = 56
+            break
+        default:
+            // searchBar, sortChips are above the Flickable; scroll to top
+            mainFlickable.contentY = 0
+            return
+        }
+
+        if (targetY < 0) return
+
+        var viewTop = mainFlickable.contentY
+        var viewBottom = viewTop + mainFlickable.height
+
+        if (targetY < viewTop) {
+            mainFlickable.contentY = Math.max(0, targetY - 20)
+        } else if (targetY + targetH > viewBottom) {
+            mainFlickable.contentY = targetY + targetH - mainFlickable.height + 20
+        }
+    }
+
     // Periodically check network status
     Timer {
         id: storeNetworkCheck
@@ -1264,6 +1307,7 @@ Item {
 
                 // ─── Trending Deals Section (horizontal scroll) ───
                 ColumnLayout {
+                    id: trendingSection
                     visible: !storePage.isSearching && recentDeals.length > 0
                     Layout.fillWidth: true
                     spacing: 16

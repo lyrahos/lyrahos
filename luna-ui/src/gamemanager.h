@@ -114,6 +114,10 @@ signals:
     void steamCmdSetupLoginSuccess();
     void steamCmdSetupLoginError(QString error);
 
+    // Browser lifecycle — lets QML activate the BrowserOverlay
+    void browserOpened();
+    void browserClosed();
+
 private:
     Database *m_db;
     QVector<StoreBackend*> m_backends;

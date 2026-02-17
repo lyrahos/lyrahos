@@ -9,6 +9,7 @@
 #include "controllermanager.h"
 #include "artworkmanager.h"
 #include "storeapimanager.h"
+#include "browserbridge.h"
 
 int main(int argc, char *argv[]) {
     // Must be called before QGuiApplication for WebEngineView to work
@@ -31,6 +32,17 @@ int main(int argc, char *argv[]) {
     controllerManager.setDatabase(&db);
     ArtworkManager artworkManager;
     StoreApiManager storeApiManager;
+    BrowserBridge browserBridge;
+
+    // Connect GameManager browser signals to BrowserBridge
+    QObject::connect(&gameManager, &GameManager::browserOpened, [&]() {
+        browserBridge.setActive(true);
+        browserBridge.connectToBrowser();
+    });
+    QObject::connect(&gameManager, &GameManager::browserClosed, [&]() {
+        browserBridge.setActive(false);
+        browserBridge.disconnect();
+    });
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
@@ -39,6 +51,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("ProfileResolver", controllerManager.profileResolver());
     engine.rootContext()->setContextProperty("ArtworkManager", &artworkManager);
     engine.rootContext()->setContextProperty("StoreApi", &storeApiManager);
+    engine.rootContext()->setContextProperty("BrowserBridge", &browserBridge);
 
     // RESOURCE_PREFIX / in CMakeLists.txt places QML files at :/LunaUI/...
     engine.load(QUrl(QStringLiteral("qrc:/LunaUI/qml/Main.qml")));
