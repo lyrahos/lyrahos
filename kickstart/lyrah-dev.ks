@@ -9,6 +9,7 @@ cmake
 gcc-c++
 qt6-qtbase-devel
 qt6-qtdeclarative-devel
+qt6-qtwebsockets-devel
 SDL2-devel
 sqlite-devel
 rpm-build
