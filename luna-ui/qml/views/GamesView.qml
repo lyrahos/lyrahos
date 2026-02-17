@@ -1582,7 +1582,14 @@ Rectangle {
     // ── Steam Setup Wizard ──
     SteamSetupWizard {
         id: steamSetupWizard
-        onClosed: gamesRoot.forceActiveFocus()
+        onClosed: {
+            // After setup completes, switch to My Games tab so the user
+            // lands on their library, not the Game Store background.
+            activeTab = 0
+            focusedTabIndex = 0
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
     }
 
     // ── Virtual Keyboard for WiFi password + credential dialogs ──
