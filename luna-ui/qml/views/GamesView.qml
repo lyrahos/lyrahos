@@ -152,7 +152,8 @@ Rectangle {
             handleClientsKeys(event)
         } else if (activeTab === 2) {
             // Game Store — GameStorePage handles its own keys via Keys.onPressed.
-            // Only unhandled keys propagate here (Up at searchBar, Escape).
+            // Only unhandled keys propagate here (Up at searchBar, Escape, or
+            // Left when the store page doesn't consume it).
             var zone = gameStoreLoader.item ? gameStoreLoader.item.navZone : ""
             if (event.key === Qt.Key_Escape ||
                 (event.key === Qt.Key_Up && (zone === "searchBar" || zone === ""))) {
@@ -160,6 +161,12 @@ Rectangle {
                 focusedTabIndex = activeTab
                 if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
                     gameStoreLoader.item.loseFocus()
+                event.accepted = true
+                return
+            }
+            // Fallback: if GameStorePage didn't handle Left, go to sidebar
+            if (event.key === Qt.Key_Left) {
+                requestNavFocus()
                 event.accepted = true
                 return
             }

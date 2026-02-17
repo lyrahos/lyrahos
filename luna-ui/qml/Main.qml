@@ -52,6 +52,16 @@ ApplicationWindow {
             }
         }
 
+        // D-Pad Left fallback: if a content view doesn't consume the Left
+        // key (e.g. already at the left edge of a grid, or a view with no
+        // horizontal navigation), navigate back to the sidebar.
+        Keys.onLeftPressed: function(event) {
+            if (root.focusZone === "content") {
+                root.enterNav()
+                event.accepted = true
+            }
+        }
+
         RowLayout {
             anchors.fill: parent
             spacing: 0
