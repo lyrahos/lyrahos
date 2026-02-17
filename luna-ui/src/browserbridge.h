@@ -46,7 +46,16 @@ public:
     // Mark the bridge as active/inactive (browser is in foreground)
     Q_INVOKABLE void setActive(bool active);
 
+    // Handle controller actions directly from ControllerManager.
+    // When the browser has window focus, QGuiApplication::focusObject()
+    // returns null and synthetic key events are dropped.  This slot
+    // bypasses the QML focus system entirely by listening to the
+    // ControllerManager::actionTriggered signal.
+    Q_INVOKABLE void handleAction(const QString &action);
+
 signals:
+    // Emitted when the VirtualKeyboard needs Luna-UI's window raised
+    void raiseRequested();
     void connectedChanged();
     void textFieldFocusedChanged();
     void activeChanged();

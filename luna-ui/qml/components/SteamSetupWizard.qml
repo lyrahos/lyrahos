@@ -41,7 +41,17 @@ Rectangle {
     property int wizFocusIndex: 0
     property int overlayFocusIdx: 0
 
-    onCurrentStepChanged: { wizFocusIndex = 0; wizard.forceActiveFocus() }
+    onCurrentStepChanged: {
+        wizFocusIndex = 0
+        // Only grab focus if already visible; open() handles the initial case
+        if (wizard.visible) wizard.forceActiveFocus()
+    }
+    onVisibleChanged: {
+        if (visible) {
+            wizFocusIndex = 0
+            wizard.forceActiveFocus()
+        }
+    }
     onShowManualInputChanged: wizFocusIndex = 0
     onSteamCmdPromptTypeChanged: wizFocusIndex = 0
     onSteamCmdWaitingChanged: wizFocusIndex = 0

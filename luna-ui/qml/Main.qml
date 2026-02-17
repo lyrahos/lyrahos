@@ -12,10 +12,15 @@ ApplicationWindow {
     title: "Luna UI"
     flags: Qt.FramelessWindowHint
     visibility: Window.FullScreen
+    cursor: cursorHidden ? Qt.BlankCursor : Qt.ArrowCursor
 
     // Track which zone has focus: "nav" or "content"
     property string focusZone: "nav"
     property bool pendingContentFocus: false
+
+    // Hide the mouse cursor while the controller is in use.
+    // Any controller action hides it; any mouse movement shows it.
+    property bool cursorHidden: false
 
     function enterContent() {
         focusZone = "content"
@@ -38,9 +43,24 @@ ApplicationWindow {
         navBar.forceActiveFocus()
     }
 
+    // Hide cursor on any controller action, show on mouse movement
+    Connections {
+        target: ControllerManager
+        function onActionTriggered() { root.cursorHidden = true }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: ThemeManager.getColor("background")
+
+        // Detect mouse movement to restore the cursor
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton   // don't steal clicks
+            propagateComposedEvents: true
+            onPositionChanged: { root.cursorHidden = false }
+        }
 
         // Back button (B / Escape) returns to NavBar from any content view.
         // Content views that handle Escape internally (e.g. SettingsView expanded
@@ -84,7 +104,10 @@ ApplicationWindow {
                 source: "views/GamesView.qml"
 
                 onLoaded: {
-                    if (item && typeof item.requestNavFocus === "object") {
+                    // Connect the view's requestNavFocus signal to enterNav().
+                    // In Qt6 QML, typeof for signals returns "function", not
+                    // "object", so use "in" to check for the signal's existence.
+                    if (item && "requestNavFocus" in item) {
                         item.requestNavFocus.connect(root.enterNav)
                     }
                     if (root.pendingContentFocus) {

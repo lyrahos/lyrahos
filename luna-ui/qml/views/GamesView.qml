@@ -46,11 +46,41 @@ Rectangle {
             event.accepted = true
             return
         }
+        // Setup wizard handles its own keys
+        if (steamSetupWizard.visible) return
         // Credential dialog navigation
         if (credentialDialog.visible) {
             handleCredDialogKeys(event)
             return
         }
+
+        // LB / RB (shoulder buttons) switch tabs from any focus state
+        if (event.key === Qt.Key_BracketLeft) {
+            // LB — previous tab
+            if (activeTab > 0) {
+                activeTab--
+                focusedTabIndex = activeTab
+                focusState = "tabs"
+                // Clean up Game Store focus if leaving tab 2
+                if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                    gameStoreLoader.item.loseFocus()
+            }
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_BracketRight) {
+            // RB — next tab
+            if (activeTab < 2) {
+                activeTab++
+                focusedTabIndex = activeTab
+                focusState = "tabs"
+                if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                    gameStoreLoader.item.loseFocus()
+            }
+            event.accepted = true
+            return
+        }
+
         if (focusState === "tabs") {
             handleTabKeys(event)
         } else if (focusState === "content") {
@@ -1554,7 +1584,14 @@ Rectangle {
     // ── Steam Setup Wizard ──
     SteamSetupWizard {
         id: steamSetupWizard
-        onClosed: gamesRoot.forceActiveFocus()
+        onClosed: {
+            // After setup completes, switch to My Games tab so the user
+            // lands on their library, not the Game Store background.
+            activeTab = 0
+            focusedTabIndex = 0
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
     }
 
     // ── Virtual Keyboard for WiFi password + credential dialogs ──

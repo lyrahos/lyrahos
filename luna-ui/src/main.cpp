@@ -44,6 +44,27 @@ int main(int argc, char *argv[]) {
         browserBridge.disconnect();
     });
 
+    // Route controller actions directly to BrowserBridge.
+    // When the browser is in the foreground, Luna-UI loses window focus
+    // and QGuiApplication::focusObject() returns null, so synthetic key
+    // events are dropped.  actionTriggered fires regardless of window
+    // focus, so BrowserBridge can handle navigation via CDP.
+    QObject::connect(&controllerManager, &ControllerManager::actionTriggered,
+                     &browserBridge, &BrowserBridge::handleAction);
+
+    // When BrowserBridge needs the VirtualKeyboard, raise Luna-UI's window
+    QObject::connect(&browserBridge, &BrowserBridge::raiseRequested,
+                     &gameManager, &GameManager::raiseLunaWindow);
+
+    // When BrowserBridge detects the browser closed (e.g. system_menu),
+    // close the browser process and raise Luna-UI
+    QObject::connect(&browserBridge, &BrowserBridge::browserClosed, [&]() {
+        browserBridge.setActive(false);
+        browserBridge.disconnect();
+        gameManager.raiseLunaWindow();
+        gameManager.closeApiKeyBrowser();
+    });
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
