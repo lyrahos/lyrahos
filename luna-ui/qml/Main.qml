@@ -84,7 +84,10 @@ ApplicationWindow {
                 source: "views/GamesView.qml"
 
                 onLoaded: {
-                    if (item && typeof item.requestNavFocus === "object") {
+                    // Connect the view's requestNavFocus signal to enterNav().
+                    // In Qt6 QML, typeof for signals returns "function", not
+                    // "object", so use "in" to check for the signal's existence.
+                    if (item && "requestNavFocus" in item) {
                         item.requestNavFocus.connect(root.enterNav)
                     }
                     if (root.pendingContentFocus) {
