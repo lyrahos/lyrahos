@@ -39,6 +39,40 @@ Rectangle {
             gameStoreLoader.item.loseFocus()
     }
 
+    // ── LB / RB tab switching ──
+    // Use direct Connections to ControllerManager legacy signals instead
+    // of Keys.onPressed for shoulder buttons.  Key events from child
+    // components loaded via Loader/StackLayout may not propagate reliably
+    // back to this handler, but the legacy signals always fire.
+    function switchToPreviousTab() {
+        if (steamSetupWizard.visible || gamesVirtualKeyboard.visible) return
+        if (activeTab > 0) {
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                gameStoreLoader.item.loseFocus()
+            activeTab--
+            focusedTabIndex = activeTab
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
+    }
+    function switchToNextTab() {
+        if (steamSetupWizard.visible || gamesVirtualKeyboard.visible) return
+        if (activeTab < 2) {
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                gameStoreLoader.item.loseFocus()
+            activeTab++
+            focusedTabIndex = activeTab
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
+    }
+
+    Connections {
+        target: ControllerManager
+        function onPreviousTab() { switchToPreviousTab() }
+        function onNextTab()     { switchToNextTab() }
+    }
+
     // Master keyboard handler
     Keys.onPressed: function(event) {
         // VirtualKeyboard handles its own keys
@@ -54,29 +88,14 @@ Rectangle {
             return
         }
 
-        // LB / RB (shoulder buttons) switch tabs from any focus state
+        // LB / RB via keyboard (also handled by Connections above for controller)
         if (event.key === Qt.Key_BracketLeft) {
-            // LB — previous tab
-            if (activeTab > 0) {
-                activeTab--
-                focusedTabIndex = activeTab
-                focusState = "tabs"
-                // Clean up Game Store focus if leaving tab 2
-                if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
-                    gameStoreLoader.item.loseFocus()
-            }
+            switchToPreviousTab()
             event.accepted = true
             return
         }
         if (event.key === Qt.Key_BracketRight) {
-            // RB — next tab
-            if (activeTab < 2) {
-                activeTab++
-                focusedTabIndex = activeTab
-                focusState = "tabs"
-                if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
-                    gameStoreLoader.item.loseFocus()
-            }
+            switchToNextTab()
             event.accepted = true
             return
         }
