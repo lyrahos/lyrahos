@@ -309,7 +309,9 @@ jobs:
                 glibc-langpack-en \
                 util-linux \
                 gcc \
-                make
+                make \
+                qt6-qtwebsockets \
+                xdotool
 
               dnf clean all --installroot=/rootfs
 

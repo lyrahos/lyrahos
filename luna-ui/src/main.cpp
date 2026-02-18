@@ -2,6 +2,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTimer>
+#include <QCursor>
 #include <QtWebEngineQuick>
 #include "thememanager.h"
 #include "gamemanager.h"
@@ -10,6 +11,23 @@
 #include "artworkmanager.h"
 #include "storeapimanager.h"
 #include "browserbridge.h"
+
+// Hide the mouse cursor while the controller is in use.
+// Any mouse movement restores it.  Works globally via
+// QGuiApplication::setOverrideCursor / restoreOverrideCursor.
+class CursorAutoHider : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override {
+        if (event->type() == QEvent::MouseMove) {
+            if (QGuiApplication::overrideCursor()) {
+                QGuiApplication::restoreOverrideCursor();
+            }
+        }
+        return QObject::eventFilter(obj, event);
+    }
+};
 
 int main(int argc, char *argv[]) {
     // Must be called before QGuiApplication for WebEngineView to work
@@ -63,6 +81,17 @@ int main(int argc, char *argv[]) {
         browserBridge.disconnect();
         gameManager.raiseLunaWindow();
         gameManager.closeApiKeyBrowser();
+    });
+
+    // Hide the mouse cursor while the controller is active.
+    // Controller actions hide it; mouse movement restores it.
+    CursorAutoHider cursorHider;
+    app.installEventFilter(&cursorHider);
+    QObject::connect(&controllerManager, &ControllerManager::actionTriggered,
+                     [](const QString &) {
+        if (!QGuiApplication::overrideCursor()) {
+            QGuiApplication::setOverrideCursor(Qt::BlankCursor);
+        }
     });
 
     QQmlApplicationEngine engine;
