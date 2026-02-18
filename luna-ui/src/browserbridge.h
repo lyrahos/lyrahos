@@ -18,6 +18,11 @@ class BrowserBridge : public QObject {
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
     Q_PROPERTY(bool textFieldFocused READ isTextFieldFocused NOTIFY textFieldFocusedChanged)
     Q_PROPERTY(bool active READ isActive NOTIFY activeChanged)
+    Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int actionsReceived READ actionsReceived NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int actionsDispatched READ actionsDispatched NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int cdpCommandsSent READ cdpCommandsSent NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int cdpErrors READ cdpErrors NOTIFY diagnosticsChanged)
 
 public:
     explicit BrowserBridge(QObject *parent = nullptr);
@@ -26,6 +31,11 @@ public:
     bool isConnected() const { return m_connected; }
     bool isTextFieldFocused() const { return m_textFieldFocused; }
     bool isActive() const { return m_active; }
+    QString diagnostics() const { return m_diagnostics; }
+    int actionsReceived() const { return m_actionsReceived; }
+    int actionsDispatched() const { return m_actionsDispatched; }
+    int cdpCommandsSent() const { return m_cdpCommandsSent; }
+    int cdpErrors() const { return m_cdpErrors; }
 
     // Start trying to connect to the browser's CDP endpoint
     Q_INVOKABLE void connectToBrowser();
@@ -59,6 +69,7 @@ signals:
     void connectedChanged();
     void textFieldFocusedChanged();
     void activeChanged();
+    void diagnosticsChanged();
     // Emitted when the injected JS reports a text field was focused
     void textInputRequested(const QString &currentValue, bool isPassword);
     // Emitted when the browser page navigated away or closed
@@ -82,6 +93,14 @@ private:
     bool m_active = false;
     bool m_injected = false;
     QString m_wsUrl;          // ws://127.0.0.1:9222/devtools/page/<id>
+
+    // Diagnostics
+    QString m_diagnostics;
+    int m_actionsReceived = 0;
+    int m_actionsDispatched = 0;
+    int m_cdpCommandsSent = 0;
+    int m_cdpErrors = 0;
+    void diag(const QString &msg);
 
     void discoverTarget();
     void injectNavigationScript();

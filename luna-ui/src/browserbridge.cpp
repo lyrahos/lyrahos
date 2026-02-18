@@ -22,11 +22,22 @@ BrowserBridge::~BrowserBridge() {
     disconnect();
 }
 
+void BrowserBridge::diag(const QString &msg) {
+    qDebug() << "BrowserBridge:" << msg;
+    m_diagnostics = msg;
+    emit diagnosticsChanged();
+}
+
 // ── Public API ───────────────────────────────────────────────────────
 
 void BrowserBridge::connectToBrowser() {
     m_connectAttempts = 0;
     m_injected = false;
+    m_actionsReceived = 0;
+    m_actionsDispatched = 0;
+    m_cdpCommandsSent = 0;
+    m_cdpErrors = 0;
+    diag("connectToBrowser() called — starting CDP discovery");
     attemptConnection();
 }
 
@@ -49,6 +60,7 @@ void BrowserBridge::disconnect() {
 void BrowserBridge::setActive(bool active) {
     if (m_active == active) return;
     m_active = active;
+    diag(QString("setActive(%1)").arg(active ? "true" : "false"));
     emit activeChanged();
 }
 
@@ -101,7 +113,22 @@ void BrowserBridge::clearTextField() {
 // which fires regardless of window focus.
 
 void BrowserBridge::handleAction(const QString &action) {
-    if (!m_active || !m_connected) return;
+    m_actionsReceived++;
+
+    if (!m_active) {
+        // Only log the first few to avoid flooding
+        if (m_actionsReceived <= 5)
+            diag(QString("DROPPED action '%1': bridge not active").arg(action));
+        emit diagnosticsChanged();
+        return;
+    }
+    if (!m_connected) {
+        if (m_actionsReceived <= 20)
+            diag(QString("DROPPED action '%1': CDP not connected (attempt %2)")
+                .arg(action).arg(m_connectAttempts));
+        emit diagnosticsChanged();
+        return;
+    }
 
     // When VirtualKeyboard is showing (text field focused + Luna-UI raised),
     // let the normal QML key handlers drive the VK.  Only intercept
@@ -110,6 +137,9 @@ void BrowserBridge::handleAction(const QString &action) {
         if (action == "system_menu") emit browserClosed();
         return;
     }
+
+    m_actionsDispatched++;
+    emit diagnosticsChanged();
 
     if (action == "navigate_up")         navigate("up");
     else if (action == "navigate_down")  navigate("down");
@@ -120,7 +150,6 @@ void BrowserBridge::handleAction(const QString &action) {
     else if (action == "scroll_up")      scrollPage("up");
     else if (action == "scroll_down")    scrollPage("down");
     else if (action == "system_menu") {
-        // System menu button closes browser and returns to Luna-UI
         emit browserClosed();
     }
 }
@@ -131,11 +160,11 @@ void BrowserBridge::attemptConnection() {
     if (m_connected) return;
     if (!m_active) return;
     if (m_connectAttempts >= 30) {
-        qWarning() << "BrowserBridge: gave up connecting after 30 attempts";
+        diag("GAVE UP connecting after 30 attempts");
         return;
     }
     m_connectAttempts++;
-    qDebug() << "BrowserBridge: connection attempt" << m_connectAttempts;
+    diag(QString("CDP connection attempt %1/30").arg(m_connectAttempts));
     discoverTarget();
 }
 
@@ -147,7 +176,7 @@ void BrowserBridge::discoverTarget() {
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
-            qDebug() << "BrowserBridge: CDP endpoint not ready, retrying...";
+            diag(QString("CDP endpoint not ready: %1").arg(reply->errorString()));
             m_connectTimer.start(2000);
             return;
         }
@@ -172,12 +201,12 @@ void BrowserBridge::discoverTarget() {
         }
 
         if (wsUrl.isEmpty()) {
-            qDebug() << "BrowserBridge: no WebSocket URL found, retrying...";
+            diag("No WebSocket URL in CDP response, retrying...");
             m_connectTimer.start(2000);
             return;
         }
 
-        qDebug() << "BrowserBridge: connecting to" << wsUrl;
+        diag(QString("Found CDP target, connecting WS: %1").arg(wsUrl));
         m_wsUrl = wsUrl;
         m_ws.open(QUrl(wsUrl));
     });
@@ -186,9 +215,9 @@ void BrowserBridge::discoverTarget() {
 // ── WebSocket Callbacks ──────────────────────────────────────────────
 
 void BrowserBridge::onWsConnected() {
-    qDebug() << "BrowserBridge: WebSocket connected";
     m_connected = true;
     m_connectAttempts = 0;
+    diag("WebSocket connected — enabling Runtime + injecting script");
     emit connectedChanged();
 
     // Enable Runtime domain to receive console messages from injected JS
@@ -199,8 +228,8 @@ void BrowserBridge::onWsConnected() {
 }
 
 void BrowserBridge::onWsDisconnected() {
-    qDebug() << "BrowserBridge: WebSocket disconnected";
     bool wasConnected = m_connected;
+    diag(QString("WebSocket disconnected (wasConnected=%1)").arg(wasConnected));
     m_connected = false;
     m_injected = false;
     if (m_textFieldFocused) {
@@ -216,13 +245,13 @@ void BrowserBridge::onWsDisconnected() {
     } else if (m_active) {
         // Handshake failed (e.g. Chromium rejected the WS upgrade).
         // Retry from target discovery.
-        qDebug() << "BrowserBridge: WS handshake failed, retrying discovery...";
+        diag("WS handshake failed, retrying discovery...");
         m_connectTimer.start(2000);
     }
 }
 
 void BrowserBridge::onWsError(QAbstractSocket::SocketError error) {
-    qWarning() << "BrowserBridge: WebSocket error:" << error << m_ws.errorString();
+    diag(QString("WebSocket error: %1 — %2").arg(error).arg(m_ws.errorString()));
     if (!m_connected && m_active) {
         // Retry from target discovery — the WS URL itself may have changed
         // if the browser reloaded or Chromium rejected the handshake (403).
@@ -252,14 +281,23 @@ int BrowserBridge::sendCdpCommand(const QString &method, const QJsonObject &para
     if (!params.isEmpty()) {
         msg["params"] = params;
     }
+    m_cdpCommandsSent++;
     m_ws.sendTextMessage(QJsonDocument(msg).toJson(QJsonDocument::Compact));
     return id;
 }
 
 void BrowserBridge::handleCdpResult(int id, const QJsonObject &result) {
-    Q_UNUSED(id);
-    Q_UNUSED(result);
-    // We don't need to track individual results for now
+    // Check for CDP-level exceptions (script errors, etc.)
+    if (result.contains("exceptionDetails")) {
+        QJsonObject ex = result["exceptionDetails"].toObject();
+        QString text = ex["text"].toString();
+        if (text.isEmpty()) {
+            QJsonObject exObj = ex["exception"].toObject();
+            text = exObj["description"].toString();
+        }
+        m_cdpErrors++;
+        diag(QString("CDP error (id %1): %2").arg(id).arg(text));
+    }
 }
 
 void BrowserBridge::handleCdpEvent(const QJsonObject &msg) {
@@ -277,7 +315,10 @@ void BrowserBridge::handleCdpEvent(const QJsonObject &msg) {
             QJsonObject data = QJsonDocument::fromJson(payload.toUtf8()).object();
             QString event = data["event"].toString();
 
-            if (event == "textFocus") {
+            if (event == "ready") {
+                int count = data["count"].toInt();
+                diag(QString("Script injected OK — %1 interactive elements found").arg(count));
+            } else if (event == "textFocus") {
                 bool wasFocused = m_textFieldFocused;
                 m_textFieldFocused = true;
                 if (!wasFocused) emit textFieldFocusedChanged();
@@ -313,7 +354,7 @@ void BrowserBridge::handleCdpEvent(const QJsonObject &msg) {
 void BrowserBridge::injectNavigationScript() {
     if (m_injected) return;
     m_injected = true;
-    qDebug() << "BrowserBridge: injecting navigation script";
+    diag("Injecting navigation script...");
     sendCdpCommand("Runtime.evaluate", {
         {"expression", navigationScript()},
         {"allowUnsafeEvalBlockedByCSP", true}

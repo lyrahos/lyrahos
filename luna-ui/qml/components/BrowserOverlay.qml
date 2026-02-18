@@ -80,6 +80,66 @@ Item {
         }
     }
 
+    // ─── Diagnostics panel (bottom-left) ───
+    Rectangle {
+        id: diagPanel
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.margins: 16
+        width: diagCol.width + 24
+        height: diagCol.height + 16
+        radius: 12
+        color: Qt.rgba(0, 0, 0, 0.85)
+        z: 2
+
+        ColumnLayout {
+            id: diagCol
+            anchors.centerIn: parent
+            spacing: 4
+
+            Text {
+                text: "Browser Bridge Diagnostics"
+                font.pixelSize: 14
+                font.family: "monospace"
+                font.bold: true
+                color: "#e67e22"
+            }
+
+            Text {
+                text: "active: " + BrowserBridge.active
+                      + "  connected: " + BrowserBridge.connected
+                font.pixelSize: 13
+                font.family: "monospace"
+                color: BrowserBridge.connected ? "#2ecc71" : "#e74c3c"
+            }
+
+            Text {
+                text: "actions in: " + BrowserBridge.actionsReceived
+                      + "  dispatched: " + BrowserBridge.actionsDispatched
+                font.pixelSize: 13
+                font.family: "monospace"
+                color: BrowserBridge.actionsDispatched > 0 ? "#2ecc71" : "#e74c3c"
+            }
+
+            Text {
+                text: "cdp sent: " + BrowserBridge.cdpCommandsSent
+                      + "  errors: " + BrowserBridge.cdpErrors
+                font.pixelSize: 13
+                font.family: "monospace"
+                color: BrowserBridge.cdpErrors > 0 ? "#e74c3c" : "#95a5a6"
+            }
+
+            Text {
+                text: BrowserBridge.diagnostics
+                font.pixelSize: 12
+                font.family: "monospace"
+                color: "#bdc3c7"
+                wrapMode: Text.WordWrap
+                Layout.maximumWidth: 450
+            }
+        }
+    }
+
     // ─── Controller key handler ───
     Keys.onPressed: function(event) {
         // Show the status bar on any input
