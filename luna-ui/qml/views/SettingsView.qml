@@ -409,7 +409,8 @@ Rectangle {
                 ? "Connected to " + selectedSsid
                 : message
             wifiPopupState = "done"
-            if (success) refreshWifiStatus()
+            // Always refresh — a failed attempt may have changed connection state
+            refreshWifiStatus()
         }
         function onWifiDisconnectResult(success, message) {
             wifiDisconnecting = false
