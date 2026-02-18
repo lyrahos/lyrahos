@@ -47,6 +47,11 @@ Rectangle {
             event.accepted = true
             return
         }
+        // WiFi popup handles its own keys
+        if (wifiPopupVisible) {
+            handleWifiPopupKeys(event)
+            return
+        }
         if (focusMode === "rows") {
             handleRowKeys(event)
         } else if (focusMode === "expanded") {
@@ -84,8 +89,7 @@ Rectangle {
             event.accepted = true
             break
         default:
-            if (focusedRow === 0) handleWifiExpandedKeys(event)
-            else if (focusedRow === 1) handleBtExpandedKeys(event)
+            if (focusedRow === 1) handleBtExpandedKeys(event)
             else if (focusedRow === 2) handleAudioExpandedKeys(event)
             else if (focusedRow === 3) handleControllerExpandedKeys(event)
             break
@@ -97,43 +101,56 @@ Rectangle {
         settingsRoot.forceActiveFocus()
     }
 
-    // ─── WiFi expanded navigation ───
-    function handleWifiExpandedKeys(event) {
-        var count = settingsWifiModel.count
-        switch (event.key) {
-        case Qt.Key_Up:
-            if (wifiFocusIndex > 0) wifiFocusIndex--
-            else exitExpanded()
-            event.accepted = true
-            break
-        case Qt.Key_Down:
-            if (wifiFocusIndex < count - 1) wifiFocusIndex++
-            event.accepted = true
-            break
-        case Qt.Key_Left:
-            exitExpanded()
-            event.accepted = true
-            break
-        case Qt.Key_Return:
-        case Qt.Key_Enter:
-            if (count > 0 && wifiFocusIndex >= 0 && wifiFocusIndex < count) {
-                var net = settingsWifiModel.get(wifiFocusIndex)
-                if (net && net.ssid !== connectedSsid) {
-                    selectedSsid = net.ssid
-                    settingsWifiPasswordField.text = ""
-                    wifiStatus = ""
-                    if (net.security === "" || net.security === "--") {
-                        wifiConnecting = true
-                        wifiStatus = "Connecting to " + net.ssid + "..."
-                        GameManager.connectToWifi(net.ssid, "")
-                    } else {
-                        settingsVirtualKeyboard.placeholderText = "Enter WiFi password..."
-                        settingsVirtualKeyboard.open("", true)
+    // ─── WiFi popup navigation ───
+    function handleWifiPopupKeys(event) {
+        if (wifiPopupState === "list") {
+            var count = settingsWifiModel.count
+            switch (event.key) {
+            case Qt.Key_Up:
+                if (wifiFocusIndex > 0) wifiFocusIndex--
+                event.accepted = true
+                break
+            case Qt.Key_Down:
+                if (wifiFocusIndex < count - 1) wifiFocusIndex++
+                event.accepted = true
+                break
+            case Qt.Key_Escape:
+            case Qt.Key_Left:
+                closeWifiPopup()
+                event.accepted = true
+                break
+            case Qt.Key_Return:
+            case Qt.Key_Enter:
+                if (count > 0 && wifiFocusIndex >= 0 && wifiFocusIndex < count) {
+                    var net = settingsWifiModel.get(wifiFocusIndex)
+                    if (net && net.ssid !== connectedSsid) {
+                        selectedSsid = net.ssid
+                        if (net.security === "" || net.security === "--") {
+                            wifiConnecting = true
+                            wifiPopupState = "connecting"
+                            GameManager.connectToWifi(net.ssid, "")
+                        } else {
+                            settingsVirtualKeyboard.placeholderText = "Enter password for " + net.ssid + "..."
+                            settingsVirtualKeyboard.open("", true)
+                        }
                     }
                 }
+                event.accepted = true
+                break
             }
-            event.accepted = true
-            break
+        } else if (wifiPopupState === "done") {
+            // Any key dismisses the result
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                    || event.key === Qt.Key_Escape) {
+                closeWifiPopup()
+                event.accepted = true
+            }
+        } else {
+            // scanning / connecting — Escape cancels
+            if (event.key === Qt.Key_Escape) {
+                closeWifiPopup()
+                event.accepted = true
+            }
         }
     }
 
@@ -218,25 +235,30 @@ Rectangle {
         }
     }
 
+    function openWifiPopup() {
+        wifiPopupVisible = true
+        wifiPopupState = "scanning"
+        wifiStatus = ""
+        wifiResultMessage = ""
+        selectedSsid = ""
+        wifiFocusIndex = 0
+        wifiScanning = true
+        settingsWifiModel.clear()
+        GameManager.scanWifiNetworks()
+    }
+
+    function closeWifiPopup() {
+        wifiPopupVisible = false
+        wifiPopupState = "scanning"
+        selectedSsid = ""
+        wifiStatus = ""
+        settingsRoot.forceActiveFocus()
+    }
+
     function activateRow(row) {
         switch (row) {
         case 0:
-            if (!wifiExpanded) {
-                wifiExpanded = true
-                wifiStatus = ""
-                selectedSsid = ""
-                settingsWifiPasswordField.text = ""
-                wifiScanning = true
-                settingsWifiModel.clear()
-                GameManager.scanWifiNetworks()
-                // Enter expanded mode
-                wifiFocusIndex = 0
-                focusMode = "expanded"
-            } else {
-                // Already expanded — enter it
-                wifiFocusIndex = 0
-                focusMode = "expanded"
-            }
+            openWifiPopup()
             break
         case 1:
             if (!btExpanded) {
@@ -283,11 +305,14 @@ Rectangle {
 
     // WiFi state
     property string connectedSsid: ""
-    property bool wifiExpanded: false
+    property bool wifiPopupVisible: false
+    property string wifiPopupState: "scanning"  // scanning, list, connecting, done
     property bool wifiScanning: false
     property bool wifiConnecting: false
     property bool wifiDisconnecting: false
     property string wifiStatus: ""
+    property string wifiResultMessage: ""
+    property bool wifiResultSuccess: false
     property string selectedSsid: ""
 
     // Bluetooth state
@@ -379,14 +404,12 @@ Rectangle {
         target: GameManager
         function onWifiConnectResult(success, message) {
             wifiConnecting = false
-            if (success) {
-                wifiStatus = "Connected!"
-                selectedSsid = ""
-                settingsWifiPasswordField.text = ""
-                refreshWifiStatus()
-            } else {
-                wifiStatus = "Failed: " + message
-            }
+            wifiResultSuccess = success
+            wifiResultMessage = success
+                ? "Connected to " + selectedSsid
+                : message
+            wifiPopupState = "done"
+            if (success) refreshWifiStatus()
         }
         function onWifiDisconnectResult(success, message) {
             wifiDisconnecting = false
@@ -402,6 +425,7 @@ Rectangle {
             settingsWifiModel.clear()
             for (var i = 0; i < networks.length; i++)
                 settingsWifiModel.append(networks[i])
+            if (wifiPopupVisible) wifiPopupState = "list"
         }
         function onBluetoothDevicesScanned(devices) {
             btScanning = false
@@ -468,7 +492,7 @@ Rectangle {
         // ── Wi-Fi Section ──
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: wifiCol.height + 32
+            Layout.preferredHeight: wifiRowLayout.height + 32
             radius: 12
             color: ThemeManager.getColor("surface")
             border.color: (focusedRow === 0 || hoveredRow === 0)
@@ -486,476 +510,97 @@ Rectangle {
                 onClicked: { focusedRow = 0; activateRow(0) }
             }
 
-            ColumnLayout {
-                id: wifiCol
+            RowLayout {
+                id: wifiRowLayout
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 16
                 spacing: 12
 
-                // Header row: title + status + expand button
-                RowLayout {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 12
+                    spacing: 4
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-
-                        Text {
-                            text: "Wi-Fi"
-                            font.pixelSize: ThemeManager.getFontSize("medium")
-                            font.family: ThemeManager.getFont("body")
-                            font.bold: true
-                            color: ThemeManager.getColor("textPrimary")
-                        }
-
-                        Text {
-                            text: connectedSsid !== ""
-                                  ? "Connected to " + connectedSsid
-                                  : "Not connected"
-                            font.pixelSize: ThemeManager.getFontSize("small")
-                            font.family: ThemeManager.getFont("body")
-                            color: connectedSsid !== ""
-                                   ? ThemeManager.getColor("accent")
-                                   : ThemeManager.getColor("textSecondary")
-                        }
-                    }
-
-                    // Disconnect button (visible when connected)
-                    Rectangle {
-                        visible: connectedSsid !== "" && !wifiDisconnecting
-                        Layout.preferredWidth: disconnectLabel.width + 24
-                        Layout.preferredHeight: 36
-                        radius: 8
-                        color: "transparent"
-                        border.color: disconnectArea.containsMouse
-                                      ? "#ff6b6b" : Qt.rgba(1, 1, 1, 0.15)
-                        border.width: 1
-
-                        Text {
-                            id: disconnectLabel
-                            anchors.centerIn: parent
-                            text: "Disconnect"
-                            font.pixelSize: ThemeManager.getFontSize("small")
-                            font.family: ThemeManager.getFont("body")
-                            color: disconnectArea.containsMouse
-                                   ? "#ff6b6b"
-                                   : ThemeManager.getColor("textSecondary")
-                        }
-
-                        MouseArea {
-                            id: disconnectArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                wifiDisconnecting = true
-                                wifiStatus = "Disconnecting..."
-                                GameManager.disconnectWifi()
-                            }
-                        }
-
-                        Behavior on border.color { ColorAnimation { duration: 150 } }
-                    }
-
-                    // Disconnecting indicator
                     Text {
-                        visible: wifiDisconnecting
-                        text: "Disconnecting..."
+                        text: "Wi-Fi"
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                    }
+
+                    Text {
+                        text: connectedSsid !== ""
+                              ? "Connected to " + connectedSsid
+                              : "Not connected"
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
-
-                        SequentialAnimation on opacity {
-                            running: wifiDisconnecting
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.4; duration: 600 }
-                            NumberAnimation { to: 1.0; duration: 600 }
-                        }
-                    }
-
-                    // Expand/collapse arrow
-                    Rectangle {
-                        Layout.preferredWidth: 40
-                        Layout.preferredHeight: 40
-                        radius: 20
-                        color: expandWifiArea.containsMouse
-                               ? ThemeManager.getColor("hover")
-                               : "transparent"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: wifiExpanded ? "v" : ">"
-                            font.pixelSize: 18
-                            font.bold: true
-                            color: ThemeManager.getColor("textPrimary")
-                        }
-
-                        MouseArea {
-                            id: expandWifiArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                wifiExpanded = !wifiExpanded
-                                if (wifiExpanded) {
-                                    wifiStatus = ""
-                                    selectedSsid = ""
-                                    settingsWifiPasswordField.text = ""
-                                    wifiScanning = true
-                                    settingsWifiModel.clear()
-                                    GameManager.scanWifiNetworks()
-                                }
-                            }
-                        }
+                        color: connectedSsid !== ""
+                               ? ThemeManager.getColor("accent")
+                               : ThemeManager.getColor("textSecondary")
                     }
                 }
 
-                // ── Expanded WiFi network list ──
-                ColumnLayout {
-                    visible: wifiExpanded
-                    Layout.fillWidth: true
-                    spacing: 8
+                // Disconnect button (visible when connected)
+                Rectangle {
+                    visible: connectedSsid !== "" && !wifiDisconnecting
+                    Layout.preferredWidth: disconnectLabel.width + 24
+                    Layout.preferredHeight: 36
+                    radius: 8
+                    color: "transparent"
+                    border.color: disconnectArea.containsMouse
+                                  ? "#ff6b6b" : Qt.rgba(1, 1, 1, 0.15)
+                    border.width: 1
 
-                    // Status message
                     Text {
-                        visible: wifiStatus !== ""
-                        text: wifiStatus
+                        id: disconnectLabel
+                        anchors.centerIn: parent
+                        text: "Disconnect"
                         font.pixelSize: ThemeManager.getFontSize("small")
                         font.family: ThemeManager.getFont("body")
-                        color: wifiStatus.startsWith("Failed")
+                        color: disconnectArea.containsMouse
                                ? "#ff6b6b"
-                               : wifiStatus === "Connected!" || wifiStatus === "Disconnected"
-                                 ? ThemeManager.getColor("accent")
-                                 : ThemeManager.getColor("textSecondary")
+                               : ThemeManager.getColor("textSecondary")
                     }
 
-                    // Refresh button
-                    RowLayout {
-                        Layout.fillWidth: true
-
-                        Text {
-                            text: "Available Networks"
-                            font.pixelSize: ThemeManager.getFontSize("small")
-                            font.family: ThemeManager.getFont("body")
-                            font.bold: true
-                            color: ThemeManager.getColor("textSecondary")
-                            Layout.fillWidth: true
-                        }
-
-                        Rectangle {
-                            visible: !wifiScanning
-                            Layout.preferredWidth: settingsRefreshLabel.width + 24
-                            Layout.preferredHeight: 32
-                            radius: 8
-                            color: settingsRefreshArea.containsMouse
-                                   ? ThemeManager.getColor("hover")
-                                   : "transparent"
-
-                            Text {
-                                id: settingsRefreshLabel
-                                anchors.centerIn: parent
-                                text: "Refresh"
-                                font.pixelSize: ThemeManager.getFontSize("small")
-                                font.family: ThemeManager.getFont("body")
-                                color: ThemeManager.getColor("primary")
-                            }
-
-                            MouseArea {
-                                id: settingsRefreshArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    wifiScanning = true
-                                    settingsWifiModel.clear()
-                                    GameManager.scanWifiNetworks()
-                                }
-                            }
+                    MouseArea {
+                        id: disconnectArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            wifiDisconnecting = true
+                            wifiStatus = "Disconnecting..."
+                            GameManager.disconnectWifi()
                         }
                     }
 
-                    // Scanning spinner
-                    RowLayout {
-                        visible: wifiScanning
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        spacing: 12
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                }
 
-                        Item {
-                            Layout.preferredWidth: 24
-                            Layout.preferredHeight: 24
-                            Layout.alignment: Qt.AlignVCenter
+                // Disconnecting indicator
+                Text {
+                    visible: wifiDisconnecting
+                    text: "Disconnecting..."
+                    font.pixelSize: ThemeManager.getFontSize("small")
+                    font.family: ThemeManager.getFont("body")
+                    color: ThemeManager.getColor("textSecondary")
 
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: 22
-                                height: 22
-                                radius: 11
-                                color: "transparent"
-                                border.width: 3
-                                border.color: Qt.rgba(1, 1, 1, 0.08)
-
-                                Rectangle {
-                                    width: 22
-                                    height: 22
-                                    radius: 11
-                                    color: "transparent"
-                                    border.width: 3
-                                    border.color: "transparent"
-
-                                    Rectangle {
-                                        width: 8
-                                        height: 3
-                                        radius: 1.5
-                                        color: ThemeManager.getColor("primary")
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.top: parent.top
-                                    }
-
-                                    RotationAnimation on rotation {
-                                        from: 0; to: 360
-                                        duration: 1000
-                                        loops: Animation.Infinite
-                                        running: wifiScanning
-                                    }
-                                }
-                            }
-                        }
-
-                        Text {
-                            text: "Scanning for networks..."
-                            font.pixelSize: ThemeManager.getFontSize("small")
-                            font.family: ThemeManager.getFont("body")
-                            color: ThemeManager.getColor("textSecondary")
-
-                            SequentialAnimation on opacity {
-                                running: wifiScanning
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.4; duration: 600 }
-                                NumberAnimation { to: 1.0; duration: 600 }
-                            }
-                        }
+                    SequentialAnimation on opacity {
+                        running: wifiDisconnecting
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.4; duration: 600 }
+                        NumberAnimation { to: 1.0; duration: 600 }
                     }
+                }
 
-                    // Network list
-                    ListView {
-                        id: settingsWifiList
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(settingsWifiModel.count * 54, 270)
-                        clip: true
-                        spacing: 4
-                        model: ListModel { id: settingsWifiModel }
-
-                        delegate: Rectangle {
-                            property bool isKbFocused: focusMode === "expanded" && focusedRow === 0 && wifiFocusIndex === index
-                            width: settingsWifiList.width
-                            height: 50
-                            radius: 10
-                            color: (settingsWifiItemArea.containsMouse || isKbFocused)
-                                   ? Qt.rgba(ThemeManager.getColor("primary").r,
-                                             ThemeManager.getColor("primary").g,
-                                             ThemeManager.getColor("primary").b, 0.15)
-                                   : ThemeManager.getColor("hover")
-                            border.color: model.ssid === connectedSsid
-                                          ? ThemeManager.getColor("accent")
-                                          : (settingsWifiItemArea.containsMouse || isKbFocused)
-                                            ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (model.ssid === connectedSsid || settingsWifiItemArea.containsMouse || isKbFocused) ? 2 : 0
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 16
-                                anchors.rightMargin: 16
-                                spacing: 12
-
-                                // Signal strength
-                                Text {
-                                    text: model.signal > 70 ? "|||" :
-                                          model.signal > 40 ? "|| " : "|  "
-                                    font.pixelSize: 14
-                                    font.family: "monospace"
-                                    font.bold: true
-                                    color: model.signal > 70
-                                           ? ThemeManager.getColor("accent")
-                                           : model.signal > 40
-                                             ? ThemeManager.getColor("secondary")
-                                             : ThemeManager.getColor("textSecondary")
-                                }
-
-                                Text {
-                                    text: model.ssid
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    font.bold: model.ssid === connectedSsid
-                                    color: ThemeManager.getColor("textPrimary")
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                }
-
-                                // "Connected" badge
-                                Text {
-                                    visible: model.ssid === connectedSsid
-                                    text: "Connected"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("accent")
-                                }
-
-                                Text {
-                                    visible: model.security !== "" && model.security !== "--"
-                                             && model.ssid !== connectedSsid
-                                    text: model.security
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
-                                }
-                            }
-
-                            MouseArea {
-                                id: settingsWifiItemArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (model.ssid === connectedSsid) return
-                                    selectedSsid = model.ssid
-                                    settingsWifiPasswordField.text = ""
-                                    wifiStatus = ""
-                                    if (model.security === "" || model.security === "--") {
-                                        // Open network — connect immediately
-                                        wifiConnecting = true
-                                        wifiStatus = "Connecting to " + model.ssid + "..."
-                                        GameManager.connectToWifi(model.ssid, "")
-                                    } else {
-                                        settingsVirtualKeyboard.placeholderText = "Enter WiFi password..."
-                                        settingsVirtualKeyboard.open("", true)
-                                    }
-                                }
-                            }
-
-                            Behavior on color { ColorAnimation { duration: 120 } }
-                            Behavior on border.color { ColorAnimation { duration: 120 } }
-                        }
-                    }
-
-                    // Password input (visible when a secured network is selected)
-                    Rectangle {
-                        visible: selectedSsid !== "" && !wifiConnecting
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        radius: 10
-                        color: ThemeManager.getColor("hover")
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: 8
-                            spacing: 8
-
-                            Text {
-                                text: selectedSsid
-                                font.pixelSize: ThemeManager.getFontSize("small")
-                                font.family: ThemeManager.getFont("body")
-                                font.bold: true
-                                color: ThemeManager.getColor("textPrimary")
-                                Layout.preferredWidth: 140
-                                elide: Text.ElideRight
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                radius: 8
-                                color: ThemeManager.getColor("surface")
-                                border.color: settingsWifiPasswordField.activeFocus
-                                              ? ThemeManager.getColor("focus") : "transparent"
-                                border.width: settingsWifiPasswordField.activeFocus ? 2 : 0
-
-                                Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                                TextInput {
-                                    id: settingsWifiPasswordField
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    verticalAlignment: TextInput.AlignVCenter
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textPrimary")
-                                    echoMode: TextInput.Password
-                                    clip: true
-                                    onAccepted: {
-                                        if (text.length > 0 && !wifiConnecting) {
-                                            wifiConnecting = true
-                                            wifiStatus = "Connecting to " + selectedSsid + "..."
-                                            GameManager.connectToWifi(selectedSsid, text)
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    anchors.fill: parent
-                                    anchors.margins: 8
-                                    verticalAlignment: Text.AlignVCenter
-                                    visible: settingsWifiPasswordField.text === ""
-                                             && !settingsWifiPasswordField.activeFocus
-                                    text: "Enter password..."
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.preferredWidth: settingsConnectLabel.width + 24
-                                Layout.fillHeight: true
-                                radius: 8
-                                color: ThemeManager.getColor("primary")
-
-                                Text {
-                                    id: settingsConnectLabel
-                                    anchors.centerIn: parent
-                                    text: "Connect"
-                                    font.pixelSize: ThemeManager.getFontSize("small")
-                                    font.family: ThemeManager.getFont("body")
-                                    font.bold: true
-                                    color: "white"
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (settingsWifiPasswordField.text.length > 0
-                                                && !wifiConnecting) {
-                                            wifiConnecting = true
-                                            wifiStatus = "Connecting to " + selectedSsid + "..."
-                                            GameManager.connectToWifi(
-                                                selectedSsid,
-                                                settingsWifiPasswordField.text)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Connecting indicator
-                    Text {
-                        visible: wifiConnecting
-                        text: wifiStatus
-                        font.pixelSize: ThemeManager.getFontSize("small")
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("primary")
-
-                        SequentialAnimation on opacity {
-                            running: wifiConnecting
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.4; duration: 600 }
-                            NumberAnimation { to: 1.0; duration: 600 }
-                        }
-                    }
+                // Open Networks arrow
+                Text {
+                    text: ">"
+                    font.pixelSize: 18
+                    font.bold: true
+                    color: ThemeManager.getColor("textSecondary")
                 }
             }
         }
@@ -2108,6 +1753,391 @@ Rectangle {
         GameManager.switchToDesktop()
     }
 
+    // ─── Wi-Fi Network Popup ───
+    Rectangle {
+        id: wifiPopup
+        visible: wifiPopupVisible
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.7)
+        z: 500
+
+        MouseArea { anchors.fill: parent; onClicked: {} } // block clicks behind
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 500
+            height: wifiPopupCol.height + 48
+            radius: 16
+            color: ThemeManager.getColor("surface")
+
+            ColumnLayout {
+                id: wifiPopupCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 24
+                spacing: 16
+
+                // Title row
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    Text {
+                        text: "Wi-Fi Networks"
+                        font.pixelSize: ThemeManager.getFontSize("large")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.fillWidth: true
+                    }
+
+                    // Refresh button (only in list state)
+                    Rectangle {
+                        visible: wifiPopupState === "list"
+                        Layout.preferredWidth: popupRefreshLabel.width + 24
+                        Layout.preferredHeight: 32
+                        radius: 8
+                        color: popupRefreshArea.containsMouse
+                               ? ThemeManager.getColor("hover") : "transparent"
+
+                        Text {
+                            id: popupRefreshLabel
+                            anchors.centerIn: parent
+                            text: "Refresh"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("primary")
+                        }
+
+                        MouseArea {
+                            id: popupRefreshArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                wifiPopupState = "scanning"
+                                wifiScanning = true
+                                settingsWifiModel.clear()
+                                GameManager.scanWifiNetworks()
+                            }
+                        }
+                    }
+
+                    // Close button
+                    Rectangle {
+                        visible: wifiPopupState !== "connecting"
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
+                        radius: 16
+                        color: popupCloseArea.containsMouse
+                               ? ThemeManager.getColor("hover") : "transparent"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "X"
+                            font.pixelSize: 14
+                            font.bold: true
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+
+                        MouseArea {
+                            id: popupCloseArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: closeWifiPopup()
+                        }
+                    }
+                }
+
+                // ── Scanning state ──
+                RowLayout {
+                    visible: wifiPopupState === "scanning"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 64
+                    spacing: 12
+                    Layout.alignment: Qt.AlignHCenter
+
+                    Item {
+                        Layout.preferredWidth: 28
+                        Layout.preferredHeight: 28
+                        Layout.alignment: Qt.AlignVCenter
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 26
+                            height: 26
+                            radius: 13
+                            color: "transparent"
+                            border.width: 3
+                            border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                            Rectangle {
+                                width: 26
+                                height: 26
+                                radius: 13
+                                color: "transparent"
+                                border.width: 3
+                                border.color: "transparent"
+
+                                Rectangle {
+                                    width: 10
+                                    height: 3
+                                    radius: 1.5
+                                    color: ThemeManager.getColor("primary")
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.top: parent.top
+                                }
+
+                                RotationAnimation on rotation {
+                                    from: 0; to: 360
+                                    duration: 1000
+                                    loops: Animation.Infinite
+                                    running: wifiPopupState === "scanning"
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Scanning for networks..."
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+
+                        SequentialAnimation on opacity {
+                            running: wifiPopupState === "scanning"
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.4; duration: 600 }
+                            NumberAnimation { to: 1.0; duration: 600 }
+                        }
+                    }
+                }
+
+                // ── List state ──
+                ListView {
+                    id: wifiPopupList
+                    visible: wifiPopupState === "list"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(settingsWifiModel.count * 54, 324)
+                    clip: true
+                    spacing: 4
+                    model: ListModel { id: settingsWifiModel }
+
+                    delegate: Rectangle {
+                        property bool isKbFocused: wifiPopupState === "list" && wifiFocusIndex === index
+                        width: wifiPopupList.width
+                        height: 50
+                        radius: 10
+                        color: (wifiPopupItemArea.containsMouse || isKbFocused)
+                               ? Qt.rgba(ThemeManager.getColor("primary").r,
+                                         ThemeManager.getColor("primary").g,
+                                         ThemeManager.getColor("primary").b, 0.15)
+                               : ThemeManager.getColor("hover")
+                        border.color: model.ssid === connectedSsid
+                                      ? ThemeManager.getColor("accent")
+                                      : (wifiPopupItemArea.containsMouse || isKbFocused)
+                                        ? ThemeManager.getColor("focus") : "transparent"
+                        border.width: (model.ssid === connectedSsid || wifiPopupItemArea.containsMouse || isKbFocused) ? 2 : 0
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 16
+                            anchors.rightMargin: 16
+                            spacing: 12
+
+                            Text {
+                                text: model.signal > 70 ? "|||" :
+                                      model.signal > 40 ? "|| " : "|  "
+                                font.pixelSize: 14
+                                font.family: "monospace"
+                                font.bold: true
+                                color: model.signal > 70
+                                       ? ThemeManager.getColor("accent")
+                                       : model.signal > 40
+                                         ? ThemeManager.getColor("secondary")
+                                         : ThemeManager.getColor("textSecondary")
+                            }
+
+                            Text {
+                                text: model.ssid
+                                font.pixelSize: ThemeManager.getFontSize("small")
+                                font.family: ThemeManager.getFont("body")
+                                font.bold: model.ssid === connectedSsid
+                                color: ThemeManager.getColor("textPrimary")
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                visible: model.ssid === connectedSsid
+                                text: "Connected"
+                                font.pixelSize: ThemeManager.getFontSize("small")
+                                font.family: ThemeManager.getFont("body")
+                                color: ThemeManager.getColor("accent")
+                            }
+
+                            Text {
+                                visible: model.security !== "" && model.security !== "--"
+                                         && model.ssid !== connectedSsid
+                                text: model.security
+                                font.pixelSize: ThemeManager.getFontSize("small")
+                                font.family: ThemeManager.getFont("body")
+                                color: ThemeManager.getColor("textSecondary")
+                            }
+                        }
+
+                        MouseArea {
+                            id: wifiPopupItemArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (model.ssid === connectedSsid) return
+                                selectedSsid = model.ssid
+                                if (model.security === "" || model.security === "--") {
+                                    wifiConnecting = true
+                                    wifiPopupState = "connecting"
+                                    GameManager.connectToWifi(model.ssid, "")
+                                } else {
+                                    settingsVirtualKeyboard.placeholderText = "Enter password for " + model.ssid + "..."
+                                    settingsVirtualKeyboard.open("", true)
+                                }
+                            }
+                        }
+
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                        Behavior on border.color { ColorAnimation { duration: 120 } }
+                    }
+                }
+
+                // ── Connecting state ──
+                ColumnLayout {
+                    visible: wifiPopupState === "connecting"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 100
+                    spacing: 16
+                    Layout.alignment: Qt.AlignHCenter
+
+                    Item {
+                        Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignHCenter
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 38
+                            height: 38
+                            radius: 19
+                            color: "transparent"
+                            border.width: 3
+                            border.color: Qt.rgba(1, 1, 1, 0.08)
+
+                            Rectangle {
+                                width: 38
+                                height: 38
+                                radius: 19
+                                color: "transparent"
+                                border.width: 3
+                                border.color: "transparent"
+
+                                Rectangle {
+                                    width: 14
+                                    height: 3
+                                    radius: 1.5
+                                    color: ThemeManager.getColor("primary")
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.top: parent.top
+                                }
+
+                                RotationAnimation on rotation {
+                                    from: 0; to: 360
+                                    duration: 1000
+                                    loops: Animation.Infinite
+                                    running: wifiPopupState === "connecting"
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Connecting to " + selectedSsid + "..."
+                        font.pixelSize: ThemeManager.getFontSize("medium")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textPrimary")
+                        Layout.alignment: Qt.AlignHCenter
+
+                        SequentialAnimation on opacity {
+                            running: wifiPopupState === "connecting"
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.4; duration: 600 }
+                            NumberAnimation { to: 1.0; duration: 600 }
+                        }
+                    }
+                }
+
+                // ── Done state (success or error) ──
+                ColumnLayout {
+                    visible: wifiPopupState === "done"
+                    Layout.fillWidth: true
+                    spacing: 16
+                    Layout.alignment: Qt.AlignHCenter
+
+                    Text {
+                        text: wifiResultSuccess ? "Connected!" : "Connection Failed"
+                        font.pixelSize: ThemeManager.getFontSize("large")
+                        font.family: ThemeManager.getFont("heading")
+                        font.bold: true
+                        color: wifiResultSuccess
+                               ? ThemeManager.getColor("accent")
+                               : "#ff6b6b"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: wifiResultMessage
+                        font.pixelSize: ThemeManager.getFontSize("small")
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: dismissLabel.width + 48
+                        Layout.preferredHeight: 40
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 4
+                        radius: 8
+                        color: dismissArea.containsMouse
+                               ? ThemeManager.getColor("hover")
+                               : ThemeManager.getColor("primary")
+
+                        Text {
+                            id: dismissLabel
+                            anchors.centerIn: parent
+                            text: "OK"
+                            font.pixelSize: ThemeManager.getFontSize("small")
+                            font.family: ThemeManager.getFont("body")
+                            font.bold: true
+                            color: "white"
+                        }
+
+                        MouseArea {
+                            id: dismissArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: closeWifiPopup()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ─── Virtual Keyboard for WiFi password ───
     VirtualKeyboard {
         id: settingsVirtualKeyboard
@@ -2115,16 +2145,16 @@ Rectangle {
         z: 1000
 
         onAccepted: function(text) {
-            // Use the entered text as WiFi password
-            settingsWifiPasswordField.text = text
-            if (text.length > 0 && !wifiConnecting) {
+            if (text.length > 0 && !wifiConnecting && selectedSsid !== "") {
                 wifiConnecting = true
-                wifiStatus = "Connecting to " + selectedSsid + "..."
+                wifiPopupState = "connecting"
                 GameManager.connectToWifi(selectedSsid, text)
             }
             settingsRoot.forceActiveFocus()
         }
         onCancelled: {
+            // Go back to the network list
+            if (wifiPopupVisible) wifiPopupState = "list"
             settingsRoot.forceActiveFocus()
         }
     }

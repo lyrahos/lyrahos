@@ -492,6 +492,14 @@ void GameManager::scanWifiNetworks() {
 }
 
 void GameManager::connectToWifi(const QString& ssid, const QString& password) {
+    // Delete any existing (possibly stale) connection profile for this SSID
+    // to avoid "802-11-wireless.security.key-mgmt: property is missing" errors
+    // when NetworkManager tries to reuse a broken saved profile.
+    QProcess deleteProc;
+    deleteProc.start("nmcli", {"connection", "delete", "id", ssid});
+    deleteProc.waitForFinished(3000);
+    // Ignore exit code — it's fine if no profile existed.
+
     QProcess *proc = new QProcess(this);
     QStringList args = {"device", "wifi", "connect", ssid};
     if (!password.isEmpty()) {
