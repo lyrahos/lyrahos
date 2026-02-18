@@ -98,6 +98,7 @@ private:
     void dispatchAction(const QString &action);
     void emitLegacySignal(const QString &action);
     void sendSyntheticKeyEvent(const QString &action);
+    void sendSyntheticKey(int qtKey);
 
     // Action-to-legacy-signal dispatch table
     static QHash<QString, void(ControllerManager::*)()> s_legacySignals;

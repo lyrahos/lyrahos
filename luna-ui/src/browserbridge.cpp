@@ -129,8 +129,9 @@ void BrowserBridge::handleAction(const QString &action) {
 
 void BrowserBridge::attemptConnection() {
     if (m_connected) return;
-    if (m_connectAttempts >= 15) {
-        qWarning() << "BrowserBridge: gave up connecting after 15 attempts";
+    if (!m_active) return;
+    if (m_connectAttempts >= 30) {
+        qWarning() << "BrowserBridge: gave up connecting after 30 attempts";
         return;
     }
     m_connectAttempts++;
@@ -208,14 +209,23 @@ void BrowserBridge::onWsDisconnected() {
     }
     if (wasConnected) {
         emit connectedChanged();
+        // Only signal browser closed if we actually had a working session.
+        // A disconnect during the handshake phase is just a retry, not a
+        // reason to tear down the browser.
         emit browserClosed();
+    } else if (m_active) {
+        // Handshake failed (e.g. Chromium rejected the WS upgrade).
+        // Retry from target discovery.
+        qDebug() << "BrowserBridge: WS handshake failed, retrying discovery...";
+        m_connectTimer.start(2000);
     }
 }
 
 void BrowserBridge::onWsError(QAbstractSocket::SocketError error) {
-    Q_UNUSED(error);
-    qDebug() << "BrowserBridge: WebSocket error:" << m_ws.errorString();
-    if (!m_connected) {
+    qWarning() << "BrowserBridge: WebSocket error:" << error << m_ws.errorString();
+    if (!m_connected && m_active) {
+        // Retry from target discovery — the WS URL itself may have changed
+        // if the browser reloaded or Chromium rejected the handshake (403).
         m_connectTimer.start(2000);
     }
 }

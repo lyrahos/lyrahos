@@ -492,6 +492,14 @@ void GameManager::scanWifiNetworks() {
 }
 
 void GameManager::connectToWifi(const QString& ssid, const QString& password) {
+    // Delete any existing (possibly stale) connection profile for this SSID
+    // to avoid "802-11-wireless.security.key-mgmt: property is missing" errors
+    // when NetworkManager tries to reuse a broken saved profile.
+    QProcess deleteProc;
+    deleteProc.start("nmcli", {"connection", "delete", "id", ssid});
+    deleteProc.waitForFinished(3000);
+    // Ignore exit code — it's fine if no profile existed.
+
     QProcess *proc = new QProcess(this);
     QStringList args = {"device", "wifi", "connect", ssid};
     if (!password.isEmpty()) {
@@ -1421,23 +1429,20 @@ void GameManager::openApiKeyInBrowser() {
         QStringList args;
     };
     // Enable remote debugging so scrapeApiKeyFromPage() can read the DOM.
+    // --remote-allow-origins=*  is REQUIRED for Chromium 111+ — without it
+    // the CDP WebSocket handshake is rejected (403) and BrowserBridge can
+    // never connect for controller navigation.
     m_apiKeyBrowserType = "";
+    QStringList cdpFlags = {"--kiosk", "--no-first-run",
+                            "--window-size=" + geom, "--window-position=0,0",
+                            "--remote-debugging-port=9222",
+                            "--remote-allow-origins=*"};
     QVector<BrowserOption> browsers = {
-        {"brave",            {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"brave-browser",    {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"chromium",         {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"chromium-browser", {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"google-chrome",    {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
+        {"brave",            cdpFlags + QStringList{url}},
+        {"brave-browser",    cdpFlags + QStringList{url}},
+        {"chromium",         cdpFlags + QStringList{url}},
+        {"chromium-browser", cdpFlags + QStringList{url}},
+        {"google-chrome",    cdpFlags + QStringList{url}},
         {"firefox",          {"--kiosk", "--width", QString::number(screenW),
                               "--height", QString::number(screenH), url}},
     };
