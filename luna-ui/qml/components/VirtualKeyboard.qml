@@ -3,8 +3,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // ─── Luna-UI Virtual Keyboard ───
-// Controller-navigable on-screen keyboard for text input.
-// Uses D-pad to move between keys, Confirm to press, Back to cancel.
+// Console-style controller-navigable on-screen keyboard.
+// Rectangular grid: numbers row + 3 letter rows (10 keys each) + action row.
+// Double-press Shift or press L3 to toggle Caps Lock.
+// LB / RB to switch between letters and symbols.
 
 Item {
     id: vk
@@ -16,38 +18,47 @@ Item {
     property string placeholderText: "Type here..."
     property bool passwordMode: false
     property bool isShifted: false
-    property bool showNumbers: false
+    property bool isCapsLocked: false
+    property bool showSymbols: false
     property int focusRow: 0
     property int focusCol: 0
+
+    // Double-press Shift detection
+    property real lastShiftTime: 0
+    readonly property int doubleTapMs: 400
 
     signal accepted(string text)
     signal cancelled()
 
-    // ─── Key Layouts ───
+    // ─── Key Layouts (all rows 10 keys wide → rectangle) ───
     readonly property var letterRows: [
-        ["q","w","e","r","t","y","u","i","o","p"],
-        ["a","s","d","f","g","h","j","k","l"],
-        ["z","x","c","v","b","n","m"]
-    ]
-
-    readonly property var numberRows: [
         ["1","2","3","4","5","6","7","8","9","0"],
-        ["@","#","$","_","&","-","+","(",")"],
-        ["!","\"","'",":",";","/","?"]
+        ["q","w","e","r","t","y","u","i","o","p"],
+        ["a","s","d","f","g","h","j","k","l","'"],
+        ["z","x","c","v","b","n","m",".","-","@"]
     ]
 
-    // Action row: Shift | Space | Backspace | Search
-    readonly property var actionKeys: ["Shift", "Space", "Backspace", "Search"]
+    readonly property var symbolRows: [
+        ["!","@","#","$","%","^","&","*","(",")"],
+        ["~","`","+","=","{","}","[","]","|","\\"],
+        ["/",":",";","\"","'","<",">","_","-",","],
+        ["?","!","@","#","$","%","^","&","*","+"]
+    ]
 
-    readonly property var currentRows: showNumbers ? numberRows : letterRows
+    // Action row: Shift | Space | Backspace | Done
+    readonly property var actionKeys: ["Shift", "Space", "Backspace", "Done"]
+
+    readonly property var currentRows: showSymbols ? symbolRows : letterRows
 
     function open(initialText, isPassword) {
         text = initialText || ""
         passwordMode = isPassword || false
         isShifted = false
-        showNumbers = false
+        isCapsLocked = false
+        showSymbols = false
         focusRow = 0
         focusCol = 0
+        lastShiftTime = 0
         visible = true
         vk.forceActiveFocus()
     }
@@ -66,12 +77,32 @@ Item {
         return focusRow >= currentRows.length
     }
 
+    function toggleCapsLock() {
+        isCapsLocked = !isCapsLocked
+        isShifted = isCapsLocked
+    }
+
     function pressCurrentKey() {
         if (isActionRow()) {
             var action = actionKeys[focusCol]
             switch (action) {
             case "Shift":
-                isShifted = !isShifted
+                // Double-tap detection for caps lock
+                var now = Date.now()
+                if (now - lastShiftTime < doubleTapMs) {
+                    // Double press → toggle caps lock
+                    toggleCapsLock()
+                    lastShiftTime = 0
+                } else {
+                    // Single press → one-shot shift (or turn off caps)
+                    if (isCapsLocked) {
+                        isCapsLocked = false
+                        isShifted = false
+                    } else {
+                        isShifted = !isShifted
+                    }
+                    lastShiftTime = now
+                }
                 break
             case "Space":
                 text += " "
@@ -80,16 +111,17 @@ Item {
                 if (text.length > 0)
                     text = text.substring(0, text.length - 1)
                 break
-            case "Search":
+            case "Done":
                 accepted(text)
                 close()
                 break
             }
         } else {
             var ch = currentRows[focusRow][focusCol]
-            if (isShifted) ch = ch.toUpperCase()
+            if (isShifted && !showSymbols) ch = ch.toUpperCase()
             text += ch
-            if (isShifted) isShifted = false
+            // One-shot shift: turn off after typing unless caps locked
+            if (isShifted && !isCapsLocked) isShifted = false
         }
     }
 
@@ -131,12 +163,17 @@ Item {
             close()
             event.accepted = true
             break
-        // Shoulder buttons: toggle number/symbol mode
-        case Qt.Key_BracketLeft:   // L1 often maps here
-        case Qt.Key_BracketRight:  // R1 often maps here
-            showNumbers = !showNumbers
+        // Shoulder buttons: toggle symbols mode
+        case Qt.Key_BracketLeft:
+        case Qt.Key_BracketRight:
+            showSymbols = !showSymbols
             if (focusCol >= currentRowLength(focusRow))
                 focusCol = currentRowLength(focusRow) - 1
+            event.accepted = true
+            break
+        // L3 stick click → toggle caps lock
+        case Qt.Key_CapsLock:
+            toggleCapsLock()
             event.accepted = true
             break
         }
@@ -193,12 +230,12 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.margins: 24
-            spacing: 16
+            spacing: 12
 
             // ─── Text Preview ───
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 64
+                Layout.preferredHeight: 60
                 radius: 14
                 color: ThemeManager.getColor("background")
                 border.color: ThemeManager.getColor("focus")
@@ -212,7 +249,7 @@ Item {
 
                     Text {
                         text: "\u2315"
-                        font.pixelSize: 28
+                        font.pixelSize: 26
                         color: ThemeManager.getColor("textSecondary")
                     }
 
@@ -223,7 +260,7 @@ Item {
                             if (vk.passwordMode) return "\u2022".repeat(vk.text.length)
                             return vk.text
                         }
-                        font.pixelSize: 28
+                        font.pixelSize: 26
                         font.family: ThemeManager.getFont("body")
                         color: vk.text.length > 0
                                ? ThemeManager.getColor("textPrimary")
@@ -236,7 +273,7 @@ Item {
                     Rectangle {
                         visible: vk.text.length > 0
                         Layout.preferredWidth: 2
-                        Layout.preferredHeight: 28
+                        Layout.preferredHeight: 26
                         color: ThemeManager.getColor("focus")
                         opacity: cursorBlink.running ? (cursorBlink.blinkOn ? 1.0 : 0.0) : 1.0
 
@@ -252,24 +289,25 @@ Item {
                 }
             }
 
-            // ─── Mode Toggle Hint ───
+            // ─── Hint Bar ───
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 12
 
+                // Mode badge
                 Rectangle {
-                    Layout.preferredWidth: modeLabel.width + 28
-                    Layout.preferredHeight: 36
+                    Layout.preferredWidth: modeLabel.width + 24
+                    Layout.preferredHeight: 32
                     radius: 8
-                    color: showNumbers
+                    color: showSymbols
                            ? ThemeManager.getColor("accent")
                            : ThemeManager.getColor("primary")
 
                     Text {
                         id: modeLabel
                         anchors.centerIn: parent
-                        text: showNumbers ? "123" : "ABC"
-                        font.pixelSize: 20
+                        text: showSymbols ? "!@#" : "ABC"
+                        font.pixelSize: 18
                         font.family: ThemeManager.getFont("ui")
                         font.bold: true
                         color: "#ffffff"
@@ -277,23 +315,42 @@ Item {
                 }
 
                 Text {
-                    text: "LB / RB to switch"
-                    font.pixelSize: 20
+                    text: "LB/RB switch"
+                    font.pixelSize: 18
                     font.family: ThemeManager.getFont("ui")
                     color: ThemeManager.getColor("textSecondary")
                 }
 
                 Item { Layout.fillWidth: true }
 
+                // Caps lock indicator
+                Rectangle {
+                    visible: isCapsLocked
+                    Layout.preferredWidth: capsLabel.width + 24
+                    Layout.preferredHeight: 32
+                    radius: 8
+                    color: ThemeManager.getColor("accent")
+
+                    Text {
+                        id: capsLabel
+                        anchors.centerIn: parent
+                        text: "CAPS"
+                        font.pixelSize: 18
+                        font.family: ThemeManager.getFont("ui")
+                        font.bold: true
+                        color: "#ffffff"
+                    }
+                }
+
                 Text {
-                    text: "B  Cancel"
-                    font.pixelSize: 20
+                    text: "B Cancel"
+                    font.pixelSize: 18
                     font.family: ThemeManager.getFont("ui")
                     color: ThemeManager.getColor("textSecondary")
                 }
             }
 
-            // ─── Key Rows ───
+            // ─── Key Grid (all rows same width → rectangle) ───
             Repeater {
                 model: currentRows.length
 
@@ -301,17 +358,16 @@ Item {
                     id: keyRow
                     property int rowIndex: index
                     Layout.alignment: Qt.AlignHCenter
-                    spacing: 8
+                    spacing: 6
 
                     Repeater {
                         model: currentRows[keyRow.rowIndex]
 
                         Rectangle {
-                            id: keyRect
                             property bool isFocused: vk.focusRow === keyRow.rowIndex && vk.focusCol === index
                             width: 72
-                            height: 64
-                            radius: 12
+                            height: 58
+                            radius: 10
                             color: isFocused
                                    ? ThemeManager.getColor("primary")
                                    : ThemeManager.getColor("hover")
@@ -328,11 +384,11 @@ Item {
                                 anchors.centerIn: parent
                                 text: {
                                     var ch = modelData
-                                    if (!vk.showNumbers && vk.isShifted)
+                                    if (!vk.showSymbols && vk.isShifted)
                                         ch = ch.toUpperCase()
                                     return ch
                                 }
-                                font.pixelSize: 28
+                                font.pixelSize: 26
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: isFocused
                                 color: isFocused ? "#ffffff" : ThemeManager.getColor("textPrimary")
@@ -355,7 +411,7 @@ Item {
             // ─── Action Row ───
             Row {
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 12
+                spacing: 6
 
                 Repeater {
                     model: actionKeys
@@ -363,23 +419,24 @@ Item {
                     Rectangle {
                         property bool isFocused: vk.isActionRow() && vk.focusCol === index
                         property bool isActive: {
-                            if (modelData === "Shift") return vk.isShifted
+                            if (modelData === "Shift") return vk.isShifted || vk.isCapsLocked
                             return false
                         }
                         width: {
                             switch (modelData) {
-                            case "Space": return 320
-                            case "Backspace": return 140
-                            case "Search": return 140
+                            case "Space": return 330
+                            case "Backspace": return 130
+                            case "Done": return 130
                             default: return 100
                             }
                         }
-                        height: 64
-                        radius: 12
+                        height: 58
+                        radius: 10
                         color: {
                             if (isFocused) return ThemeManager.getColor("primary")
+                            if (isActive && vk.isCapsLocked) return ThemeManager.getColor("accent")
                             if (isActive) return Qt.darker(ThemeManager.getColor("primary"), 1.4)
-                            if (modelData === "Search") return Qt.rgba(
+                            if (modelData === "Done") return Qt.rgba(
                                 ThemeManager.getColor("accent").r,
                                 ThemeManager.getColor("accent").g,
                                 ThemeManager.getColor("accent").b, 0.3)
@@ -398,18 +455,20 @@ Item {
                             anchors.centerIn: parent
                             text: {
                                 switch (modelData) {
-                                case "Shift": return vk.isShifted ? "\u21E7 ON" : "\u21E7"
+                                case "Shift":
+                                    if (vk.isCapsLocked) return "\u21E7 CAPS"
+                                    return vk.isShifted ? "\u21E7 ON" : "\u21E7"
                                 case "Space": return "\u2423  Space"
                                 case "Backspace": return "\u232B"
-                                case "Search": return "\u2315 Search"
+                                case "Done": return "\u2315 Done"
                                 default: return modelData
                                 }
                             }
-                            font.pixelSize: modelData === "Backspace" ? 32 : 24
+                            font.pixelSize: modelData === "Backspace" ? 30 : 22
                             font.family: ThemeManager.getFont("ui")
-                            font.bold: isFocused || modelData === "Search"
+                            font.bold: isFocused || modelData === "Done"
                             color: isFocused ? "#ffffff"
-                                   : modelData === "Search" ? ThemeManager.getColor("accent")
+                                   : modelData === "Done" ? ThemeManager.getColor("accent")
                                    : ThemeManager.getColor("textPrimary")
                         }
 
