@@ -1421,23 +1421,20 @@ void GameManager::openApiKeyInBrowser() {
         QStringList args;
     };
     // Enable remote debugging so scrapeApiKeyFromPage() can read the DOM.
+    // --remote-allow-origins=*  is REQUIRED for Chromium 111+ — without it
+    // the CDP WebSocket handshake is rejected (403) and BrowserBridge can
+    // never connect for controller navigation.
     m_apiKeyBrowserType = "";
+    QStringList cdpFlags = {"--kiosk", "--no-first-run",
+                            "--window-size=" + geom, "--window-position=0,0",
+                            "--remote-debugging-port=9222",
+                            "--remote-allow-origins=*"};
     QVector<BrowserOption> browsers = {
-        {"brave",            {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"brave-browser",    {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"chromium",         {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"chromium-browser", {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"google-chrome",    {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
+        {"brave",            cdpFlags + QStringList{url}},
+        {"brave-browser",    cdpFlags + QStringList{url}},
+        {"chromium",         cdpFlags + QStringList{url}},
+        {"chromium-browser", cdpFlags + QStringList{url}},
+        {"google-chrome",    cdpFlags + QStringList{url}},
         {"firefox",          {"--kiosk", "--width", QString::number(screenW),
                               "--height", QString::number(screenH), url}},
     };
