@@ -29,6 +29,7 @@ Rectangle {
     property bool apiKeyBrowserOpen: false
     property string detectedApiKey: ""
     property bool showManualInput: false
+    property bool browserInputActive: false   // true when virtual keyboard targets a browser input
 
     // Sub-states for step 3 (SteamCMD)
     property string steamCmdPromptType: ""  // "password" or "steamguard"
@@ -253,6 +254,41 @@ Rectangle {
             && style.opacity !== '0';
     }
 
+    /* Return the best visual bounding rect for an element.
+       Handles inline elements that wrap across lines (use the largest
+       individual client rect instead of the union), and tiny interactive
+       elements wrapped inside a styled parent container. */
+    function getVisualRect(el) {
+        var rects = el.getClientRects();
+        var r = el.getBoundingClientRect();
+
+        // Inline elements wrapping across lines produce multiple rects;
+        // the union (getBoundingClientRect) can be absurdly wide.
+        // Pick the largest individual rect instead.
+        if (rects.length > 1) {
+            var best = rects[0];
+            var bestArea = best.width * best.height;
+            for (var i = 1; i < rects.length; i++) {
+                var a = rects[i].width * rects[i].height;
+                if (a > bestArea) { best = rects[i]; bestArea = a; }
+            }
+            r = best;
+        }
+
+        // If the element itself is very small (icon-only button, hidden
+        // checkbox, etc.) but lives inside a reasonably-sized parent that
+        // looks like the actual visual target, snap to the parent.
+        if ((r.width < 16 || r.height < 16) && el.parentElement) {
+            var pr = el.parentElement.getBoundingClientRect();
+            if (pr.width >= r.width && pr.height >= r.height
+                && pr.width < 500 && pr.height < 120) {
+                r = pr;
+            }
+        }
+
+        return r;
+    }
+
     function scanElements() {
         var all = document.querySelectorAll(SELECTORS);
         elements = [];
@@ -279,11 +315,12 @@ Rectangle {
         if (elements.length === 0) { highlightEl.style.display = 'none'; return; }
         var el = elements[currentIndex];
         if (!el) return;
-        var r = el.getBoundingClientRect();
-        highlightEl.style.left   = (r.left - 4) + 'px';
-        highlightEl.style.top    = (r.top - 4)  + 'px';
-        highlightEl.style.width  = (r.width + 8) + 'px';
-        highlightEl.style.height = (r.height + 8) + 'px';
+        var r = getVisualRect(el);
+        var pad = 3;
+        highlightEl.style.left   = (r.left - pad) + 'px';
+        highlightEl.style.top    = (r.top - pad)  + 'px';
+        highlightEl.style.width  = (r.width + pad * 2) + 'px';
+        highlightEl.style.height = (r.height + pad * 2) + 'px';
         highlightEl.style.display = 'block';
         el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
@@ -292,7 +329,7 @@ Rectangle {
         if (elements.length < 2) return currentIndex;
         var cur = elements[currentIndex];
         if (!cur) return currentIndex;
-        var cr = cur.getBoundingClientRect();
+        var cr = getVisualRect(cur);
         var cx = cr.left + cr.width / 2;
         var cy = cr.top + cr.height / 2;
         var bestIdx = -1;
@@ -300,17 +337,17 @@ Rectangle {
 
         for (var i = 0; i < elements.length; i++) {
             if (i === currentIndex) continue;
-            var er = elements[i].getBoundingClientRect();
+            var er = getVisualRect(elements[i]);
             var ex = er.left + er.width / 2;
             var ey = er.top + er.height / 2;
             var dx = ex - cx;
             var dy = ey - cy;
             var inDirection = false;
             switch (direction) {
-                case 'up':    inDirection = dy < -10; break;
-                case 'down':  inDirection = dy > 10;  break;
-                case 'left':  inDirection = dx < -10; break;
-                case 'right': inDirection = dx > 10;  break;
+                case 'up':    inDirection = dy < -5; break;
+                case 'down':  inDirection = dy > 5;  break;
+                case 'left':  inDirection = dx < -5; break;
+                case 'right': inDirection = dx > 5;  break;
             }
             if (!inDirection) continue;
             var dist;
@@ -339,13 +376,51 @@ Rectangle {
         if (!el) return 'no-element';
         el.focus();
         el.click();
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (tag === 'input' && (type === 'text' || type === 'password'
+                || type === 'email' || type === 'search' || type === 'url'
+                || type === 'tel' || type === 'number')
+            || tag === 'textarea') {
+            return 'input:' + type + ':' + (el.value || '');
+        }
         return 'clicked:' + el.tagName + ' ' + (el.textContent||'').substring(0,40);
+    };
+
+    nav.setText = function(text) {
+        var el = document.activeElement;
+        if (!el) return 'no-active';
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+        if (!nativeSetter) nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value'
+        );
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(el, text);
+        } else {
+            el.value = text;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'set:' + text.length + ' chars';
     };
 
     nav.scrollPage = function(direction) {
         window.scrollBy(0, direction === 'up' ? -400 : 400);
         return 'scrolled:' + direction;
     };
+
+    // Re-scan when the DOM changes so newly-added elements (Steam
+    // loads content dynamically) are picked up automatically.
+    var observer = new MutationObserver(function() {
+        var oldLen = elements.length;
+        scanElements();
+        if (elements.length !== oldLen) {
+            updateHighlight();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
 
     scanElements();
     if (elements.length > 0) updateHighlight();
@@ -380,7 +455,21 @@ Rectangle {
                 apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
                 break
             case "confirm":
-                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.activate()", logResult)
+                apiKeyWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.activate()",
+                    function(result) {
+                        console.log("[wizard-browser] activate result:", result)
+                        if (result && result.toString().indexOf("input:") === 0) {
+                            // result is "input:<type>:<currentValue>"
+                            var parts = result.toString().split(":")
+                            var inputType = parts[1] || "text"
+                            var currentVal = parts.slice(2).join(":") // value may contain colons
+                            var isPassword = (inputType === "password")
+                            wizard.browserInputActive = true
+                            wizardVirtualKeyboard.placeholderText = isPassword ? "Enter password..." : "Type here..."
+                            wizardVirtualKeyboard.open(currentVal, isPassword)
+                        }
+                    })
                 break
             case "scroll_up":
                 apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
@@ -1850,6 +1939,14 @@ Rectangle {
             }
         }
 
+        // Persistent profile so cookies / session data survive across
+        // browser open/close cycles (Steam login is preserved).
+        WebEngineProfile {
+            id: steamWebProfile
+            storageName: "steam-wizard"
+            httpCacheType: WebEngineProfile.DiskHttpCache
+        }
+
         WebEngineView {
             id: apiKeyWebView
             anchors.top: browserHeader.bottom
@@ -1857,6 +1954,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
+            profile: steamWebProfile
             // Prevent WebEngineView from stealing focus so the wizard's
             // key handler keeps working for non-browser steps.
             settings.focusOnNavigationEnabled: false
@@ -2060,7 +2158,16 @@ Rectangle {
 
         onAccepted: function(typedText) {
             // Route typed text to the correct input based on current state
-            if (wizard.currentStep === 2 && wizard.showManualInput) {
+            if (wizard.browserInputActive) {
+                // Send text back into the embedded browser's focused input
+                wizard.browserInputActive = false
+                var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                apiKeyWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
+                    function(result) {
+                        console.log("[wizard-browser] setText result:", result)
+                    })
+            } else if (wizard.currentStep === 2 && wizard.showManualInput) {
                 manualKeyInput.text = typedText
                 if (typedText.trim().length >= 20) {
                     GameManager.setSteamApiKey(typedText.trim())
@@ -2089,6 +2196,7 @@ Rectangle {
         }
 
         onCancelled: {
+            wizard.browserInputActive = false
             wizard.forceActiveFocus()
         }
     }
