@@ -42,6 +42,8 @@ Rectangle {
     property string dealsErrorMsg: ""
     property string igdbErrorMsg: ""
 
+    signal openDealUrl(string url, string storeName)
+
     // ─── Keyboard Navigation ───
     // Zones: "screenshots", "stores"
     property string popupNavZone: "screenshots"
@@ -97,7 +99,12 @@ Rectangle {
             break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            // Currently just visual focus; store items don't have link actions
+            if (popupNavZone === "stores" && storeFocusIndex >= 0 && storeFocusIndex < gameDeals.length) {
+                var deal = gameDeals[storeFocusIndex]
+                if (deal.dealLink) {
+                    openDealUrl(deal.dealLink, deal.storeName || "")
+                }
+            }
             event.accepted = true
             break
         }
@@ -1028,6 +1035,10 @@ Rectangle {
                                                 anchors.fill: parent
                                                 hoverEnabled: true
                                                 cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    if (modelData.dealLink)
+                                                        detailPopup.openDealUrl(modelData.dealLink, modelData.storeName || "")
+                                                }
                                             }
 
                                             RowLayout {

@@ -93,6 +93,17 @@ Rectangle {
         return apiKeyBrowserOpen && currentStep === 2 && !apiKeyConfirmOverlay.visible
     }
 
+    // Navigate to the Steam API key page only if the WebEngineView
+    // isn't already showing it (avoids a full reload that loses the
+    // logged-in session when the user just pressed B to hide the
+    // browser and then re-opened it).
+    function ensureSteamPage() {
+        var cur = apiKeyWebView.url.toString()
+        if (cur.indexOf("steamcommunity.com") === -1) {
+            apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+        }
+    }
+
     function wizActivate(idx) {
         switch (currentStep) {
         case 0:
@@ -126,7 +137,7 @@ Rectangle {
                     wizard.showManualInput = false
                     wizard.apiKeyScrapeErrorMsg = ""
                     wizard.apiKeyBrowserOpen = true
-                    apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                    ensureSteamPage()
                 } else if (idx === 2) {
                     wizard.currentStep = 0
                 } else if (idx === 3) {
@@ -137,7 +148,7 @@ Rectangle {
             } else {
                 if (idx === 0) {
                     wizard.apiKeyBrowserOpen = true
-                    apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                    ensureSteamPage()
                 } else if (idx === 1) {
                     wizard.currentStep = 0
                 } else if (idx === 2) {
@@ -497,10 +508,9 @@ Rectangle {
                 apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
-                console.log("[wizard-browser] closing browser")
+                console.log("[wizard-browser] closing browser (preserving page)")
                 wizard.apiKeyBrowserOpen = false
                 apiKeyPollTimer.stop()
-                apiKeyWebView.url = "about:blank"
                 break
             default:
                 break
@@ -532,7 +542,6 @@ Rectangle {
                     wizard.currentStep = 3
                 } else {
                     apiKeyConfirmOverlay.visible = false
-                    apiKeyWebView.url = "about:blank"
                     wizard.detectedApiKey = ""
                     wizard.apiKeyBrowserOpen = false
                     wizard.showManualInput = true
@@ -1070,7 +1079,7 @@ Rectangle {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             wizard.apiKeyBrowserOpen = true
-                            apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                            ensureSteamPage()
                         }
                     }
                 }
@@ -1320,7 +1329,7 @@ Rectangle {
                                 wizard.showManualInput = false
                                 wizard.apiKeyScrapeErrorMsg = ""
                                 wizard.apiKeyBrowserOpen = true
-                                apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                                ensureSteamPage()
                             }
                         }
                     }
@@ -1951,7 +1960,6 @@ Rectangle {
                     onClicked: {
                         wizard.apiKeyBrowserOpen = false
                         apiKeyPollTimer.stop()
-                        apiKeyWebView.url = "about:blank"
                         wizard.showManualInput = true
                     }
                 }
@@ -2163,7 +2171,6 @@ Rectangle {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 apiKeyConfirmOverlay.visible = false
-                                apiKeyWebView.url = "about:blank"
                                 wizard.detectedApiKey = ""
                                 wizard.apiKeyBrowserOpen = false
                                 wizard.showManualInput = true
