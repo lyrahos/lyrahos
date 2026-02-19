@@ -264,41 +264,47 @@ Rectangle {
             return
         }
 
-        // Browser navigation — inject JS into the embedded WebEngineView
+        // Browser navigation — inject JS into the embedded WebEngineView.
+        // All four d-pad directions cycle focus among interactive elements;
+        // the page auto-scrolls to keep the focused element visible.
         if (apiKeyBrowserOpen && currentStep === 2) {
+            var focusJS =
+                "(function(dir) {" +
+                "  var focusable = Array.from(document.querySelectorAll(" +
+                "    'a[href], button, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'" +
+                "  )).filter(function(el) {" +
+                "    return el.offsetParent !== null && !el.disabled;" +
+                "  });" +
+                "  if (!focusable.length) return;" +
+                "  var idx = focusable.indexOf(document.activeElement);" +
+                "  var next;" +
+                "  if (dir === 1) {" +
+                "    next = idx < focusable.length - 1 ? idx + 1 : 0;" +
+                "  } else {" +
+                "    next = idx > 0 ? idx - 1 : focusable.length - 1;" +
+                "  }" +
+                "  focusable[next].focus();" +
+                "  focusable[next].scrollIntoView({block:'center',behavior:'smooth'});" +
+                "})"
             switch (event.key) {
             case Qt.Key_Up:
-                apiKeyWebView.runJavaScript("window.scrollBy(0, -100)")
+                apiKeyWebView.runJavaScript(focusJS + "(-1)")
                 event.accepted = true; break
             case Qt.Key_Down:
-                apiKeyWebView.runJavaScript("window.scrollBy(0, 100)")
+                apiKeyWebView.runJavaScript(focusJS + "(1)")
                 event.accepted = true; break
             case Qt.Key_Left:
-                apiKeyWebView.runJavaScript(
-                    "(function() {" +
-                    "  var focusable = Array.from(document.querySelectorAll(" +
-                    "    'a[href], button, input, select, textarea, [tabindex]'));" +
-                    "  var idx = focusable.indexOf(document.activeElement);" +
-                    "  if (idx > 0) focusable[idx - 1].focus();" +
-                    "  else if (focusable.length) focusable[focusable.length - 1].focus();" +
-                    "})()")
+                apiKeyWebView.runJavaScript(focusJS + "(-1)")
                 event.accepted = true; break
             case Qt.Key_Right:
-                apiKeyWebView.runJavaScript(
-                    "(function() {" +
-                    "  var focusable = Array.from(document.querySelectorAll(" +
-                    "    'a[href], button, input, select, textarea, [tabindex]'));" +
-                    "  var idx = focusable.indexOf(document.activeElement);" +
-                    "  if (idx < focusable.length - 1) focusable[idx + 1].focus();" +
-                    "  else if (focusable.length) focusable[0].focus();" +
-                    "})()")
+                apiKeyWebView.runJavaScript(focusJS + "(1)")
                 event.accepted = true; break
             case Qt.Key_Return:
             case Qt.Key_Enter:
                 apiKeyWebView.runJavaScript(
                     "(function() {" +
                     "  var el = document.activeElement;" +
-                    "  if (el && el !== document.body) { el.click(); return; }" +
+                    "  if (el && el !== document.body) el.click();" +
                     "})()")
                 event.accepted = true; break
             case Qt.Key_Escape:
