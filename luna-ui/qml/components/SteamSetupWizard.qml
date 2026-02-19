@@ -1939,6 +1939,14 @@ Rectangle {
             }
         }
 
+        // Persistent profile so cookies / session data survive across
+        // browser open/close cycles (Steam login is preserved).
+        WebEngineProfile {
+            id: steamWebProfile
+            storageName: "steam-wizard"
+            httpCacheType: WebEngineProfile.DiskHttpCache
+        }
+
         WebEngineView {
             id: apiKeyWebView
             anchors.top: browserHeader.bottom
@@ -1946,6 +1954,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
+            profile: steamWebProfile
             // Prevent WebEngineView from stealing focus so the wizard's
             // key handler keeps working for non-browser steps.
             settings.focusOnNavigationEnabled: false
