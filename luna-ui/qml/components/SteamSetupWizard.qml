@@ -286,6 +286,25 @@ Rectangle {
             }
         }
 
+        // Tighten oversized rects: block-level elements (e.g. <a> with
+        // display:block) often stretch to fill their container, making
+        // the highlight much wider than the visible text.  Use a Range
+        // around the element contents to get a rect that hugs the
+        // actual rendered content instead.
+        var tag = el.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select'
+            && tag !== 'img' && tag !== 'video') {
+            try {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                var tr = range.getBoundingClientRect();
+                if (tr.width > 0 && tr.height > 0
+                    && tr.width < r.width * 0.75) {
+                    r = tr;
+                }
+            } catch(e) {}
+        }
+
         return r;
     }
 
