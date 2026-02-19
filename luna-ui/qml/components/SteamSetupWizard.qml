@@ -1968,9 +1968,11 @@ Rectangle {
 
         // Persistent profile so cookies / session data survive across
         // browser open/close cycles (Steam login is preserved).
+        // Shared storageName ("luna-browser") with GameStorePage so both
+        // embedded browsers use the same cookie jar.
         WebEngineProfile {
             id: steamWebProfile
-            storageName: "steam-wizard"
+            storageName: "luna-browser"
             httpCacheType: WebEngineProfile.DiskHttpCache
             // Steam login uses session cookies (no expiry).  The default
             // AllowPersistentCookies only saves cookies with an explicit

@@ -50,6 +50,18 @@ fi
 export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
+# ── WebEngine cookie/session persistence ──
+# luna-ui uses a shared WebEngineProfile ("luna-browser") for both
+# the Steam setup wizard and the game store browser.  Both use
+# ForcePersistentCookies + DiskHttpCache.  On logout the app
+# processes pending events for 500ms to let WebEngine flush cookies
+# to disk before quitting.
+#
+# Shared cookie storage (logged at startup as [webengine-diag]):
+#   ~/.config/Lyrah OS/Luna UI/QtWebEngine/luna-browser/
+#
+# To diagnose: grep this log for [webengine-diag] and [store-browser]
+
 # Signal files written by luna-ui before it exits:
 #   luna-switch-to-desktop  → user wants KDE, exit to SDDM
 #   luna-launch-steam       → user wants Steam login

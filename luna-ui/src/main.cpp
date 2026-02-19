@@ -3,6 +3,7 @@
 #include <QQmlContext>
 #include <QTimer>
 #include <QCursor>
+#include <QStandardPaths>
 #include <QtWebEngineQuick>
 #include "thememanager.h"
 #include "gamemanager.h"
@@ -36,6 +37,15 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("Luna UI");
     app.setOrganizationName("Lyrah OS");
+
+    // ── WebEngine storage diagnostics (logged to luna-session.log) ──
+    {
+        QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+        QString cachePath  = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        qInfo() << "[webengine-diag] config path:" << configPath;
+        qInfo() << "[webengine-diag] cache path:" << cachePath;
+        qInfo() << "[webengine-diag] shared cookie store:" << configPath + "/QtWebEngine/luna-browser";
+    }
 
     Database db;
     if (!db.initialize()) {

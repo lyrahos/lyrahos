@@ -1819,6 +1819,7 @@ Item {
         anchors.fill: parent
 
         onOpenDealUrl: function(url, storeName) {
+            console.log("[store-browser] opening deal URL:", url, "store:", storeName)
             storePage.storeBrowserTitle = storeName || "Store"
             storeBrowserWebView.url = url
             storePage.storeBrowserOpen = true
@@ -2113,7 +2114,9 @@ Item {
 
         WebEngineProfile {
             id: storeWebProfile
-            storageName: "store-browser"
+            // Shared storageName with SteamSetupWizard so both embedded
+            // browsers use the same cookie jar and login sessions carry over.
+            storageName: "luna-browser"
             httpCacheType: WebEngineProfile.DiskHttpCache
             persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
         }

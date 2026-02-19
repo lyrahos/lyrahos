@@ -386,7 +386,11 @@ void GameManager::logout() {
     signal.open(QIODevice::WriteOnly);
     signal.close();
 
-    QCoreApplication::quit();
+    // Give WebEngine time to flush persistent cookies to disk.
+    // ForcePersistentCookies writes are asynchronous; quitting
+    // immediately can lose in-flight cookie data.
+    qInfo() << "[logout] flushing WebEngine cookies before quit...";
+    QTimer::singleShot(500, qApp, &QCoreApplication::quit);
 }
 
 int GameManager::getGameCount() {
