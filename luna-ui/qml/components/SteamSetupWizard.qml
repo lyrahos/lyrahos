@@ -227,7 +227,135 @@ Rectangle {
         }
     }
 
-    // ─── Controller → Browser bridge ───
+    // ─── Navigation overlay script for embedded WebEngineView ───
+    // Injected into the page on each load.  Builds an interactive element
+    // list, draws a purple highlight ring around the focused one, and
+    // supports spatial (directional) navigation from the controller.
+    readonly property string navOverlayScript: "
+(function() {
+    if (window.__lunaNav) return;
+    var nav = {};
+    var currentIndex = 0;
+    var elements = [];
+    var highlightEl = null;
+
+    var SELECTORS = 'a[href], button, input, select, textarea, '
+        + '[role=\"button\"], [role=\"link\"], [role=\"menuitem\"], '
+        + '[tabindex]:not([tabindex=\"-1\"]), [onclick]';
+
+    function isVisible(el) {
+        if (!el || !el.getBoundingClientRect) return false;
+        var r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        var style = window.getComputedStyle(el);
+        return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && style.opacity !== '0';
+    }
+
+    function scanElements() {
+        var all = document.querySelectorAll(SELECTORS);
+        elements = [];
+        for (var i = 0; i < all.length; i++) {
+            if (isVisible(all[i])) elements.push(all[i]);
+        }
+        if (currentIndex >= elements.length) currentIndex = 0;
+    }
+
+    function createHighlight() {
+        if (highlightEl) return;
+        highlightEl = document.createElement('div');
+        highlightEl.id = '__luna-highlight';
+        highlightEl.style.cssText =
+            'position:fixed; pointer-events:none; z-index:999999; '
+            + 'border:3px solid #9b59b6; border-radius:6px; '
+            + 'box-shadow:0 0 12px rgba(155,89,182,0.6), inset 0 0 8px rgba(155,89,182,0.2); '
+            + 'transition:all 0.15s ease; display:none;';
+        document.documentElement.appendChild(highlightEl);
+    }
+
+    function updateHighlight() {
+        if (!highlightEl) createHighlight();
+        if (elements.length === 0) { highlightEl.style.display = 'none'; return; }
+        var el = elements[currentIndex];
+        if (!el) return;
+        var r = el.getBoundingClientRect();
+        highlightEl.style.left   = (r.left - 4) + 'px';
+        highlightEl.style.top    = (r.top - 4)  + 'px';
+        highlightEl.style.width  = (r.width + 8) + 'px';
+        highlightEl.style.height = (r.height + 8) + 'px';
+        highlightEl.style.display = 'block';
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function findNearest(direction) {
+        if (elements.length < 2) return currentIndex;
+        var cur = elements[currentIndex];
+        if (!cur) return currentIndex;
+        var cr = cur.getBoundingClientRect();
+        var cx = cr.left + cr.width / 2;
+        var cy = cr.top + cr.height / 2;
+        var bestIdx = -1;
+        var bestDist = Infinity;
+
+        for (var i = 0; i < elements.length; i++) {
+            if (i === currentIndex) continue;
+            var er = elements[i].getBoundingClientRect();
+            var ex = er.left + er.width / 2;
+            var ey = er.top + er.height / 2;
+            var dx = ex - cx;
+            var dy = ey - cy;
+            var inDirection = false;
+            switch (direction) {
+                case 'up':    inDirection = dy < -10; break;
+                case 'down':  inDirection = dy > 10;  break;
+                case 'left':  inDirection = dx < -10; break;
+                case 'right': inDirection = dx > 10;  break;
+            }
+            if (!inDirection) continue;
+            var dist;
+            if (direction === 'up' || direction === 'down') {
+                dist = Math.abs(dy) + Math.abs(dx) * 2;
+            } else {
+                dist = Math.abs(dx) + Math.abs(dy) * 2;
+            }
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        return bestIdx >= 0 ? bestIdx : currentIndex;
+    }
+
+    nav.move = function(direction) {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        currentIndex = findNearest(direction);
+        updateHighlight();
+        return 'moved:' + direction + ' idx:' + currentIndex + '/' + elements.length;
+    };
+
+    nav.activate = function() {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        var el = elements[currentIndex];
+        if (!el) return 'no-element';
+        el.focus();
+        el.click();
+        return 'clicked:' + el.tagName + ' ' + (el.textContent||'').substring(0,40);
+    };
+
+    nav.scrollPage = function(direction) {
+        window.scrollBy(0, direction === 'up' ? -400 : 400);
+        return 'scrolled:' + direction;
+    };
+
+    scanElements();
+    if (elements.length > 0) updateHighlight();
+    window.__lunaNav = nav;
+    console.log('__luna:nav-ready count:' + elements.length);
+    return 'ready:' + elements.length;
+})();
+"
+
+    // ─── Controller → Embedded Browser navigation ───
     // When the WebEngineView is active it steals focus, so synthetic key
     // events from ControllerManager never reach Keys.onPressed.  Listen to
     // actionTriggered directly — it fires regardless of focus state.
@@ -235,51 +363,30 @@ Rectangle {
         target: ControllerManager
         enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
         function onActionTriggered(action) {
-            console.log("[wizard-browser] actionTriggered:", action,
-                        "| browserOpen:", wizard.apiKeyBrowserOpen,
-                        "| step:", wizard.currentStep)
-            var focusJS =
-                "(function(dir) {" +
-                "  var focusable = Array.from(document.querySelectorAll(" +
-                "    'a[href], button, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'" +
-                "  )).filter(function(el) {" +
-                "    return el.offsetParent !== null && !el.disabled;" +
-                "  });" +
-                "  console.log('[wizard-browser-js] focusable count:', focusable.length," +
-                "    'activeElement:', document.activeElement ? document.activeElement.tagName : 'null'," +
-                "    'dir:', dir);" +
-                "  if (!focusable.length) return 'no-focusable';" +
-                "  var idx = focusable.indexOf(document.activeElement);" +
-                "  var next;" +
-                "  if (dir === 1) {" +
-                "    next = idx < focusable.length - 1 ? idx + 1 : 0;" +
-                "  } else {" +
-                "    next = idx > 0 ? idx - 1 : focusable.length - 1;" +
-                "  }" +
-                "  focusable[next].focus();" +
-                "  focusable[next].scrollIntoView({block:'center',behavior:'smooth'});" +
-                "  return 'focused:' + focusable[next].tagName + ' ' + (focusable[next].textContent||'').substring(0,40);" +
-                "})"
             function logResult(result) {
-                console.log("[wizard-browser] JS result:", result)
+                console.log("[wizard-browser] nav result:", result)
             }
             switch (action) {
             case "navigate_up":
-            case "navigate_left":
-                apiKeyWebView.runJavaScript(focusJS + "(-1)", logResult)
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
                 break
             case "navigate_down":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
+                break
+            case "navigate_left":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
+                break
             case "navigate_right":
-                apiKeyWebView.runJavaScript(focusJS + "(1)", logResult)
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
                 break
             case "confirm":
-                apiKeyWebView.runJavaScript(
-                    "(function() {" +
-                    "  var el = document.activeElement;" +
-                    "  console.log('[wizard-browser-js] confirm on:', el ? el.tagName + ' ' + (el.textContent||'').substring(0,40) : 'none');" +
-                    "  if (el && el !== document.body) { el.click(); return 'clicked:' + el.tagName; }" +
-                    "  return 'nothing-to-click';" +
-                    "})()", logResult)
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.activate()", logResult)
+                break
+            case "scroll_up":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
+                break
+            case "scroll_down":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
                 console.log("[wizard-browser] closing browser")
@@ -288,7 +395,6 @@ Rectangle {
                 apiKeyWebView.url = "about:blank"
                 break
             default:
-                console.log("[wizard-browser] unhandled action:", action)
                 break
             }
         }
@@ -1763,6 +1869,10 @@ Rectangle {
                             "url:", loadRequest.url)
                 if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                     apiKeyPollTimer.start()
+                    // Inject the controller navigation overlay after a short
+                    // delay so the DOM is fully ready (Steam pages load JS
+                    // that creates elements after DOMContentLoaded).
+                    navInjectTimer.restart()
                 }
             }
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
@@ -1793,6 +1903,22 @@ Rectangle {
                         }
                     }
                 )
+            }
+        }
+
+        // Inject the controller navigation overlay after page load.
+        // A short delay ensures Steam's JS has finished creating DOM
+        // elements (login forms, buttons, etc.) before we scan.
+        Timer {
+            id: navInjectTimer
+            interval: 800
+            repeat: false
+            onTriggered: {
+                console.log("[wizard-browser] injecting navigation overlay")
+                apiKeyWebView.runJavaScript(wizard.navOverlayScript,
+                    function(result) {
+                        console.log("[wizard-browser] nav inject result:", result)
+                    })
             }
         }
     }
