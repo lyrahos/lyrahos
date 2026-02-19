@@ -39,6 +39,40 @@ Rectangle {
             gameStoreLoader.item.loseFocus()
     }
 
+    // ── LB / RB tab switching ──
+    // Use direct Connections to ControllerManager legacy signals instead
+    // of Keys.onPressed for shoulder buttons.  Key events from child
+    // components loaded via Loader/StackLayout may not propagate reliably
+    // back to this handler, but the legacy signals always fire.
+    function switchToPreviousTab() {
+        if (steamSetupWizard.visible || gamesVirtualKeyboard.visible) return
+        if (activeTab > 0) {
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                gameStoreLoader.item.loseFocus()
+            activeTab--
+            focusedTabIndex = activeTab
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
+    }
+    function switchToNextTab() {
+        if (steamSetupWizard.visible || gamesVirtualKeyboard.visible) return
+        if (activeTab < 2) {
+            if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
+                gameStoreLoader.item.loseFocus()
+            activeTab++
+            focusedTabIndex = activeTab
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
+    }
+
+    Connections {
+        target: ControllerManager
+        function onPreviousTab() { switchToPreviousTab() }
+        function onNextTab()     { switchToNextTab() }
+    }
+
     // Master keyboard handler
     Keys.onPressed: function(event) {
         // VirtualKeyboard handles its own keys
@@ -46,11 +80,26 @@ Rectangle {
             event.accepted = true
             return
         }
+        // Setup wizard handles its own keys
+        if (steamSetupWizard.visible) return
         // Credential dialog navigation
         if (credentialDialog.visible) {
             handleCredDialogKeys(event)
             return
         }
+
+        // LB / RB via keyboard (also handled by Connections above for controller)
+        if (event.key === Qt.Key_BracketLeft) {
+            switchToPreviousTab()
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_BracketRight) {
+            switchToNextTab()
+            event.accepted = true
+            return
+        }
+
         if (focusState === "tabs") {
             handleTabKeys(event)
         } else if (focusState === "content") {
@@ -152,7 +201,8 @@ Rectangle {
             handleClientsKeys(event)
         } else if (activeTab === 2) {
             // Game Store — GameStorePage handles its own keys via Keys.onPressed.
-            // Only unhandled keys propagate here (Up at searchBar, Escape).
+            // Only unhandled keys propagate here (Up at searchBar, Escape, or
+            // Left when the store page doesn't consume it).
             var zone = gameStoreLoader.item ? gameStoreLoader.item.navZone : ""
             if (event.key === Qt.Key_Escape ||
                 (event.key === Qt.Key_Up && (zone === "searchBar" || zone === ""))) {
@@ -160,6 +210,12 @@ Rectangle {
                 focusedTabIndex = activeTab
                 if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
                     gameStoreLoader.item.loseFocus()
+                event.accepted = true
+                return
+            }
+            // Fallback: if GameStorePage didn't handle Left, go to sidebar
+            if (event.key === Qt.Key_Left) {
+                requestNavFocus()
                 event.accepted = true
                 return
             }
@@ -1547,7 +1603,14 @@ Rectangle {
     // ── Steam Setup Wizard ──
     SteamSetupWizard {
         id: steamSetupWizard
-        onClosed: gamesRoot.forceActiveFocus()
+        onClosed: {
+            // After setup completes, switch to My Games tab so the user
+            // lands on their library, not the Game Store background.
+            activeTab = 0
+            focusedTabIndex = 0
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+        }
     }
 
     // ── Virtual Keyboard for WiFi password + credential dialogs ──

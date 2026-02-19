@@ -492,6 +492,22 @@ void GameManager::scanWifiNetworks() {
 }
 
 void GameManager::connectToWifi(const QString& ssid, const QString& password) {
+    // Only delete a stale connection profile if we are NOT currently on this
+    // network.  Deleting the active connection disrupts the WiFi adapter and
+    // causes "network not found" on the subsequent connect attempt.
+    QString currentSsid = getConnectedWifi();
+    if (!currentSsid.isEmpty() && currentSsid != ssid) {
+        // Switching networks — safe to clean up a stale profile for the target
+        QProcess deleteProc;
+        deleteProc.start("nmcli", {"connection", "delete", "id", ssid});
+        deleteProc.waitForFinished(3000);
+    } else if (currentSsid.isEmpty()) {
+        // Not connected to anything — safe to clean up stale profile
+        QProcess deleteProc;
+        deleteProc.start("nmcli", {"connection", "delete", "id", ssid});
+        deleteProc.waitForFinished(3000);
+    }
+
     QProcess *proc = new QProcess(this);
     QStringList args = {"device", "wifi", "connect", ssid};
     if (!password.isEmpty()) {
@@ -1421,23 +1437,20 @@ void GameManager::openApiKeyInBrowser() {
         QStringList args;
     };
     // Enable remote debugging so scrapeApiKeyFromPage() can read the DOM.
+    // --remote-allow-origins=*  is REQUIRED for Chromium 111+ — without it
+    // the CDP WebSocket handshake is rejected (403) and BrowserBridge can
+    // never connect for controller navigation.
     m_apiKeyBrowserType = "";
+    QStringList cdpFlags = {"--kiosk", "--no-first-run",
+                            "--window-size=" + geom, "--window-position=0,0",
+                            "--remote-debugging-port=9222",
+                            "--remote-allow-origins=*"};
     QVector<BrowserOption> browsers = {
-        {"brave",            {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"brave-browser",    {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"chromium",         {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"chromium-browser", {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
-        {"google-chrome",    {"--kiosk", "--no-first-run",
-                              "--window-size=" + geom, "--window-position=0,0",
-                              "--remote-debugging-port=9222", url}},
+        {"brave",            cdpFlags + QStringList{url}},
+        {"brave-browser",    cdpFlags + QStringList{url}},
+        {"chromium",         cdpFlags + QStringList{url}},
+        {"chromium-browser", cdpFlags + QStringList{url}},
+        {"google-chrome",    cdpFlags + QStringList{url}},
         {"firefox",          {"--kiosk", "--width", QString::number(screenW),
                               "--height", QString::number(screenH), url}},
     };
@@ -1450,6 +1463,7 @@ void GameManager::openApiKeyInBrowser() {
             m_apiKeyBrowserPid = pid;
             m_apiKeyBrowserType = b.bin;
             qDebug() << "Opened API key page with" << b.bin << "(kiosk" << geom << ", pid:" << pid << ")";
+            emit browserOpened();
             return;
         }
     }
@@ -1459,12 +1473,14 @@ void GameManager::openApiKeyInBrowser() {
     QProcess::startDetached("xdg-open", QStringList() << url, QString(), &pid);
     m_apiKeyBrowserPid = pid;
     qDebug() << "Opened API key page with xdg-open (pid:" << pid << ")";
+    emit browserOpened();
 }
 
 void GameManager::closeApiKeyBrowser() {
     // Delegate to the force-close implementation which uses SIGTERM,
     // falls back to SIGKILL, and waits for all browser processes to die.
     forceCloseApiKeyBrowser();
+    emit browserClosed();
 }
 
 void GameManager::forceCloseApiKeyBrowser() {

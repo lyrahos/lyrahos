@@ -29,6 +29,7 @@ Rectangle {
     property bool apiKeyBrowserOpen: false
     property string detectedApiKey: ""
     property bool showManualInput: false
+    property bool browserInputActive: false   // true when virtual keyboard targets a browser input
 
     // Sub-states for step 3 (SteamCMD)
     property string steamCmdPromptType: ""  // "password" or "steamguard"
@@ -41,7 +42,17 @@ Rectangle {
     property int wizFocusIndex: 0
     property int overlayFocusIdx: 0
 
-    onCurrentStepChanged: { wizFocusIndex = 0; wizard.forceActiveFocus() }
+    onCurrentStepChanged: {
+        wizFocusIndex = 0
+        // Only grab focus if already visible; open() handles the initial case
+        if (wizard.visible) wizard.forceActiveFocus()
+    }
+    onVisibleChanged: {
+        if (visible) {
+            wizFocusIndex = 0
+            wizard.forceActiveFocus()
+        }
+    }
     onShowManualInputChanged: wizFocusIndex = 0
     onSteamCmdPromptTypeChanged: wizFocusIndex = 0
     onSteamCmdWaitingChanged: wizFocusIndex = 0
@@ -82,6 +93,17 @@ Rectangle {
         return apiKeyBrowserOpen && currentStep === 2 && !apiKeyConfirmOverlay.visible
     }
 
+    // Navigate to the Steam API key page only if the WebEngineView
+    // isn't already showing it (avoids a full reload that loses the
+    // logged-in session when the user just pressed B to hide the
+    // browser and then re-opened it).
+    function ensureSteamPage() {
+        var cur = apiKeyWebView.url.toString()
+        if (cur.indexOf("steamcommunity.com") === -1) {
+            apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+        }
+    }
+
     function wizActivate(idx) {
         switch (currentStep) {
         case 0:
@@ -115,7 +137,7 @@ Rectangle {
                     wizard.showManualInput = false
                     wizard.apiKeyScrapeErrorMsg = ""
                     wizard.apiKeyBrowserOpen = true
-                    apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                    ensureSteamPage()
                 } else if (idx === 2) {
                     wizard.currentStep = 0
                 } else if (idx === 3) {
@@ -126,7 +148,7 @@ Rectangle {
             } else {
                 if (idx === 0) {
                     wizard.apiKeyBrowserOpen = true
-                    apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                    ensureSteamPage()
                 } else if (idx === 1) {
                     wizard.currentStep = 0
                 } else if (idx === 2) {
@@ -217,6 +239,285 @@ Rectangle {
         }
     }
 
+    // ─── Navigation overlay script for embedded WebEngineView ───
+    // Injected into the page on each load.  Builds an interactive element
+    // list, draws a purple highlight ring around the focused one, and
+    // supports spatial (directional) navigation from the controller.
+    readonly property string navOverlayScript: "
+(function() {
+    if (window.__lunaNav) return;
+    var nav = {};
+    var currentIndex = 0;
+    var elements = [];
+    var highlightEl = null;
+
+    var SELECTORS = 'a[href], button, input, select, textarea, '
+        + '[role=\"button\"], [role=\"link\"], [role=\"menuitem\"], '
+        + '[tabindex]:not([tabindex=\"-1\"]), [onclick]';
+
+    function isVisible(el) {
+        if (!el || !el.getBoundingClientRect) return false;
+        var r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        var style = window.getComputedStyle(el);
+        return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && style.opacity !== '0';
+    }
+
+    /* Return the best visual bounding rect for an element.
+       Handles inline elements that wrap across lines (use the largest
+       individual client rect instead of the union), and tiny interactive
+       elements wrapped inside a styled parent container. */
+    function getVisualRect(el) {
+        var rects = el.getClientRects();
+        var r = el.getBoundingClientRect();
+
+        // Inline elements wrapping across lines produce multiple rects;
+        // the union (getBoundingClientRect) can be absurdly wide.
+        // Pick the largest individual rect instead.
+        if (rects.length > 1) {
+            var best = rects[0];
+            var bestArea = best.width * best.height;
+            for (var i = 1; i < rects.length; i++) {
+                var a = rects[i].width * rects[i].height;
+                if (a > bestArea) { best = rects[i]; bestArea = a; }
+            }
+            r = best;
+        }
+
+        // If the element itself is very small (icon-only button, hidden
+        // checkbox, etc.) but lives inside a reasonably-sized parent that
+        // looks like the actual visual target, snap to the parent.
+        if ((r.width < 16 || r.height < 16) && el.parentElement) {
+            var pr = el.parentElement.getBoundingClientRect();
+            if (pr.width >= r.width && pr.height >= r.height
+                && pr.width < 500 && pr.height < 120) {
+                r = pr;
+            }
+        }
+
+        // Tighten oversized rects: block-level elements (e.g. <a> with
+        // display:block) often stretch to fill their container, making
+        // the highlight much wider than the visible text.  Use a Range
+        // around the element contents to get a rect that hugs the
+        // actual rendered content instead.
+        var tag = el.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select'
+            && tag !== 'img' && tag !== 'video') {
+            try {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                var tr = range.getBoundingClientRect();
+                if (tr.width > 0 && tr.height > 0
+                    && tr.width < r.width * 0.75) {
+                    r = tr;
+                }
+            } catch(e) {}
+        }
+
+        return r;
+    }
+
+    function scanElements() {
+        var all = document.querySelectorAll(SELECTORS);
+        elements = [];
+        for (var i = 0; i < all.length; i++) {
+            if (isVisible(all[i])) elements.push(all[i]);
+        }
+        if (currentIndex >= elements.length) currentIndex = 0;
+    }
+
+    function createHighlight() {
+        if (highlightEl) return;
+        highlightEl = document.createElement('div');
+        highlightEl.id = '__luna-highlight';
+        highlightEl.style.cssText =
+            'position:fixed; pointer-events:none; z-index:999999; '
+            + 'border:3px solid #9b59b6; border-radius:6px; '
+            + 'box-shadow:0 0 12px rgba(155,89,182,0.6), inset 0 0 8px rgba(155,89,182,0.2); '
+            + 'transition:all 0.15s ease; display:none;';
+        document.documentElement.appendChild(highlightEl);
+    }
+
+    function updateHighlight() {
+        if (!highlightEl) createHighlight();
+        if (elements.length === 0) { highlightEl.style.display = 'none'; return; }
+        var el = elements[currentIndex];
+        if (!el) return;
+        var r = getVisualRect(el);
+        var pad = 3;
+        highlightEl.style.left   = (r.left - pad) + 'px';
+        highlightEl.style.top    = (r.top - pad)  + 'px';
+        highlightEl.style.width  = (r.width + pad * 2) + 'px';
+        highlightEl.style.height = (r.height + pad * 2) + 'px';
+        highlightEl.style.display = 'block';
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function findNearest(direction) {
+        if (elements.length < 2) return currentIndex;
+        var cur = elements[currentIndex];
+        if (!cur) return currentIndex;
+        var cr = getVisualRect(cur);
+        var cx = cr.left + cr.width / 2;
+        var cy = cr.top + cr.height / 2;
+        var bestIdx = -1;
+        var bestDist = Infinity;
+
+        for (var i = 0; i < elements.length; i++) {
+            if (i === currentIndex) continue;
+            var er = getVisualRect(elements[i]);
+            var ex = er.left + er.width / 2;
+            var ey = er.top + er.height / 2;
+            var dx = ex - cx;
+            var dy = ey - cy;
+            var inDirection = false;
+            switch (direction) {
+                case 'up':    inDirection = dy < -5; break;
+                case 'down':  inDirection = dy > 5;  break;
+                case 'left':  inDirection = dx < -5; break;
+                case 'right': inDirection = dx > 5;  break;
+            }
+            if (!inDirection) continue;
+            var dist;
+            if (direction === 'up' || direction === 'down') {
+                dist = Math.abs(dy) + Math.abs(dx) * 2;
+            } else {
+                dist = Math.abs(dx) + Math.abs(dy) * 2;
+            }
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        return bestIdx >= 0 ? bestIdx : currentIndex;
+    }
+
+    nav.move = function(direction) {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        currentIndex = findNearest(direction);
+        updateHighlight();
+        return 'moved:' + direction + ' idx:' + currentIndex + '/' + elements.length;
+    };
+
+    nav.activate = function() {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        var el = elements[currentIndex];
+        if (!el) return 'no-element';
+        el.focus();
+        el.click();
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (tag === 'input' && (type === 'text' || type === 'password'
+                || type === 'email' || type === 'search' || type === 'url'
+                || type === 'tel' || type === 'number')
+            || tag === 'textarea') {
+            return 'input:' + type + ':' + (el.value || '');
+        }
+        return 'clicked:' + el.tagName + ' ' + (el.textContent||'').substring(0,40);
+    };
+
+    nav.setText = function(text) {
+        var el = document.activeElement;
+        if (!el) return 'no-active';
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+        if (!nativeSetter) nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value'
+        );
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(el, text);
+        } else {
+            el.value = text;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'set:' + text.length + ' chars';
+    };
+
+    nav.scrollPage = function(direction) {
+        window.scrollBy(0, direction === 'up' ? -400 : 400);
+        return 'scrolled:' + direction;
+    };
+
+    // Re-scan when the DOM changes so newly-added elements (Steam
+    // loads content dynamically) are picked up automatically.
+    var observer = new MutationObserver(function() {
+        var oldLen = elements.length;
+        scanElements();
+        if (elements.length !== oldLen) {
+            updateHighlight();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    scanElements();
+    if (elements.length > 0) updateHighlight();
+    window.__lunaNav = nav;
+    console.log('__luna:nav-ready count:' + elements.length);
+    return 'ready:' + elements.length;
+})();
+"
+
+    // ─── Controller → Embedded Browser navigation ───
+    // When the WebEngineView is active it steals focus, so synthetic key
+    // events from ControllerManager never reach Keys.onPressed.  Listen to
+    // actionTriggered directly — it fires regardless of focus state.
+    Connections {
+        target: ControllerManager
+        enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2 && !wizardVirtualKeyboard.visible
+        function onActionTriggered(action) {
+            function logResult(result) {
+                console.log("[wizard-browser] nav result:", result)
+            }
+            switch (action) {
+            case "navigate_up":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
+                break
+            case "navigate_down":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
+                break
+            case "navigate_left":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
+                break
+            case "navigate_right":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
+                break
+            case "confirm":
+                apiKeyWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.activate()",
+                    function(result) {
+                        console.log("[wizard-browser] activate result:", result)
+                        if (result && result.toString().indexOf("input:") === 0) {
+                            // result is "input:<type>:<currentValue>"
+                            var parts = result.toString().split(":")
+                            var inputType = parts[1] || "text"
+                            var currentVal = parts.slice(2).join(":") // value may contain colons
+                            var isPassword = (inputType === "password")
+                            wizard.browserInputActive = true
+                            wizardVirtualKeyboard.placeholderText = isPassword ? "Enter password..." : "Type here..."
+                            wizardVirtualKeyboard.open(currentVal, isPassword)
+                        }
+                    })
+                break
+            case "scroll_up":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
+                break
+            case "scroll_down":
+                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
+                break
+            case "back":
+                console.log("[wizard-browser] closing browser (preserving page)")
+                wizard.apiKeyBrowserOpen = false
+                apiKeyPollTimer.stop()
+                break
+            default:
+                break
+            }
+        }
+    }
+
     // ─── Key Handler ───
     Keys.onPressed: function(event) {
         if (wizardVirtualKeyboard.visible) return
@@ -241,7 +542,6 @@ Rectangle {
                     wizard.currentStep = 3
                 } else {
                     apiKeyConfirmOverlay.visible = false
-                    apiKeyWebView.url = "about:blank"
                     wizard.detectedApiKey = ""
                     wizard.apiKeyBrowserOpen = false
                     wizard.showManualInput = true
@@ -254,24 +554,11 @@ Rectangle {
             return
         }
 
-        // Browser navigation
-        if (apiKeyBrowserOpen && currentStep === 2) {
-            switch (event.key) {
-            case Qt.Key_Return:
-            case Qt.Key_Enter:
-                wizard.apiKeyBrowserOpen = false
-                apiKeyPollTimer.stop()
-                apiKeyWebView.url = "about:blank"
-                wizard.showManualInput = true
-                event.accepted = true; break
-            case Qt.Key_Escape:
-                wizard.apiKeyBrowserOpen = false
-                apiKeyPollTimer.stop()
-                apiKeyWebView.url = "about:blank"
-                event.accepted = true; break
-            }
-            return
-        }
+        // Browser navigation is handled by the Connections block above
+        // (listening to ControllerManager.actionTriggered directly),
+        // because the WebEngineView steals focus and key events never
+        // reach this handler while the browser is open.
+        if (apiKeyBrowserOpen && currentStep === 2) return
 
         // Main wizard navigation
         var count = wizFocusCount()
@@ -792,7 +1079,7 @@ Rectangle {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             wizard.apiKeyBrowserOpen = true
-                            apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                            ensureSteamPage()
                         }
                     }
                 }
@@ -1042,7 +1329,7 @@ Rectangle {
                                 wizard.showManualInput = false
                                 wizard.apiKeyScrapeErrorMsg = ""
                                 wizard.apiKeyBrowserOpen = true
-                                apiKeyWebView.url = "https://steamcommunity.com/dev/apikey"
+                                ensureSteamPage()
                             }
                         }
                     }
@@ -1673,11 +1960,23 @@ Rectangle {
                     onClicked: {
                         wizard.apiKeyBrowserOpen = false
                         apiKeyPollTimer.stop()
-                        apiKeyWebView.url = "about:blank"
                         wizard.showManualInput = true
                     }
                 }
             }
+        }
+
+        // Persistent profile so cookies / session data survive across
+        // browser open/close cycles (Steam login is preserved).
+        WebEngineProfile {
+            id: steamWebProfile
+            storageName: "steam-wizard"
+            httpCacheType: WebEngineProfile.DiskHttpCache
+            // Steam login uses session cookies (no expiry).  The default
+            // AllowPersistentCookies only saves cookies with an explicit
+            // expiry date, so the login is lost on close.  Force ALL
+            // cookies to disk so the session survives.
+            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
         }
 
         WebEngineView {
@@ -1687,11 +1986,27 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
+            profile: steamWebProfile
+            // Prevent WebEngineView from stealing focus so the wizard's
+            // key handler keeps working for non-browser steps.
+            settings.focusOnNavigationEnabled: false
 
             onLoadingChanged: function(loadRequest) {
+                console.log("[wizard-browser] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
                 if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                     apiKeyPollTimer.start()
+                    // Inject the controller navigation overlay after a short
+                    // delay so the DOM is fully ready (Steam pages load JS
+                    // that creates elements after DOMContentLoaded).
+                    navInjectTimer.restart()
                 }
+            }
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[wizard-browser-js]", message)
             }
         }
 
@@ -1718,6 +2033,22 @@ Rectangle {
                         }
                     }
                 )
+            }
+        }
+
+        // Inject the controller navigation overlay after page load.
+        // A short delay ensures Steam's JS has finished creating DOM
+        // elements (login forms, buttons, etc.) before we scan.
+        Timer {
+            id: navInjectTimer
+            interval: 800
+            repeat: false
+            onTriggered: {
+                console.log("[wizard-browser] injecting navigation overlay")
+                apiKeyWebView.runJavaScript(wizard.navOverlayScript,
+                    function(result) {
+                        console.log("[wizard-browser] nav inject result:", result)
+                    })
             }
         }
     }
@@ -1840,7 +2171,6 @@ Rectangle {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 apiKeyConfirmOverlay.visible = false
-                                apiKeyWebView.url = "about:blank"
                                 wizard.detectedApiKey = ""
                                 wizard.apiKeyBrowserOpen = false
                                 wizard.showManualInput = true
@@ -1859,7 +2189,16 @@ Rectangle {
 
         onAccepted: function(typedText) {
             // Route typed text to the correct input based on current state
-            if (wizard.currentStep === 2 && wizard.showManualInput) {
+            if (wizard.browserInputActive) {
+                // Send text back into the embedded browser's focused input
+                wizard.browserInputActive = false
+                var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                apiKeyWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
+                    function(result) {
+                        console.log("[wizard-browser] setText result:", result)
+                    })
+            } else if (wizard.currentStep === 2 && wizard.showManualInput) {
                 manualKeyInput.text = typedText
                 if (typedText.trim().length >= 20) {
                     GameManager.setSteamApiKey(typedText.trim())
@@ -1888,6 +2227,7 @@ Rectangle {
         }
 
         onCancelled: {
+            wizard.browserInputActive = false
             wizard.forceActiveFocus()
         }
     }

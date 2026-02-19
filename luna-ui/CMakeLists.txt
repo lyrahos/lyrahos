@@ -6,7 +6,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Sql Network WebEngineQuick)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Sql Network WebEngineQuick WebSockets)
 find_package(SDL2 REQUIRED)
 
 # FIX #45: Register QML files with qt_add_qml_module
@@ -24,6 +24,7 @@ qt_add_executable(luna-ui
     src/storebackends/custombackend.cpp
     src/storeapimanager.cpp
     src/credentialstore.cpp
+    src/browserbridge.cpp
 )
 
 # ── IGDB credentials (injected from GitHub Secrets at build time) ──
@@ -58,6 +59,7 @@ qt_add_qml_module(luna-ui
         qml/components/GameStoreDetailPopup.qml
         qml/components/ControllerProfileEditor.qml
         qml/components/VirtualKeyboard.qml
+        qml/components/BrowserOverlay.qml
 )
 
 target_link_libraries(luna-ui PRIVATE
@@ -67,6 +69,7 @@ target_link_libraries(luna-ui PRIVATE
     Qt6::Sql
     Qt6::Network
     Qt6::WebEngineQuick
+    Qt6::WebSockets
     SDL2::SDL2
 )
 

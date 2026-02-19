@@ -85,6 +85,9 @@ public:
     Q_INVOKABLE void ensureSteamRunning();
     Q_INVOKABLE void restartSteam();
 
+    // Bring Luna-UI's window to the foreground (e.g. over the browser)
+    void raiseLunaWindow();
+
 signals:
     void gamesUpdated();
     void gameLaunched(int gameId, QString gameTitle);
@@ -113,6 +116,10 @@ signals:
     void steamCmdSetupCredentialNeeded(QString promptType);
     void steamCmdSetupLoginSuccess();
     void steamCmdSetupLoginError(QString error);
+
+    // Browser lifecycle — lets QML activate the BrowserOverlay
+    void browserOpened();
+    void browserClosed();
 
 private:
     Database *m_db;
@@ -151,7 +158,6 @@ private:
     QStringList getSteamAppsDirs() const;
     void suppressSteamHardwareSurvey();
     void forceCloseApiKeyBrowser();
-    void raiseLunaWindow();
 };
 
 #endif

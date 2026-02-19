@@ -310,6 +310,8 @@ void StoreApiManager::fetchGameDeals(const QString& cheapSharkGameId)
             int storeId = obj["storeID"].toString().toInt();
             deal["storeName"] = getStoreName(storeId);
             deal["storeIcon"] = getStoreIconUrl(storeId);
+            deal["dealLink"]  = QStringLiteral("https://www.cheapshark.com/redirect?dealID=")
+                                + obj["dealID"].toString();
 
             deals.append(deal);
         }

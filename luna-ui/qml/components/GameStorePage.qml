@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtWebEngine
 
 Item {
     id: storePage
@@ -20,6 +21,11 @@ Item {
     property bool appendNextDeals: false  // true when "Load More" is pending
     property string topDealsError: ""
     property string recentDealsError: ""
+
+    // ─── Embedded Store Browser ───
+    property bool storeBrowserOpen: false
+    property string storeBrowserTitle: ""
+    property bool storeBrowserInputActive: false
 
     // Sort options
     property var sortOptions: [
@@ -129,6 +135,12 @@ Item {
     }
 
     function handleStoreKeys(event) {
+        // If store browser is open, it handles input via Connections
+        if (storeBrowserOpen) {
+            event.accepted = true
+            return
+        }
+
         // If virtual keyboard is open, it handles its own keys
         if (storeVirtualKeyboard.visible) {
             event.accepted = true
@@ -376,6 +388,49 @@ Item {
         var viewRight = viewLeft + trendingList.width
         if (targetX < viewLeft) trendingList.contentX = targetX - 10
         else if (targetX + 420 > viewRight) trendingList.contentX = targetX + 420 - trendingList.width + 10
+    }
+
+    // Scroll the main Flickable so the active navZone is visible on screen
+    onNavZoneChanged: if (hasKeyboardFocus) ensureZoneVisible()
+
+    function ensureZoneVisible() {
+        var targetY = -1
+        var targetH = 0
+
+        switch (navZone) {
+        case "hero":
+            targetY = heroBanner.y
+            targetH = heroBanner.height
+            break
+        case "trending":
+            targetY = trendingSection.y
+            targetH = trendingSection.height
+            break
+        case "dealsGrid":
+            targetY = dealsGridSection.y
+            targetH = Math.min(dealsGridSection.height, mainFlickable.height)
+            break
+        case "loadMore":
+            // loadMore is at the bottom of dealsGridSection
+            targetY = dealsGridSection.y + dealsGridSection.height - 56
+            targetH = 56
+            break
+        default:
+            // searchBar, sortChips are above the Flickable; scroll to top
+            mainFlickable.contentY = 0
+            return
+        }
+
+        if (targetY < 0) return
+
+        var viewTop = mainFlickable.contentY
+        var viewBottom = viewTop + mainFlickable.height
+
+        if (targetY < viewTop) {
+            mainFlickable.contentY = Math.max(0, targetY - 20)
+        } else if (targetY + targetH > viewBottom) {
+            mainFlickable.contentY = targetY + targetH - mainFlickable.height + 20
+        }
     }
 
     // Periodically check network status
@@ -1264,6 +1319,7 @@ Item {
 
                 // ─── Trending Deals Section (horizontal scroll) ───
                 ColumnLayout {
+                    id: trendingSection
                     visible: !storePage.isSearching && recentDeals.length > 0
                     Layout.fillWidth: true
                     spacing: 16
@@ -1761,6 +1817,369 @@ Item {
     GameStoreDetailPopup {
         id: detailPopup
         anchors.fill: parent
+
+        onOpenDealUrl: function(url, storeName) {
+            storePage.storeBrowserTitle = storeName || "Store"
+            storeBrowserWebView.url = url
+            storePage.storeBrowserOpen = true
+        }
+    }
+
+    // ─── Embedded Store Browser ───
+    // Navigation overlay script – identical to the one in SteamSetupWizard.
+    readonly property string navOverlayScript: "
+(function() {
+    if (window.__lunaNav) return;
+    var nav = {};
+    var currentIndex = 0;
+    var elements = [];
+    var highlightEl = null;
+
+    var SELECTORS = 'a[href], button, input, select, textarea, '
+        + '[role=\"button\"], [role=\"link\"], [role=\"menuitem\"], '
+        + '[tabindex]:not([tabindex=\"-1\"]), [onclick]';
+
+    function isVisible(el) {
+        if (!el || !el.getBoundingClientRect) return false;
+        var r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        var style = window.getComputedStyle(el);
+        return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && style.opacity !== '0';
+    }
+
+    function getVisualRect(el) {
+        var rects = el.getClientRects();
+        var r = el.getBoundingClientRect();
+        if (rects.length > 1) {
+            var best = rects[0];
+            var bestArea = best.width * best.height;
+            for (var i = 1; i < rects.length; i++) {
+                var a = rects[i].width * rects[i].height;
+                if (a > bestArea) { best = rects[i]; bestArea = a; }
+            }
+            r = best;
+        }
+        if ((r.width < 16 || r.height < 16) && el.parentElement) {
+            var pr = el.parentElement.getBoundingClientRect();
+            if (pr.width >= r.width && pr.height >= r.height
+                && pr.width < 500 && pr.height < 120) {
+                r = pr;
+            }
+        }
+        var tag = el.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select'
+            && tag !== 'img' && tag !== 'video') {
+            try {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                var tr = range.getBoundingClientRect();
+                if (tr.width > 0 && tr.height > 0
+                    && tr.width < r.width * 0.75) {
+                    r = tr;
+                }
+            } catch(e) {}
+        }
+        return r;
+    }
+
+    function scanElements() {
+        var all = document.querySelectorAll(SELECTORS);
+        elements = [];
+        for (var i = 0; i < all.length; i++) {
+            if (isVisible(all[i])) elements.push(all[i]);
+        }
+        if (currentIndex >= elements.length) currentIndex = 0;
+    }
+
+    function createHighlight() {
+        if (highlightEl) return;
+        highlightEl = document.createElement('div');
+        highlightEl.id = '__luna-highlight';
+        highlightEl.style.cssText =
+            'position:fixed; pointer-events:none; z-index:999999; '
+            + 'border:3px solid #9b59b6; border-radius:6px; '
+            + 'box-shadow:0 0 12px rgba(155,89,182,0.6), inset 0 0 8px rgba(155,89,182,0.2); '
+            + 'transition:all 0.15s ease; display:none;';
+        document.documentElement.appendChild(highlightEl);
+    }
+
+    function updateHighlight() {
+        if (!highlightEl) createHighlight();
+        if (elements.length === 0) { highlightEl.style.display = 'none'; return; }
+        var el = elements[currentIndex];
+        if (!el) return;
+        var r = getVisualRect(el);
+        var pad = 3;
+        highlightEl.style.left   = (r.left - pad) + 'px';
+        highlightEl.style.top    = (r.top - pad)  + 'px';
+        highlightEl.style.width  = (r.width + pad * 2) + 'px';
+        highlightEl.style.height = (r.height + pad * 2) + 'px';
+        highlightEl.style.display = 'block';
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function findNearest(direction) {
+        if (elements.length < 2) return currentIndex;
+        var cur = elements[currentIndex];
+        if (!cur) return currentIndex;
+        var cr = getVisualRect(cur);
+        var cx = cr.left + cr.width / 2;
+        var cy = cr.top + cr.height / 2;
+        var bestIdx = -1;
+        var bestDist = Infinity;
+        for (var i = 0; i < elements.length; i++) {
+            if (i === currentIndex) continue;
+            var er = getVisualRect(elements[i]);
+            var ex = er.left + er.width / 2;
+            var ey = er.top + er.height / 2;
+            var dx = ex - cx;
+            var dy = ey - cy;
+            var inDirection = false;
+            switch (direction) {
+                case 'up':    inDirection = dy < -5; break;
+                case 'down':  inDirection = dy > 5;  break;
+                case 'left':  inDirection = dx < -5; break;
+                case 'right': inDirection = dx > 5;  break;
+            }
+            if (!inDirection) continue;
+            var dist;
+            if (direction === 'up' || direction === 'down') {
+                dist = Math.abs(dy) + Math.abs(dx) * 2;
+            } else {
+                dist = Math.abs(dx) + Math.abs(dy) * 2;
+            }
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        return bestIdx >= 0 ? bestIdx : currentIndex;
+    }
+
+    nav.move = function(direction) {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        currentIndex = findNearest(direction);
+        updateHighlight();
+        return 'moved:' + direction + ' idx:' + currentIndex + '/' + elements.length;
+    };
+
+    nav.activate = function() {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        var el = elements[currentIndex];
+        if (!el) return 'no-element';
+        el.focus();
+        el.click();
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (tag === 'input' && (type === 'text' || type === 'password'
+                || type === 'email' || type === 'search' || type === 'url'
+                || type === 'tel' || type === 'number')
+            || tag === 'textarea') {
+            return 'input:' + type + ':' + (el.value || '');
+        }
+        return 'clicked:' + el.tagName + ' ' + (el.textContent||'').substring(0,40);
+    };
+
+    nav.setText = function(text) {
+        var el = document.activeElement;
+        if (!el) return 'no-active';
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+        if (!nativeSetter) nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value'
+        );
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(el, text);
+        } else {
+            el.value = text;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'set:' + text.length + ' chars';
+    };
+
+    nav.scrollPage = function(direction) {
+        window.scrollBy(0, direction === 'up' ? -400 : 400);
+        return 'scrolled:' + direction;
+    };
+
+    var observer = new MutationObserver(function() {
+        var oldLen = elements.length;
+        scanElements();
+        if (elements.length !== oldLen) updateHighlight();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    scanElements();
+    if (elements.length > 0) updateHighlight();
+    window.__lunaNav = nav;
+    console.log('__luna:nav-ready count:' + elements.length);
+    return 'ready:' + elements.length;
+})();
+"
+
+    // Controller → Embedded Store Browser navigation
+    Connections {
+        target: ControllerManager
+        enabled: storePage.storeBrowserOpen && !storeBrowserVK.visible
+        function onActionTriggered(action) {
+            function logResult(result) {
+                console.log("[store-browser] nav result:", result)
+            }
+            switch (action) {
+            case "navigate_up":
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
+                break
+            case "navigate_down":
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
+                break
+            case "navigate_left":
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
+                break
+            case "navigate_right":
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
+                break
+            case "confirm":
+                storeBrowserWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.activate()",
+                    function(result) {
+                        console.log("[store-browser] activate result:", result)
+                        if (result && result.toString().indexOf("input:") === 0) {
+                            var parts = result.toString().split(":")
+                            var inputType = parts[1] || "text"
+                            var currentVal = parts.slice(2).join(":")
+                            var isPassword = (inputType === "password")
+                            storePage.storeBrowserInputActive = true
+                            storeBrowserVK.placeholderText = isPassword ? "Enter password..." : "Type here..."
+                            storeBrowserVK.open(currentVal, isPassword)
+                        }
+                    })
+                break
+            case "scroll_up":
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
+                break
+            case "scroll_down":
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
+                break
+            case "back":
+                console.log("[store-browser] closing browser")
+                storePage.storeBrowserOpen = false
+                break
+            default:
+                break
+            }
+        }
+    }
+
+    Rectangle {
+        id: storeBrowserOverlay
+        visible: storePage.storeBrowserOpen
+        anchors.fill: parent
+        z: 600
+        color: ThemeManager.getColor("background")
+
+        // Header bar
+        Rectangle {
+            id: storeBrowserHeader
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 50
+            color: ThemeManager.getColor("surface")
+            z: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: storePage.storeBrowserTitle
+                font.pixelSize: ThemeManager.getFontSize("medium")
+                font.bold: true
+                font.family: ThemeManager.getFont("heading")
+                color: ThemeManager.getColor("textPrimary")
+            }
+
+            // Back hint
+            Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 14
+                text: "B  Back"
+                font.pixelSize: ThemeManager.getFontSize("small")
+                font.family: ThemeManager.getFont("body")
+                color: ThemeManager.getColor("textSecondary")
+            }
+        }
+
+        WebEngineProfile {
+            id: storeWebProfile
+            storageName: "store-browser"
+            httpCacheType: WebEngineProfile.DiskHttpCache
+            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
+        }
+
+        WebEngineView {
+            id: storeBrowserWebView
+            anchors.top: storeBrowserHeader.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            url: "about:blank"
+            profile: storeWebProfile
+            settings.focusOnNavigationEnabled: false
+
+            onLoadingChanged: function(loadRequest) {
+                console.log("[store-browser] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
+                if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                    storeBrowserNavInjectTimer.restart()
+                }
+            }
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[store-browser-js]", message)
+            }
+        }
+
+        Timer {
+            id: storeBrowserNavInjectTimer
+            interval: 800
+            repeat: false
+            onTriggered: {
+                console.log("[store-browser] injecting navigation overlay")
+                storeBrowserWebView.runJavaScript(storePage.navOverlayScript,
+                    function(result) {
+                        console.log("[store-browser] nav inject result:", result)
+                    })
+            }
+        }
+    }
+
+    // ─── Virtual Keyboard for Store Browser ───
+    VirtualKeyboard {
+        id: storeBrowserVK
+        anchors.fill: parent
+        z: 700
+
+        onAccepted: function(typedText) {
+            if (storePage.storeBrowserInputActive) {
+                storePage.storeBrowserInputActive = false
+                var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                storeBrowserWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
+                    function(result) {
+                        console.log("[store-browser] setText result:", result)
+                    })
+            }
+            storePage.forceActiveFocus()
+        }
+
+        onCancelled: {
+            storePage.storeBrowserInputActive = false
+            storePage.forceActiveFocus()
+        }
     }
 
     // ─── Virtual Keyboard for Search ───

@@ -1,0 +1,118 @@
+#ifndef BROWSERBRIDGE_H
+#define BROWSERBRIDGE_H
+
+#include <QObject>
+#include <QJsonObject>
+#include <QWebSocket>
+#include <QNetworkAccessManager>
+#include <QTimer>
+#include <QFile>
+
+// BrowserBridge — connects to a Chromium-based browser via the Chrome
+// DevTools Protocol (CDP) on localhost:9222.  It injects a JavaScript
+// navigation overlay that lets a game controller highlight & click
+// interactive elements, and detects text-field focus so Luna-UI can
+// show its VirtualKeyboard.
+
+class BrowserBridge : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
+    Q_PROPERTY(bool textFieldFocused READ isTextFieldFocused NOTIFY textFieldFocusedChanged)
+    Q_PROPERTY(bool active READ isActive NOTIFY activeChanged)
+    Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int actionsReceived READ actionsReceived NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int actionsDispatched READ actionsDispatched NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int cdpCommandsSent READ cdpCommandsSent NOTIFY diagnosticsChanged)
+    Q_PROPERTY(int cdpErrors READ cdpErrors NOTIFY diagnosticsChanged)
+
+public:
+    explicit BrowserBridge(QObject *parent = nullptr);
+    ~BrowserBridge();
+
+    bool isConnected() const { return m_connected; }
+    bool isTextFieldFocused() const { return m_textFieldFocused; }
+    bool isActive() const { return m_active; }
+    QString diagnostics() const { return m_diagnostics; }
+    int actionsReceived() const { return m_actionsReceived; }
+    int actionsDispatched() const { return m_actionsDispatched; }
+    int cdpCommandsSent() const { return m_cdpCommandsSent; }
+    int cdpErrors() const { return m_cdpErrors; }
+
+    // Start trying to connect to the browser's CDP endpoint
+    Q_INVOKABLE void connectToBrowser();
+    // Disconnect and clean up
+    Q_INVOKABLE void disconnect();
+
+    // Navigation commands — called from QML when controller input arrives
+    Q_INVOKABLE void navigate(const QString &direction); // "up","down","left","right"
+    Q_INVOKABLE void confirmElement();   // "click" the focused element
+    Q_INVOKABLE void goBack();           // browser back
+    Q_INVOKABLE void scrollPage(const QString &direction); // "up" or "down"
+
+    // Send text from VirtualKeyboard into the focused text field
+    Q_INVOKABLE void sendText(const QString &text);
+    // Clear the text field contents
+    Q_INVOKABLE void clearTextField();
+
+    // Mark the bridge as active/inactive (browser is in foreground)
+    Q_INVOKABLE void setActive(bool active);
+
+    // Handle controller actions directly from ControllerManager.
+    // When the browser has window focus, QGuiApplication::focusObject()
+    // returns null and synthetic key events are dropped.  This slot
+    // bypasses the QML focus system entirely by listening to the
+    // ControllerManager::actionTriggered signal.
+    Q_INVOKABLE void handleAction(const QString &action);
+
+signals:
+    // Emitted when the VirtualKeyboard needs Luna-UI's window raised
+    void raiseRequested();
+    void connectedChanged();
+    void textFieldFocusedChanged();
+    void activeChanged();
+    void diagnosticsChanged();
+    // Emitted when the injected JS reports a text field was focused
+    void textInputRequested(const QString &currentValue, bool isPassword);
+    // Emitted when the browser page navigated away or closed
+    void browserClosed();
+
+private slots:
+    void onWsConnected();
+    void onWsDisconnected();
+    void onWsTextMessage(const QString &message);
+    void onWsError(QAbstractSocket::SocketError error);
+    void attemptConnection();
+
+private:
+    QWebSocket m_ws;
+    QNetworkAccessManager m_nam;
+    QTimer m_connectTimer;
+    int m_connectAttempts = 0;
+    int m_cdpId = 1;         // incrementing CDP message id
+    bool m_connected = false;
+    bool m_textFieldFocused = false;
+    bool m_active = false;
+    bool m_injected = false;
+    QString m_wsUrl;          // ws://127.0.0.1:9222/devtools/page/<id>
+
+    // Diagnostics
+    QString m_diagnostics;
+    int m_actionsReceived = 0;
+    int m_actionsDispatched = 0;
+    int m_cdpCommandsSent = 0;
+    int m_cdpErrors = 0;
+    QFile m_diagLog;
+    void diag(const QString &msg);
+    void updateBrowserDiagOverlay();
+
+    void discoverTarget();
+    void injectNavigationScript();
+    int sendCdpCommand(const QString &method, const QJsonObject &params = QJsonObject());
+    void handleCdpEvent(const QJsonObject &msg);
+    void handleCdpResult(int id, const QJsonObject &result);
+
+    // The JavaScript code injected into the browser page
+    static QString navigationScript();
+};
+
+#endif // BROWSERBRIDGE_H

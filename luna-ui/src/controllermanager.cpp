@@ -162,6 +162,9 @@ void ControllerManager::handleButtonPress(SDL_GameControllerButton button) {
     QString action = m_profileResolver.resolveAction(physicalInput);
     if (!action.isEmpty()) {
         dispatchAction(action);
+    } else if (physicalInput == "stick_left_click") {
+        // L3 with no profile mapping → send CapsLock for virtual keyboard
+        sendSyntheticKey(Qt::Key_CapsLock);
     }
 }
 
@@ -296,6 +299,15 @@ void ControllerManager::sendSyntheticKeyEvent(const QString &action) {
 
     QKeyEvent pressEvent(QEvent::KeyPress, it.value(), Qt::NoModifier);
     QKeyEvent releaseEvent(QEvent::KeyRelease, it.value(), Qt::NoModifier);
+    QGuiApplication::sendEvent(focusObj, &pressEvent);
+    QGuiApplication::sendEvent(focusObj, &releaseEvent);
+}
+
+void ControllerManager::sendSyntheticKey(int qtKey) {
+    QObject *focusObj = QGuiApplication::focusObject();
+    if (!focusObj) return;
+    QKeyEvent pressEvent(QEvent::KeyPress, qtKey, Qt::NoModifier);
+    QKeyEvent releaseEvent(QEvent::KeyRelease, qtKey, Qt::NoModifier);
     QGuiApplication::sendEvent(focusObj, &pressEvent);
     QGuiApplication::sendEvent(focusObj, &releaseEvent);
 }

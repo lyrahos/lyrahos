@@ -12,7 +12,6 @@ ApplicationWindow {
     title: "Luna UI"
     flags: Qt.FramelessWindowHint
     visibility: Window.FullScreen
-
     // Track which zone has focus: "nav" or "content"
     property string focusZone: "nav"
     property bool pendingContentFocus: false
@@ -52,6 +51,16 @@ ApplicationWindow {
             }
         }
 
+        // D-Pad Left fallback: if a content view doesn't consume the Left
+        // key (e.g. already at the left edge of a grid, or a view with no
+        // horizontal navigation), navigate back to the sidebar.
+        Keys.onLeftPressed: function(event) {
+            if (root.focusZone === "content") {
+                root.enterNav()
+                event.accepted = true
+            }
+        }
+
         RowLayout {
             anchors.fill: parent
             spacing: 0
@@ -74,7 +83,10 @@ ApplicationWindow {
                 source: "views/GamesView.qml"
 
                 onLoaded: {
-                    if (item && typeof item.requestNavFocus === "object") {
+                    // Connect the view's requestNavFocus signal to enterNav().
+                    // In Qt6 QML, typeof for signals returns "function", not
+                    // "object", so use "in" to check for the signal's existence.
+                    if (item && "requestNavFocus" in item) {
                         item.requestNavFocus.connect(root.enterNav)
                     }
                     if (root.pendingContentFocus) {
@@ -82,6 +94,18 @@ ApplicationWindow {
                         root.enterContent()
                     }
                 }
+            }
+        }
+
+        // ─── Browser Controller Overlay ───
+        // Shown when an external browser is launched (e.g. for Steam API key).
+        // Captures controller input and relays it to the browser via CDP.
+        BrowserOverlay {
+            id: browserOverlay
+            onClosed: {
+                BrowserBridge.setActive(false)
+                GameManager.closeApiKeyBrowser()
+                root.enterNav()
             }
         }
     }
