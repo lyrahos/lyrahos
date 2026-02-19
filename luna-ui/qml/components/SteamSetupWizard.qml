@@ -227,6 +227,73 @@ Rectangle {
         }
     }
 
+    // ─── Controller → Browser bridge ───
+    // When the WebEngineView is active it steals focus, so synthetic key
+    // events from ControllerManager never reach Keys.onPressed.  Listen to
+    // actionTriggered directly — it fires regardless of focus state.
+    Connections {
+        target: ControllerManager
+        enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
+        function onActionTriggered(action) {
+            console.log("[wizard-browser] actionTriggered:", action,
+                        "| browserOpen:", wizard.apiKeyBrowserOpen,
+                        "| step:", wizard.currentStep)
+            var focusJS =
+                "(function(dir) {" +
+                "  var focusable = Array.from(document.querySelectorAll(" +
+                "    'a[href], button, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'" +
+                "  )).filter(function(el) {" +
+                "    return el.offsetParent !== null && !el.disabled;" +
+                "  });" +
+                "  console.log('[wizard-browser-js] focusable count:', focusable.length," +
+                "    'activeElement:', document.activeElement ? document.activeElement.tagName : 'null'," +
+                "    'dir:', dir);" +
+                "  if (!focusable.length) return 'no-focusable';" +
+                "  var idx = focusable.indexOf(document.activeElement);" +
+                "  var next;" +
+                "  if (dir === 1) {" +
+                "    next = idx < focusable.length - 1 ? idx + 1 : 0;" +
+                "  } else {" +
+                "    next = idx > 0 ? idx - 1 : focusable.length - 1;" +
+                "  }" +
+                "  focusable[next].focus();" +
+                "  focusable[next].scrollIntoView({block:'center',behavior:'smooth'});" +
+                "  return 'focused:' + focusable[next].tagName + ' ' + (focusable[next].textContent||'').substring(0,40);" +
+                "})"
+            function logResult(result) {
+                console.log("[wizard-browser] JS result:", result)
+            }
+            switch (action) {
+            case "navigate_up":
+            case "navigate_left":
+                apiKeyWebView.runJavaScript(focusJS + "(-1)", logResult)
+                break
+            case "navigate_down":
+            case "navigate_right":
+                apiKeyWebView.runJavaScript(focusJS + "(1)", logResult)
+                break
+            case "confirm":
+                apiKeyWebView.runJavaScript(
+                    "(function() {" +
+                    "  var el = document.activeElement;" +
+                    "  console.log('[wizard-browser-js] confirm on:', el ? el.tagName + ' ' + (el.textContent||'').substring(0,40) : 'none');" +
+                    "  if (el && el !== document.body) { el.click(); return 'clicked:' + el.tagName; }" +
+                    "  return 'nothing-to-click';" +
+                    "})()", logResult)
+                break
+            case "back":
+                console.log("[wizard-browser] closing browser")
+                wizard.apiKeyBrowserOpen = false
+                apiKeyPollTimer.stop()
+                apiKeyWebView.url = "about:blank"
+                break
+            default:
+                console.log("[wizard-browser] unhandled action:", action)
+                break
+            }
+        }
+    }
+
     // ─── Key Handler ───
     Keys.onPressed: function(event) {
         if (wizardVirtualKeyboard.visible) return
@@ -264,57 +331,11 @@ Rectangle {
             return
         }
 
-        // Browser navigation — inject JS into the embedded WebEngineView.
-        // All four d-pad directions cycle focus among interactive elements;
-        // the page auto-scrolls to keep the focused element visible.
-        if (apiKeyBrowserOpen && currentStep === 2) {
-            var focusJS =
-                "(function(dir) {" +
-                "  var focusable = Array.from(document.querySelectorAll(" +
-                "    'a[href], button, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'" +
-                "  )).filter(function(el) {" +
-                "    return el.offsetParent !== null && !el.disabled;" +
-                "  });" +
-                "  if (!focusable.length) return;" +
-                "  var idx = focusable.indexOf(document.activeElement);" +
-                "  var next;" +
-                "  if (dir === 1) {" +
-                "    next = idx < focusable.length - 1 ? idx + 1 : 0;" +
-                "  } else {" +
-                "    next = idx > 0 ? idx - 1 : focusable.length - 1;" +
-                "  }" +
-                "  focusable[next].focus();" +
-                "  focusable[next].scrollIntoView({block:'center',behavior:'smooth'});" +
-                "})"
-            switch (event.key) {
-            case Qt.Key_Up:
-                apiKeyWebView.runJavaScript(focusJS + "(-1)")
-                event.accepted = true; break
-            case Qt.Key_Down:
-                apiKeyWebView.runJavaScript(focusJS + "(1)")
-                event.accepted = true; break
-            case Qt.Key_Left:
-                apiKeyWebView.runJavaScript(focusJS + "(-1)")
-                event.accepted = true; break
-            case Qt.Key_Right:
-                apiKeyWebView.runJavaScript(focusJS + "(1)")
-                event.accepted = true; break
-            case Qt.Key_Return:
-            case Qt.Key_Enter:
-                apiKeyWebView.runJavaScript(
-                    "(function() {" +
-                    "  var el = document.activeElement;" +
-                    "  if (el && el !== document.body) el.click();" +
-                    "})()")
-                event.accepted = true; break
-            case Qt.Key_Escape:
-                wizard.apiKeyBrowserOpen = false
-                apiKeyPollTimer.stop()
-                apiKeyWebView.url = "about:blank"
-                event.accepted = true; break
-            }
-            return
-        }
+        // Browser navigation is handled by the Connections block above
+        // (listening to ControllerManager.actionTriggered directly),
+        // because the WebEngineView steals focus and key events never
+        // reach this handler while the browser is open.
+        if (apiKeyBrowserOpen && currentStep === 2) return
 
         // Main wizard navigation
         var count = wizFocusCount()
@@ -1730,11 +1751,22 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
+            // Prevent WebEngineView from stealing focus so the wizard's
+            // key handler keeps working for non-browser steps.
+            settings.focusOnNavigationEnabled: false
 
             onLoadingChanged: function(loadRequest) {
+                console.log("[wizard-browser] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
                 if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                     apiKeyPollTimer.start()
                 }
+            }
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[wizard-browser-js]", message)
             }
         }
 
