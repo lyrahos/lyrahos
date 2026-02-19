@@ -1964,6 +1964,11 @@ Rectangle {
             id: steamWebProfile
             storageName: "steam-wizard"
             httpCacheType: WebEngineProfile.DiskHttpCache
+            // Steam login uses session cookies (no expiry).  The default
+            // AllowPersistentCookies only saves cookies with an explicit
+            // expiry date, so the login is lost on close.  Force ALL
+            // cookies to disk so the session survives.
+            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
         }
 
         WebEngineView {
