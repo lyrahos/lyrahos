@@ -235,6 +235,9 @@ Rectangle {
         target: ControllerManager
         enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
         function onActionTriggered(action) {
+            console.log("[wizard-browser] actionTriggered:", action,
+                        "| browserOpen:", wizard.apiKeyBrowserOpen,
+                        "| step:", wizard.currentStep)
             var focusJS =
                 "(function(dir) {" +
                 "  var focusable = Array.from(document.querySelectorAll(" +
@@ -242,7 +245,10 @@ Rectangle {
                 "  )).filter(function(el) {" +
                 "    return el.offsetParent !== null && !el.disabled;" +
                 "  });" +
-                "  if (!focusable.length) return;" +
+                "  console.log('[wizard-browser-js] focusable count:', focusable.length," +
+                "    'activeElement:', document.activeElement ? document.activeElement.tagName : 'null'," +
+                "    'dir:', dir);" +
+                "  if (!focusable.length) return 'no-focusable';" +
                 "  var idx = focusable.indexOf(document.activeElement);" +
                 "  var next;" +
                 "  if (dir === 1) {" +
@@ -252,27 +258,37 @@ Rectangle {
                 "  }" +
                 "  focusable[next].focus();" +
                 "  focusable[next].scrollIntoView({block:'center',behavior:'smooth'});" +
+                "  return 'focused:' + focusable[next].tagName + ' ' + (focusable[next].textContent||'').substring(0,40);" +
                 "})"
+            function logResult(result) {
+                console.log("[wizard-browser] JS result:", result)
+            }
             switch (action) {
             case "navigate_up":
             case "navigate_left":
-                apiKeyWebView.runJavaScript(focusJS + "(-1)")
+                apiKeyWebView.runJavaScript(focusJS + "(-1)", logResult)
                 break
             case "navigate_down":
             case "navigate_right":
-                apiKeyWebView.runJavaScript(focusJS + "(1)")
+                apiKeyWebView.runJavaScript(focusJS + "(1)", logResult)
                 break
             case "confirm":
                 apiKeyWebView.runJavaScript(
                     "(function() {" +
                     "  var el = document.activeElement;" +
-                    "  if (el && el !== document.body) el.click();" +
-                    "})()")
+                    "  console.log('[wizard-browser-js] confirm on:', el ? el.tagName + ' ' + (el.textContent||'').substring(0,40) : 'none');" +
+                    "  if (el && el !== document.body) { el.click(); return 'clicked:' + el.tagName; }" +
+                    "  return 'nothing-to-click';" +
+                    "})()", logResult)
                 break
             case "back":
+                console.log("[wizard-browser] closing browser")
                 wizard.apiKeyBrowserOpen = false
                 apiKeyPollTimer.stop()
                 apiKeyWebView.url = "about:blank"
+                break
+            default:
+                console.log("[wizard-browser] unhandled action:", action)
                 break
             }
         }
@@ -1740,9 +1756,17 @@ Rectangle {
             settings.focusOnNavigationEnabled: false
 
             onLoadingChanged: function(loadRequest) {
+                console.log("[wizard-browser] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
                 if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                     apiKeyPollTimer.start()
                 }
+            }
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[wizard-browser-js]", message)
             }
         }
 
