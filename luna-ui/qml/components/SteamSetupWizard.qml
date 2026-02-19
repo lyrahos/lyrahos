@@ -264,15 +264,42 @@ Rectangle {
             return
         }
 
-        // Browser navigation
+        // Browser navigation — inject JS into the embedded WebEngineView
         if (apiKeyBrowserOpen && currentStep === 2) {
             switch (event.key) {
+            case Qt.Key_Up:
+                apiKeyWebView.runJavaScript("window.scrollBy(0, -100)")
+                event.accepted = true; break
+            case Qt.Key_Down:
+                apiKeyWebView.runJavaScript("window.scrollBy(0, 100)")
+                event.accepted = true; break
+            case Qt.Key_Left:
+                apiKeyWebView.runJavaScript(
+                    "(function() {" +
+                    "  var focusable = Array.from(document.querySelectorAll(" +
+                    "    'a[href], button, input, select, textarea, [tabindex]'));" +
+                    "  var idx = focusable.indexOf(document.activeElement);" +
+                    "  if (idx > 0) focusable[idx - 1].focus();" +
+                    "  else if (focusable.length) focusable[focusable.length - 1].focus();" +
+                    "})()")
+                event.accepted = true; break
+            case Qt.Key_Right:
+                apiKeyWebView.runJavaScript(
+                    "(function() {" +
+                    "  var focusable = Array.from(document.querySelectorAll(" +
+                    "    'a[href], button, input, select, textarea, [tabindex]'));" +
+                    "  var idx = focusable.indexOf(document.activeElement);" +
+                    "  if (idx < focusable.length - 1) focusable[idx + 1].focus();" +
+                    "  else if (focusable.length) focusable[0].focus();" +
+                    "})()")
+                event.accepted = true; break
             case Qt.Key_Return:
             case Qt.Key_Enter:
-                wizard.apiKeyBrowserOpen = false
-                apiKeyPollTimer.stop()
-                apiKeyWebView.url = "about:blank"
-                wizard.showManualInput = true
+                apiKeyWebView.runJavaScript(
+                    "(function() {" +
+                    "  var el = document.activeElement;" +
+                    "  if (el && el !== document.body) { el.click(); return; }" +
+                    "})()")
                 event.accepted = true; break
             case Qt.Key_Escape:
                 wizard.apiKeyBrowserOpen = false
