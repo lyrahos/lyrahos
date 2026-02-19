@@ -4,6 +4,8 @@
 #include <QJsonArray>
 #include <QNetworkReply>
 #include <QDebug>
+#include <QDateTime>
+#include <QTextStream>
 
 // ── Constructor / Destructor ─────────────────────────────────────────
 
@@ -26,6 +28,52 @@ void BrowserBridge::diag(const QString &msg) {
     qDebug() << "BrowserBridge:" << msg;
     m_diagnostics = msg;
     emit diagnosticsChanged();
+
+    // Append to log file so diagnostics survive even if the overlay isn't visible
+    if (m_diagLog.isOpen()) {
+        QTextStream out(&m_diagLog);
+        out << QDateTime::currentDateTime().toString("hh:mm:ss.zzz") << "  " << msg << "\n";
+        out.flush();
+    }
+}
+
+void BrowserBridge::updateBrowserDiagOverlay() {
+    if (!m_connected) return;
+    // Inject/update a small diagnostic panel inside the browser page itself
+    QString js = QStringLiteral(R"JS(
+(function() {
+    var d = document.getElementById('__luna-diag');
+    if (!d) {
+        d = document.createElement('div');
+        d.id = '__luna-diag';
+        d.style.cssText =
+            'position:fixed; bottom:12px; left:12px; z-index:999998; '
+            + 'background:rgba(0,0,0,0.88); color:#e67e22; font:13px/1.5 monospace; '
+            + 'padding:10px 14px; border-radius:10px; pointer-events:none; '
+            + 'border:1px solid #e67e22; max-width:500px; white-space:pre-wrap;';
+        document.documentElement.appendChild(d);
+    }
+    d.textContent = %1;
+})();
+)JS");
+
+    QString status = QString(
+        "Luna BrowserBridge Diag\\n"
+        "active: %1  connected: %2\\n"
+        "actions in: %3  dispatched: %4\\n"
+        "cdp sent: %5  errors: %6\\n"
+        "last: %7")
+        .arg(m_active ? "true" : "false")
+        .arg(m_connected ? "true" : "false")
+        .arg(m_actionsReceived)
+        .arg(m_actionsDispatched)
+        .arg(m_cdpCommandsSent)
+        .arg(m_cdpErrors)
+        .arg(QString(m_diagnostics).replace("'", "\\'").replace("\n", "\\n"));
+
+    sendCdpCommand("Runtime.evaluate", {
+        {"expression", js.arg(QString("'%1'").arg(status))}
+    });
 }
 
 // ── Public API ───────────────────────────────────────────────────────
@@ -37,11 +85,18 @@ void BrowserBridge::connectToBrowser() {
     m_actionsDispatched = 0;
     m_cdpCommandsSent = 0;
     m_cdpErrors = 0;
+
+    // Open (or reopen) the diagnostic log file
+    if (m_diagLog.isOpen()) m_diagLog.close();
+    m_diagLog.setFileName("/tmp/luna-browserbridge-diag.log");
+    m_diagLog.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
+
     diag("connectToBrowser() called — starting CDP discovery");
     attemptConnection();
 }
 
 void BrowserBridge::disconnect() {
+    diag("disconnect() called");
     m_connectTimer.stop();
     if (m_ws.state() != QAbstractSocket::UnconnectedState) {
         m_ws.close();
@@ -55,6 +110,7 @@ void BrowserBridge::disconnect() {
         emit textFieldFocusedChanged();
     }
     m_injected = false;
+    if (m_diagLog.isOpen()) m_diagLog.close();
 }
 
 void BrowserBridge::setActive(bool active) {
@@ -141,6 +197,9 @@ void BrowserBridge::handleAction(const QString &action) {
     m_actionsDispatched++;
     emit diagnosticsChanged();
 
+    // Update the in-browser diagnostic overlay periodically
+    if (m_actionsDispatched % 10 == 1) updateBrowserDiagOverlay();
+
     if (action == "navigate_up")         navigate("up");
     else if (action == "navigate_down")  navigate("down");
     else if (action == "navigate_left")  navigate("left");
@@ -225,6 +284,12 @@ void BrowserBridge::onWsConnected() {
 
     // Inject the navigation overlay script
     injectNavigationScript();
+
+    // Show diagnostic overlay inside the browser page after a short delay
+    // (gives the nav script time to execute first)
+    QTimer::singleShot(1000, this, [this]() {
+        if (m_connected) updateBrowserDiagOverlay();
+    });
 }
 
 void BrowserBridge::onWsDisconnected() {
@@ -318,6 +383,7 @@ void BrowserBridge::handleCdpEvent(const QJsonObject &msg) {
             if (event == "ready") {
                 int count = data["count"].toInt();
                 diag(QString("Script injected OK — %1 interactive elements found").arg(count));
+                updateBrowserDiagOverlay();
             } else if (event == "textFocus") {
                 bool wasFocused = m_textFieldFocused;
                 m_textFieldFocused = true;

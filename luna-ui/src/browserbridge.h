@@ -6,6 +6,7 @@
 #include <QWebSocket>
 #include <QNetworkAccessManager>
 #include <QTimer>
+#include <QFile>
 
 // BrowserBridge — connects to a Chromium-based browser via the Chrome
 // DevTools Protocol (CDP) on localhost:9222.  It injects a JavaScript
@@ -100,7 +101,9 @@ private:
     int m_actionsDispatched = 0;
     int m_cdpCommandsSent = 0;
     int m_cdpErrors = 0;
+    QFile m_diagLog;
     void diag(const QString &msg);
+    void updateBrowserDiagOverlay();
 
     void discoverTarget();
     void injectNavigationScript();
