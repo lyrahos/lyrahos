@@ -51,14 +51,17 @@ export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
 # ── WebEngine cookie/session persistence ──
-# luna-ui uses a shared WebEngineProfile ("luna-browser") for both
-# the Steam setup wizard and the game store browser.  Both use
-# ForcePersistentCookies + DiskHttpCache.  On logout the app
-# processes pending events for 500ms to let WebEngine flush cookies
-# to disk before quitting.
+# luna-ui uses a shared WebEngineProfilePrototype ("luna-browser") for
+# both the Steam setup wizard and the game store browser.  Both use
+# ForcePersistentCookies + DiskHttpCache.  On logout the app waits
+# 500ms to let WebEngine flush cookies to disk before quitting.
+#
+# Qt 6.9+ requires WebEngineProfilePrototype (not WebEngineProfile)
+# so that storageName is set before the Chromium context is created;
+# otherwise the profile runs off-the-record and cookies stay in memory.
 #
 # Shared cookie storage (logged at startup as [webengine-diag]):
-#   ~/.config/Lyrah OS/Luna UI/QtWebEngine/luna-browser/
+#   ~/.local/share/Lyrah OS/Luna UI/QtWebEngine/luna-browser/
 #
 # To diagnose: grep this log for [webengine-diag] and [store-browser]
 
