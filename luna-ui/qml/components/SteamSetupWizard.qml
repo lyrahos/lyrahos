@@ -254,6 +254,41 @@ Rectangle {
             && style.opacity !== '0';
     }
 
+    /* Return the best visual bounding rect for an element.
+       Handles inline elements that wrap across lines (use the largest
+       individual client rect instead of the union), and tiny interactive
+       elements wrapped inside a styled parent container. */
+    function getVisualRect(el) {
+        var rects = el.getClientRects();
+        var r = el.getBoundingClientRect();
+
+        // Inline elements wrapping across lines produce multiple rects;
+        // the union (getBoundingClientRect) can be absurdly wide.
+        // Pick the largest individual rect instead.
+        if (rects.length > 1) {
+            var best = rects[0];
+            var bestArea = best.width * best.height;
+            for (var i = 1; i < rects.length; i++) {
+                var a = rects[i].width * rects[i].height;
+                if (a > bestArea) { best = rects[i]; bestArea = a; }
+            }
+            r = best;
+        }
+
+        // If the element itself is very small (icon-only button, hidden
+        // checkbox, etc.) but lives inside a reasonably-sized parent that
+        // looks like the actual visual target, snap to the parent.
+        if ((r.width < 16 || r.height < 16) && el.parentElement) {
+            var pr = el.parentElement.getBoundingClientRect();
+            if (pr.width >= r.width && pr.height >= r.height
+                && pr.width < 500 && pr.height < 120) {
+                r = pr;
+            }
+        }
+
+        return r;
+    }
+
     function scanElements() {
         var all = document.querySelectorAll(SELECTORS);
         elements = [];
@@ -280,11 +315,12 @@ Rectangle {
         if (elements.length === 0) { highlightEl.style.display = 'none'; return; }
         var el = elements[currentIndex];
         if (!el) return;
-        var r = el.getBoundingClientRect();
-        highlightEl.style.left   = (r.left - 4) + 'px';
-        highlightEl.style.top    = (r.top - 4)  + 'px';
-        highlightEl.style.width  = (r.width + 8) + 'px';
-        highlightEl.style.height = (r.height + 8) + 'px';
+        var r = getVisualRect(el);
+        var pad = 3;
+        highlightEl.style.left   = (r.left - pad) + 'px';
+        highlightEl.style.top    = (r.top - pad)  + 'px';
+        highlightEl.style.width  = (r.width + pad * 2) + 'px';
+        highlightEl.style.height = (r.height + pad * 2) + 'px';
         highlightEl.style.display = 'block';
         el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
@@ -293,7 +329,7 @@ Rectangle {
         if (elements.length < 2) return currentIndex;
         var cur = elements[currentIndex];
         if (!cur) return currentIndex;
-        var cr = cur.getBoundingClientRect();
+        var cr = getVisualRect(cur);
         var cx = cr.left + cr.width / 2;
         var cy = cr.top + cr.height / 2;
         var bestIdx = -1;
@@ -301,17 +337,17 @@ Rectangle {
 
         for (var i = 0; i < elements.length; i++) {
             if (i === currentIndex) continue;
-            var er = elements[i].getBoundingClientRect();
+            var er = getVisualRect(elements[i]);
             var ex = er.left + er.width / 2;
             var ey = er.top + er.height / 2;
             var dx = ex - cx;
             var dy = ey - cy;
             var inDirection = false;
             switch (direction) {
-                case 'up':    inDirection = dy < -10; break;
-                case 'down':  inDirection = dy > 10;  break;
-                case 'left':  inDirection = dx < -10; break;
-                case 'right': inDirection = dx > 10;  break;
+                case 'up':    inDirection = dy < -5; break;
+                case 'down':  inDirection = dy > 5;  break;
+                case 'left':  inDirection = dx < -5; break;
+                case 'right': inDirection = dx > 5;  break;
             }
             if (!inDirection) continue;
             var dist;
@@ -374,6 +410,17 @@ Rectangle {
         window.scrollBy(0, direction === 'up' ? -400 : 400);
         return 'scrolled:' + direction;
     };
+
+    // Re-scan when the DOM changes so newly-added elements (Steam
+    // loads content dynamically) are picked up automatically.
+    var observer = new MutationObserver(function() {
+        var oldLen = elements.length;
+        scanElements();
+        if (elements.length !== oldLen) {
+            updateHighlight();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
 
     scanElements();
     if (elements.length > 0) updateHighlight();
