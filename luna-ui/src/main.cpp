@@ -39,12 +39,13 @@ int main(int argc, char *argv[]) {
     app.setOrganizationName("Lyrah OS");
 
     // ── WebEngine storage diagnostics (logged to luna-session.log) ──
+    // Qt WebEngine stores persistent data under AppDataLocation, not ConfigLocation.
     {
-        QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
-        QString cachePath  = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
-        qInfo() << "[webengine-diag] config path:" << configPath;
+        QString dataPath  = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QString cachePath = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        qInfo() << "[webengine-diag] data path:" << dataPath;
         qInfo() << "[webengine-diag] cache path:" << cachePath;
-        qInfo() << "[webengine-diag] shared cookie store:" << configPath + "/QtWebEngine/luna-browser";
+        qInfo() << "[webengine-diag] shared cookie store:" << dataPath + "/QtWebEngine/luna-browser";
     }
 
     Database db;

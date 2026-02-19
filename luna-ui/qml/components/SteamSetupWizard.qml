@@ -1966,12 +1966,12 @@ Rectangle {
             }
         }
 
-        // Persistent profile so cookies / session data survive across
-        // browser open/close cycles (Steam login is preserved).
+        // Qt 6.9+: Use WebEngineProfilePrototype so storageName is set
+        // before the Chromium context is created (cookies persist to disk).
         // Shared storageName ("luna-browser") with GameStorePage so both
         // embedded browsers use the same cookie jar.
-        WebEngineProfile {
-            id: steamWebProfile
+        WebEngineProfilePrototype {
+            id: steamWebProfileProto
             storageName: "luna-browser"
             httpCacheType: WebEngineProfile.DiskHttpCache
             // Steam login uses session cookies (no expiry).  The default
@@ -1988,7 +1988,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
-            profile: steamWebProfile
+            profile: steamWebProfileProto.instance()
             // Prevent WebEngineView from stealing focus so the wizard's
             // key handler keeps working for non-browser steps.
             settings.focusOnNavigationEnabled: false
