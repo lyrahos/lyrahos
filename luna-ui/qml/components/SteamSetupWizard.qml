@@ -286,6 +286,25 @@ Rectangle {
             }
         }
 
+        // Tighten oversized rects: block-level elements (e.g. <a> with
+        // display:block) often stretch to fill their container, making
+        // the highlight much wider than the visible text.  Use a Range
+        // around the element contents to get a rect that hugs the
+        // actual rendered content instead.
+        var tag = el.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select'
+            && tag !== 'img' && tag !== 'video') {
+            try {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                var tr = range.getBoundingClientRect();
+                if (tr.width > 0 && tr.height > 0
+                    && tr.width < r.width * 0.75) {
+                    r = tr;
+                }
+            } catch(e) {}
+        }
+
         return r;
     }
 
@@ -436,7 +455,7 @@ Rectangle {
     // actionTriggered directly — it fires regardless of focus state.
     Connections {
         target: ControllerManager
-        enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
+        enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2 && !wizardVirtualKeyboard.visible
         function onActionTriggered(action) {
             function logResult(result) {
                 console.log("[wizard-browser] nav result:", result)
@@ -1945,6 +1964,11 @@ Rectangle {
             id: steamWebProfile
             storageName: "steam-wizard"
             httpCacheType: WebEngineProfile.DiskHttpCache
+            // Steam login uses session cookies (no expiry).  The default
+            // AllowPersistentCookies only saves cookies with an explicit
+            // expiry date, so the login is lost on close.  Force ALL
+            // cookies to disk so the session survives.
+            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
         }
 
         WebEngineView {
