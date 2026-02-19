@@ -436,7 +436,7 @@ Rectangle {
     // actionTriggered directly — it fires regardless of focus state.
     Connections {
         target: ControllerManager
-        enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2
+        enabled: wizard.apiKeyBrowserOpen && wizard.currentStep === 2 && !wizardVirtualKeyboard.visible
         function onActionTriggered(action) {
             function logResult(result) {
                 console.log("[wizard-browser] nav result:", result)
