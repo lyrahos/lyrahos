@@ -1819,6 +1819,7 @@ Item {
         anchors.fill: parent
 
         onOpenDealUrl: function(url, storeName) {
+            console.log("[store-browser] opening deal URL:", url, "store:", storeName)
             storePage.storeBrowserTitle = storeName || "Store"
             storeBrowserWebView.url = url
             storePage.storeBrowserOpen = true
@@ -2113,6 +2114,10 @@ Item {
 
         WebEngineProfile {
             id: storeWebProfile
+            // KNOWN ISSUE: This uses a separate cookie jar from the Steam
+            // wizard ("steam-wizard").  Logging in via the wizard does NOT
+            // carry over here.  To share sessions, both profiles would need
+            // the same storageName.
             storageName: "store-browser"
             httpCacheType: WebEngineProfile.DiskHttpCache
             persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies

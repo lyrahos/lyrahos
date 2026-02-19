@@ -1968,6 +1968,10 @@ Rectangle {
 
         // Persistent profile so cookies / session data survive across
         // browser open/close cycles (Steam login is preserved).
+        // KNOWN ISSUE: This cookie jar is isolated from the store browser
+        // ("store-browser" storageName).  Sessions are NOT shared.
+        // KNOWN ISSUE: On logout, QCoreApplication::quit() does not give
+        // WebEngine time to flush pending cookie writes to disk.
         WebEngineProfile {
             id: steamWebProfile
             storageName: "steam-wizard"

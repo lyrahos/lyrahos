@@ -3,6 +3,7 @@
 #include <QQmlContext>
 #include <QTimer>
 #include <QCursor>
+#include <QStandardPaths>
 #include <QtWebEngineQuick>
 #include "thememanager.h"
 #include "gamemanager.h"
@@ -36,6 +37,20 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("Luna UI");
     app.setOrganizationName("Lyrah OS");
+
+    // ── WebEngine storage diagnostics (logged to luna-session.log) ──
+    {
+        QString configPath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+        QString cachePath  = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        qInfo() << "[webengine-diag] config path:" << configPath;
+        qInfo() << "[webengine-diag] cache path:" << cachePath;
+        qInfo() << "[webengine-diag] expected cookie stores:";
+        qInfo() << "[webengine-diag]   steam-wizard:" << configPath + "/QtWebEngine/steam-wizard";
+        qInfo() << "[webengine-diag]   store-browser:" << configPath + "/QtWebEngine/store-browser";
+        // NOTE: These two profiles have SEPARATE cookie jars.
+        // Logging into a store in the wizard does NOT carry to the store browser.
+        // See KNOWN ISSUE in luna-session script.
+    }
 
     Database db;
     if (!db.initialize()) {
