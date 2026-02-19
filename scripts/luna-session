@@ -50,22 +50,15 @@ fi
 export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
-# ── KNOWN ISSUE: WebEngine cookie/session persistence ──
-# luna-ui uses two embedded WebEngineProfile instances:
-#   1. "steam-wizard"  — SteamSetupWizard.qml (Steam API key page)
-#   2. "store-browser" — GameStorePage.qml    (store deal pages)
+# ── WebEngine cookie/session persistence ──
+# luna-ui uses a shared WebEngineProfile ("luna-browser") for both
+# the Steam setup wizard and the game store browser.  Both use
+# ForcePersistentCookies + DiskHttpCache.  On logout the app
+# processes pending events for 500ms to let WebEngine flush cookies
+# to disk before quitting.
 #
-# Both use ForcePersistentCookies + DiskHttpCache, but:
-#   a) They have SEPARATE storageNames → separate cookie jars.
-#      Logging in via the wizard does NOT carry sessions to the
-#      store browser (and vice versa).
-#   b) On logout, GameManager::logout() calls QCoreApplication::quit()
-#      immediately. WebEngine may not have time to flush pending
-#      cookie writes to disk, so sessions can be lost on logout.
-#
-# Cookie storage locations (logged at startup as [webengine-diag]):
-#   ~/.config/Lyrah OS/Luna UI/QtWebEngine/steam-wizard/
-#   ~/.config/Lyrah OS/Luna UI/QtWebEngine/store-browser/
+# Shared cookie storage (logged at startup as [webengine-diag]):
+#   ~/.config/Lyrah OS/Luna UI/QtWebEngine/luna-browser/
 #
 # To diagnose: grep this log for [webengine-diag] and [store-browser]
 
