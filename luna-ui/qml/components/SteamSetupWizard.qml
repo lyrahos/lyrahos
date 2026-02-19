@@ -29,6 +29,7 @@ Rectangle {
     property bool apiKeyBrowserOpen: false
     property string detectedApiKey: ""
     property bool showManualInput: false
+    property bool browserInputActive: false   // true when virtual keyboard targets a browser input
 
     // Sub-states for step 3 (SteamCMD)
     property string steamCmdPromptType: ""  // "password" or "steamguard"
@@ -339,7 +340,34 @@ Rectangle {
         if (!el) return 'no-element';
         el.focus();
         el.click();
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (tag === 'input' && (type === 'text' || type === 'password'
+                || type === 'email' || type === 'search' || type === 'url'
+                || type === 'tel' || type === 'number')
+            || tag === 'textarea') {
+            return 'input:' + type + ':' + (el.value || '');
+        }
         return 'clicked:' + el.tagName + ' ' + (el.textContent||'').substring(0,40);
+    };
+
+    nav.setText = function(text) {
+        var el = document.activeElement;
+        if (!el) return 'no-active';
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+        if (!nativeSetter) nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value'
+        );
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(el, text);
+        } else {
+            el.value = text;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'set:' + text.length + ' chars';
     };
 
     nav.scrollPage = function(direction) {
@@ -380,7 +408,21 @@ Rectangle {
                 apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
                 break
             case "confirm":
-                apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.activate()", logResult)
+                apiKeyWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.activate()",
+                    function(result) {
+                        console.log("[wizard-browser] activate result:", result)
+                        if (result && result.toString().indexOf("input:") === 0) {
+                            // result is "input:<type>:<currentValue>"
+                            var parts = result.toString().split(":")
+                            var inputType = parts[1] || "text"
+                            var currentVal = parts.slice(2).join(":") // value may contain colons
+                            var isPassword = (inputType === "password")
+                            wizard.browserInputActive = true
+                            wizardVirtualKeyboard.placeholderText = isPassword ? "Enter password..." : "Type here..."
+                            wizardVirtualKeyboard.open(currentVal, isPassword)
+                        }
+                    })
                 break
             case "scroll_up":
                 apiKeyWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
@@ -2060,7 +2102,16 @@ Rectangle {
 
         onAccepted: function(typedText) {
             // Route typed text to the correct input based on current state
-            if (wizard.currentStep === 2 && wizard.showManualInput) {
+            if (wizard.browserInputActive) {
+                // Send text back into the embedded browser's focused input
+                wizard.browserInputActive = false
+                var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                apiKeyWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
+                    function(result) {
+                        console.log("[wizard-browser] setText result:", result)
+                    })
+            } else if (wizard.currentStep === 2 && wizard.showManualInput) {
                 manualKeyInput.text = typedText
                 if (typedText.trim().length >= 20) {
                     GameManager.setSteamApiKey(typedText.trim())
@@ -2089,6 +2140,7 @@ Rectangle {
         }
 
         onCancelled: {
+            wizard.browserInputActive = false
             wizard.forceActiveFocus()
         }
     }
