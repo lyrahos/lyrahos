@@ -404,38 +404,35 @@ void StoreApiManager::searchGames(const QString& title)
             QByteArray data = reply->readAll();
             QJsonDocument doc = QJsonDocument::fromJson(data);
 
-            // Nexarda may return array directly or under a key
+            // Nexarda response: { success, results: { items: [...] } }
+            // Each item: { title, game_info: { id, name, lowest_price, highest_discount, ... } }
             QJsonArray arr;
-            if (doc.isArray()) {
-                arr = doc.array();
-            } else if (doc.isObject()) {
+            if (doc.isObject()) {
                 QJsonObject root = doc.object();
-                if (root.contains("results"))
-                    arr = root["results"].toArray();
-                else if (root.contains("data"))
-                    arr = root["data"].toArray();
-                else if (root.contains("games"))
-                    arr = root["games"].toArray();
+                if (root.contains("results") && root["results"].isObject()) {
+                    QJsonObject results = root["results"].toObject();
+                    arr = results["items"].toArray();
+                }
             }
 
             for (const auto& val : arr) {
                 QJsonObject obj = val.toObject();
+                QJsonObject gameInfo = obj["game_info"].toObject();
                 QVariantMap game;
-                game["nexardaId"] = obj["id"].toVariant().toString();
-                game["title"]     = obj["name"].toString();
+                game["nexardaId"] = QString::number(gameInfo["id"].toInt());
+                game["title"]     = gameInfo["name"].toString();
                 if (game["title"].toString().isEmpty())
                     game["title"] = obj["title"].toString();
 
-                // Price info
-                if (obj.contains("lowest_price"))
-                    game["lowestPrice"] = obj["lowest_price"].toVariant().toString();
-                else if (obj.contains("price"))
-                    game["lowestPrice"] = obj["price"].toVariant().toString();
+                // Price info from game_info
+                if (gameInfo.contains("lowest_price"))
+                    game["lowestPrice"] = QString::number(gameInfo["lowest_price"].toDouble(), 'f', 2);
 
-                if (obj.contains("discount"))
-                    game["discount"] = obj["discount"].toVariant().toString();
+                if (gameInfo.contains("highest_discount"))
+                    game["discount"] = QString::number(gameInfo["highest_discount"].toInt());
 
-                state->nexardaResults.append(game);
+                if (!game["nexardaId"].toString().isEmpty() && game["nexardaId"].toString() != "0")
+                    state->nexardaResults.append(game);
             }
 
             state->completedCount++;
@@ -749,77 +746,58 @@ void StoreApiManager::fetchNexardaPrices(const QString& nexardaId)
 
         if (doc.isObject()) {
             QJsonObject root = doc.object();
-            result["lowest"]  = root["lowest"].toVariant();
-            result["highest"] = root["highest"].toVariant();
-            result["stores"]  = root["stores"].toVariant();
-            result["offers"]  = root["offers"].toVariant();
 
-            // Parse individual edition/offer details
+            // Game info at root["info"]
+            QJsonObject info = root["info"].toObject();
+            result["gameName"] = info["name"].toVariant();
+            result["cover"]    = info["cover"].toVariant();
+
+            // Prices at root["prices"]
+            QJsonObject prices = root["prices"].toObject();
+            result["lowest"]  = prices["lowest"].toVariant();
+            result["highest"] = prices["highest"].toVariant();
+            result["stores"]  = prices["stores"].toVariant();
+            result["offers"]  = prices["offers"].toVariant();
+
+            // Flat list of offers at prices["list"]
             QVariantList deals;
+            QJsonArray list = prices["list"].toArray();
 
-            // Nexarda may structure offers under "editions" or as a flat list
-            QJsonArray editionsArr;
-            if (root.contains("editions"))
-                editionsArr = root["editions"].toArray();
-            else if (root.contains("offers"))
-                editionsArr = root["offers"].toArray();
-            else if (root.contains("data"))
-                editionsArr = root["data"].toArray();
+            for (const auto& offerVal : list) {
+                QJsonObject offer = offerVal.toObject();
 
-            for (const auto& edVal : editionsArr) {
-                QJsonObject edObj = edVal.toObject();
+                // Skip unavailable offers (price == -1)
+                if (!offer["available"].toBool(true))
+                    continue;
+                double priceVal = offer["price"].toDouble(-1);
+                if (priceVal < 0)
+                    continue;
 
-                // Each edition may have multiple offers
-                QJsonArray offersArr;
-                if (edObj.contains("offers"))
-                    offersArr = edObj["offers"].toArray();
-                else {
-                    // Treat the edition itself as a single offer
-                    offersArr.append(edVal);
+                QVariantMap deal;
+
+                // Store is an object: { name, image, type, official }
+                QJsonObject store = offer["store"].toObject();
+                deal["storeName"] = store["name"].toString();
+                deal["storeIcon"] = store["image"].toString();
+                deal["storeType"] = store["type"].toString();
+
+                deal["price"]    = QString::number(priceVal, 'f', 2);
+                deal["discount"] = QString::number(offer["discount"].toInt());
+                deal["savings"]  = QString::number(offer["discount"].toInt());
+                deal["edition"]  = offer["edition"].toString();
+                deal["region"]   = offer["region"].toString();
+                deal["dealLink"] = offer["url"].toString();
+                deal["source"]   = QStringLiteral("Nexarda");
+
+                // Coupon info
+                QJsonObject coupon = offer["coupon"].toObject();
+                if (coupon["available"].toBool()) {
+                    deal["couponCode"]     = coupon["code"].toString();
+                    deal["couponDiscount"] = QString::number(coupon["discount"].toInt());
                 }
 
-                for (const auto& offerVal : offersArr) {
-                    QJsonObject offer = offerVal.toObject();
-                    QVariantMap deal;
-                    deal["storeName"] = offer["store"].toVariant().toString();
-                    if (deal["storeName"].toString().isEmpty())
-                        deal["storeName"] = offer["retailer"].toVariant().toString();
-                    if (deal["storeName"].toString().isEmpty())
-                        deal["storeName"] = offer["shop"].toVariant().toString();
-
-                    deal["price"]       = offer["price"].toVariant().toString();
-                    deal["retailPrice"] = offer["original_price"].toVariant().toString();
-                    if (deal["retailPrice"].toString().isEmpty())
-                        deal["retailPrice"] = offer["retail_price"].toVariant().toString();
-
-                    deal["discount"] = offer["discount"].toVariant().toString();
-
-                    // Build savings percentage from discount or prices
-                    QString discStr = deal["discount"].toString();
-                    if (!discStr.isEmpty() && discStr != "0") {
-                        deal["savings"] = discStr;
-                    } else {
-                        double price = deal["price"].toString().toDouble();
-                        double retail = deal["retailPrice"].toString().toDouble();
-                        if (retail > 0 && price < retail) {
-                            double sav = ((retail - price) / retail) * 100.0;
-                            deal["savings"] = QString::number(sav, 'f', 1);
-                        }
-                    }
-
-                    deal["dealLink"] = offer["url"].toVariant().toString();
-                    if (deal["dealLink"].toString().isEmpty())
-                        deal["dealLink"] = offer["link"].toVariant().toString();
-
-                    deal["source"]    = QStringLiteral("Nexarda");
-                    deal["edition"]   = edObj["name"].toVariant().toString();
-                    deal["region"]    = offer["region"].toVariant().toString();
-
-                    // Only include if we have a store name and price
-                    if (!deal["storeName"].toString().isEmpty() &&
-                        !deal["price"].toString().isEmpty()) {
-                        deals.append(deal);
-                    }
+                if (!deal["storeName"].toString().isEmpty()) {
+                    deals.append(deal);
                 }
             }
 
