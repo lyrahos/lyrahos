@@ -2112,20 +2112,9 @@ Item {
             }
         }
 
-        // Qt 6.9+: WebEngineProfilePrototype ensures storageName is set
-        // before the Chromium browser context is created, so cookies
-        // actually persist to disk.  The old WebEngineProfile {} created
-        // the context before QML property bindings were evaluated,
-        // resulting in an off-the-record (memory-only) profile.
-        WebEngineProfilePrototype {
-            id: storeWebProfileProto
-            // Shared storageName with SteamSetupWizard so both embedded
-            // browsers use the same cookie jar and login sessions carry over.
-            storageName: "luna-browser"
-            httpCacheType: WebEngineProfile.DiskHttpCache
-            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-        }
-
+        // SharedBrowserProfile is a QWebEngineProfile created in C++
+        // (main.cpp) with storageName "luna-browser" passed to the
+        // constructor, guaranteeing disk persistence from the start.
         WebEngineView {
             id: storeBrowserWebView
             anchors.top: storeBrowserHeader.bottom
@@ -2133,7 +2122,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
-            profile: storeWebProfileProto.instance()
+            profile: SharedBrowserProfile
             settings.focusOnNavigationEnabled: false
 
             onLoadingChanged: function(loadRequest) {

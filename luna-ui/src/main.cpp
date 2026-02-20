@@ -5,6 +5,7 @@
 #include <QCursor>
 #include <QStandardPaths>
 #include <QtWebEngineQuick>
+#include <QWebEngineProfile>
 #include "thememanager.h"
 #include "gamemanager.h"
 #include "database.h"
@@ -105,6 +106,15 @@ int main(int argc, char *argv[]) {
         }
     });
 
+    // ── Shared WebEngine profile for all embedded browsers ──
+    // Passing storageName to the constructor guarantees the Chromium
+    // browser-context is created with disk storage from the start.
+    // (QML's WebEngineProfile {} evaluated property bindings AFTER context
+    // creation on Qt 6.9, silently running off-the-record.)
+    QWebEngineProfile sharedBrowserProfile("luna-browser");
+    sharedBrowserProfile.setHttpCacheType(QWebEngineProfile::DiskHttpCache);
+    sharedBrowserProfile.setPersistentCookiesPolicy(QWebEngineProfile::ForcePersistentCookies);
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
@@ -113,6 +123,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("ArtworkManager", &artworkManager);
     engine.rootContext()->setContextProperty("StoreApi", &storeApiManager);
     engine.rootContext()->setContextProperty("BrowserBridge", &browserBridge);
+    engine.rootContext()->setContextProperty("SharedBrowserProfile", &sharedBrowserProfile);
 
     // RESOURCE_PREFIX / in CMakeLists.txt places QML files at :/LunaUI/...
     engine.load(QUrl(QStringLiteral("qrc:/LunaUI/qml/Main.qml")));
