@@ -627,14 +627,15 @@ Rectangle {
                             font.strikeout: true
                         }
 
-                        // Sale price or price loading indicator
+                        // Sale price
                         Text {
                             text: {
                                 if (salePrice === "0.00") return "FREE"
                                 if (salePrice !== "") return "$" + salePrice
-                                if (loadingStorePrices) return "Fetching prices..."
-                                return "See store prices below"
+                                if (loadingDeals || loadingStorePrices) return "Loading prices..."
+                                return ""
                             }
+                            visible: salePrice !== "" || loadingDeals || loadingStorePrices
                             font.pixelSize: 36
                             font.family: ThemeManager.getFont("ui")
                             font.bold: salePrice !== ""

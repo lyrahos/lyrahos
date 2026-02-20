@@ -424,7 +424,7 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             csBySteam.insert(steamId, i);
     }
 
-    QVariantList results;
+    auto results = std::make_shared<QVariantList>();
 
     for (const auto& igdbVar : state->igdbResults) {
         QVariantMap game = igdbVar.toMap();
@@ -466,13 +466,13 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             game["salePrice"]     = cheapestPrice;
             game["hasPrice"]      = true;
         } else {
-            // No CheapShark price — mark for price scraping via IGDB purchase links
+            // No CheapShark price — will be scraped below
             game["hasPrice"] = false;
         }
         if (!savings.isEmpty())
             game["savings"] = savings;
 
-        results.append(game);
+        results->append(game);
     }
 
     // If no IGDB results came through but CheapShark has results, show those
@@ -498,11 +498,191 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                 game["capsuleImage"] = cs["thumb"];
             }
 
-            results.append(game);
+            results->append(game);
         }
     }
 
-    emit searchResultsReady(results);
+    // Emit initial results immediately (games with CheapShark prices show up instantly)
+    emit searchResultsReady(*results);
+
+    // ── Scrape prices for games that have no CheapShark data ──
+    // Collect indices of games that need price scraping
+    struct ScrapeState {
+        int pending = 0;
+    };
+    auto scrapeState = std::make_shared<ScrapeState>();
+
+    for (int i = 0; i < results->size(); i++) {
+        QVariantMap game = (*results)[i].toMap();
+        if (game["hasPrice"].toBool())
+            continue;
+
+        QString steamId = game["steamAppID"].toString();
+        bool hasSteam = !steamId.isEmpty() && steamId != "null" && steamId != "0";
+
+        // Check for GOG purchase URL
+        QVariantList purchaseUrls = game["purchaseUrls"].toList();
+        bool hasGog = false;
+        QString gogUrl;
+        for (const auto& urlVar : purchaseUrls) {
+            QVariantMap link = urlVar.toMap();
+            if (link["category"].toInt() == 17) {
+                hasGog = true;
+                gogUrl = link["url"].toString();
+                break;
+            }
+        }
+
+        if (hasSteam) scrapeState->pending++;
+        if (hasGog)   scrapeState->pending++;
+    }
+
+    if (scrapeState->pending == 0)
+        return;  // Nothing to scrape
+
+    for (int i = 0; i < results->size(); i++) {
+        QVariantMap game = (*results)[i].toMap();
+        if (game["hasPrice"].toBool())
+            continue;
+
+        QString steamId = game["steamAppID"].toString();
+        bool hasSteam = !steamId.isEmpty() && steamId != "null" && steamId != "0";
+
+        QVariantList purchaseUrls = game["purchaseUrls"].toList();
+        QString gogUrl;
+        for (const auto& urlVar : purchaseUrls) {
+            QVariantMap link = urlVar.toMap();
+            if (link["category"].toInt() == 17) {
+                gogUrl = link["url"].toString();
+                break;
+            }
+        }
+
+        // ── Steam Store API price fetch ──
+        if (hasSteam) {
+            QUrl url(STEAM_STORE_API + "/appdetails");
+            QUrlQuery query;
+            query.addQueryItem("appids", steamId);
+            query.addQueryItem("cc", "us");
+            query.addQueryItem("filters", "price_overview");
+            url.setQuery(query);
+
+            QNetworkRequest req(url);
+            req.setTransferTimeout(15000);
+            QNetworkReply *reply = m_nam->get(req);
+
+            connect(reply, &QNetworkReply::finished, this,
+                [this, reply, i, steamId, results, scrapeState, generation]() {
+                reply->deleteLater();
+                if (generation != m_searchGeneration) return;
+
+                if (reply->error() == QNetworkReply::NoError) {
+                    QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+                    QJsonObject appData = root[steamId].toObject();
+
+                    if (appData["success"].toBool()) {
+                        QJsonObject data = appData["data"].toObject();
+                        QJsonObject priceOverview = data["price_overview"].toObject();
+
+                        QVariantMap game = (*results)[i].toMap();
+
+                        if (!priceOverview.isEmpty()) {
+                            double finalPrice = priceOverview["final"].toInt() / 100.0;
+                            double initialPrice = priceOverview["initial"].toInt() / 100.0;
+                            int discountPct = priceOverview["discount_percent"].toInt();
+                            QString priceStr = QString::number(finalPrice, 'f', 2);
+
+                            // Only set if cheaper than any existing price
+                            QString existing = game["salePrice"].toString();
+                            if (existing.isEmpty() || finalPrice < existing.toDouble()) {
+                                game["salePrice"] = priceStr;
+                                game["cheapestPrice"] = priceStr;
+                            }
+                            game["normalPrice"] = QString::number(initialPrice, 'f', 2);
+                            if (discountPct > 0)
+                                game["savings"] = QString::number(discountPct);
+                            game["hasPrice"] = true;
+                        } else if (data.contains("is_free") && data["is_free"].toBool()) {
+                            game["salePrice"] = QStringLiteral("0.00");
+                            game["cheapestPrice"] = QStringLiteral("0.00");
+                            game["hasPrice"] = true;
+                        }
+                        (*results)[i] = game;
+                    }
+                }
+
+                scrapeState->pending--;
+                if (scrapeState->pending <= 0)
+                    emit searchResultsReady(*results);
+            });
+        }
+
+        // ── GOG catalog API price fetch ──
+        if (!gogUrl.isEmpty()) {
+            QRegularExpression gogSlugRe("/game/([a-z0-9_]+)");
+            QRegularExpressionMatch match = gogSlugRe.match(gogUrl);
+
+            if (match.hasMatch()) {
+                QString slug = match.captured(1);
+                QUrl catUrl("https://catalog.gog.com/v1/catalog");
+                QUrlQuery gogQuery;
+                gogQuery.addQueryItem("query", slug);
+                gogQuery.addQueryItem("limit", "1");
+                gogQuery.addQueryItem("countryCode", "US");
+                gogQuery.addQueryItem("currencyCode", "USD");
+                catUrl.setQuery(gogQuery);
+
+                QNetworkRequest gogReq(catUrl);
+                gogReq.setTransferTimeout(15000);
+                QNetworkReply *gogReply = m_nam->get(gogReq);
+
+                connect(gogReply, &QNetworkReply::finished, this,
+                    [this, gogReply, i, results, scrapeState, generation]() {
+                    gogReply->deleteLater();
+                    if (generation != m_searchGeneration) return;
+
+                    if (gogReply->error() == QNetworkReply::NoError) {
+                        QJsonObject root = QJsonDocument::fromJson(gogReply->readAll()).object();
+                        QJsonArray products = root["products"].toArray();
+
+                        if (!products.isEmpty()) {
+                            QJsonObject product = products.first().toObject();
+                            QJsonObject price = product["price"].toObject();
+
+                            if (!price.isEmpty()) {
+                                QString finalMoney = price["finalMoney"].toObject()["amount"].toString();
+
+                                QVariantMap game = (*results)[i].toMap();
+                                // Only set if cheaper than any existing price
+                                QString existing = game["salePrice"].toString();
+                                if (!finalMoney.isEmpty() &&
+                                    (existing.isEmpty() || finalMoney.toDouble() < existing.toDouble())) {
+                                    game["salePrice"] = finalMoney;
+                                    game["cheapestPrice"] = finalMoney;
+
+                                    QString baseMoney = price["baseMoney"].toObject()["amount"].toString();
+                                    int discount = price["discount"].toInt();
+                                    game["normalPrice"] = baseMoney;
+                                    if (discount > 0)
+                                        game["savings"] = QString::number(discount);
+                                }
+                                game["hasPrice"] = true;
+                                (*results)[i] = game;
+                            }
+                        }
+                    }
+
+                    scrapeState->pending--;
+                    if (scrapeState->pending <= 0)
+                        emit searchResultsReady(*results);
+                });
+            } else {
+                scrapeState->pending--;
+                if (scrapeState->pending <= 0)
+                    emit searchResultsReady(*results);
+            }
+        }
+    }
 }
 
 // ─── CheapShark: Game Details (all deals for one game) ───

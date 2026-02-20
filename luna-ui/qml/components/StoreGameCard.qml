@@ -166,19 +166,19 @@ Rectangle {
                 font.strikeout: true
             }
 
-            // Sale price or "View Prices" for games without CheapShark data
+            // Sale price (scraped prices fill in automatically via re-emit)
             Text {
                 text: {
                     if (salePrice === "0.00") return "FREE"
                     if (salePrice !== "") return "$" + salePrice
-                    return "View Prices"
+                    return ""
                 }
+                visible: salePrice !== ""
                 font.pixelSize: 28
                 font.family: ThemeManager.getFont("ui")
                 font.bold: true
                 color: {
                     if (salePrice === "0.00") return "#4ade80"
-                    if (salePrice === "") return ThemeManager.getColor("textSecondary")
                     var s = parseFloat(savings)
                     if (!isNaN(s) && s > 0) return "#4ade80"
                     return ThemeManager.getColor("textPrimary")
