@@ -980,7 +980,9 @@ Item {
                     Image {
                         id: heroImage
                         anchors.fill: parent
-                        source: heroBanner.featuredDeal ? heroBanner.featuredDeal.headerImage : ""
+                        source: heroBanner.featuredDeal
+                                ? (heroBanner.featuredDeal.heroImage || heroBanner.featuredDeal.headerImage)
+                                : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: true
