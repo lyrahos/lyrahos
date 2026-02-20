@@ -85,6 +85,18 @@ public:
     Q_INVOKABLE void ensureSteamRunning();
     Q_INVOKABLE void restartSteam();
 
+    // ── Epic Games (Legendary) ──
+    Q_INVOKABLE bool isEpicAvailable();
+    Q_INVOKABLE bool isEpicLoggedIn();
+    Q_INVOKABLE void epicLogin();
+    Q_INVOKABLE void epicLogout();
+    Q_INVOKABLE void fetchEpicLibrary();
+    Q_INVOKABLE void installEpicGame(int gameId);
+    Q_INVOKABLE void cancelEpicDownload(const QString& appId);
+    Q_INVOKABLE bool isEpicSetupComplete();
+    Q_INVOKABLE void ensureLegendary();
+    Q_INVOKABLE QString getEpicUsername();
+
     // Bring Luna-UI's window to the foreground (e.g. over the browser)
     void raiseLunaWindow();
 
@@ -120,6 +132,19 @@ signals:
     // Browser lifecycle — lets QML activate the BrowserOverlay
     void browserOpened();
     void browserClosed();
+
+    // Epic Games signals
+    void epicLibraryFetched(int gamesFound);
+    void epicLibraryFetchError(const QString& error);
+    void epicLoginStarted();
+    void epicLoginSuccess();
+    void epicLoginError(const QString& error);
+    void epicDownloadStarted(QString appId, int gameId);
+    void epicDownloadProgressChanged(QString appId, double progress);
+    void epicDownloadComplete(QString appId, int gameId);
+    void epicInstallError(QString appId, QString error);
+    void legendaryInstalled();
+    void legendaryInstallError(const QString& error);
 
 private:
     Database *m_db;
@@ -158,6 +183,12 @@ private:
     QStringList getSteamAppsDirs() const;
     void suppressSteamHardwareSurvey();
     void forceCloseApiKeyBrowser();
+
+    // Epic Games (Legendary) helpers
+    QString findLegendaryBin() const;
+    void handleLegendaryOutput(const QString& appId, QProcess *proc);
+    QHash<QString, QProcess*> m_legendaryProcesses;
+    QProcess *m_epicLoginProc = nullptr;
 };
 
 #endif
