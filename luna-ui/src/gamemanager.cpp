@@ -2319,7 +2319,7 @@ void GameManager::epicLogin() {
             // Open Epic's correction/policy page in the browser so the
             // user can accept the privacy policy or EULA
             QProcess::startDetached("xdg-open",
-                QStringList() << "https://www.epicgames.com/id/login?lang=en-US&noAccountCreate=true");
+                QStringList() << "https://www.epicgames.com");
 
             emit epicLoginError(
                 "Epic requires you to accept an updated privacy policy.\n\n"
@@ -2575,6 +2575,12 @@ void GameManager::installEpicGame(int gameId) {
 
     m_legendaryProcesses.insert(game.appId, proc);
 
+    // Force unbuffered Python output so progress updates arrive in real time
+    // instead of being batched when stderr is a pipe (not a TTY).
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("PYTHONUNBUFFERED", "1");
+    proc->setProcessEnvironment(env);
+
     // `legendary install <app_name> -y` installs without confirmation prompt
     proc->start(bin, QStringList() << "install" << game.appId << "-y");
 
@@ -2593,30 +2599,35 @@ void GameManager::handleLegendaryOutput(const QString& appId, QProcess *proc) {
     QString output = QString::fromUtf8(proc->readAllStandardError())
                    + QString::fromUtf8(proc->readAllStandardOutput());
 
-    for (const QString& line : output.split('\n')) {
+    // Legendary uses \r (carriage return) for in-place progress updates,
+    // so split on both \r and \n to parse each update individually.
+    static const QRegularExpression lineSplitter("[\\r\\n]+");
+    static const QRegularExpression progressRe("Progress:\\s+(\\d+\\.?\\d*)%");
+
+    // Find the latest progress value in this chunk.  Legendary may send
+    // multiple \r-separated updates in a single read; we only need the
+    // most recent one.
+    double latestPct = -1.0;
+
+    for (const QString& line : output.split(lineSplitter, Qt::SkipEmptyParts)) {
         QString trimmed = line.trimmed();
         if (trimmed.isEmpty()) continue;
 
         qDebug() << "[legendary]" << appId << ":" << trimmed;
 
         // Parse progress: "Progress: XX.XX% (downloaded/total)"
-        QRegularExpression progressRe("Progress:\\s+(\\d+\\.?\\d*)%");
         auto match = progressRe.match(trimmed);
         if (match.hasMatch()) {
             double pct = match.captured(1).toDouble() / 100.0;
             pct = qBound(0.0, pct, 1.0);
-            m_downloadProgressCache.insert(appId, pct);
-            emit downloadProgressChanged(appId, pct);
-            emit epicDownloadProgressChanged(appId, pct);
+            latestPct = pct;
             continue;
         }
 
         // Detect completion
         if (trimmed.contains("Finished installation", Qt::CaseInsensitive) ||
             trimmed.contains("Game has been successfully installed", Qt::CaseInsensitive)) {
-            m_downloadProgressCache.insert(appId, 1.0);
-            emit downloadProgressChanged(appId, 1.0);
-            emit epicDownloadProgressChanged(appId, 1.0);
+            latestPct = 1.0;
         }
 
         // Detect errors
@@ -2630,6 +2641,13 @@ void GameManager::handleLegendaryOutput(const QString& appId, QProcess *proc) {
                 emit installError(appId, trimmed);
             }
         }
+    }
+
+    // Emit only the latest progress value from this chunk
+    if (latestPct >= 0.0) {
+        m_downloadProgressCache.insert(appId, latestPct);
+        emit downloadProgressChanged(appId, latestPct);
+        emit epicDownloadProgressChanged(appId, latestPct);
     }
 }
 
