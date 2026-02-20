@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtWebEngine
 
 // Full-screen modal wizard for first-time Epic Games setup via Legendary.
 // Step 0: Intro explaining the setup process
@@ -27,6 +28,10 @@ Rectangle {
     property string errorMessage: ""
     property int gamesFound: 0
 
+    // Embedded browser for Epic login
+    property bool epicBrowserOpen: false
+    property bool browserInputActive: false
+
     // Controller focus
     property int wizFocusIndex: 0
 
@@ -37,12 +42,17 @@ Rectangle {
         legendaryInstalling = false
         loginInProgress = false
         fetchingLibrary = false
+        epicBrowserOpen = false
+        browserInputActive = false
         wizFocusIndex = 0
         visible = true
         epicWizard.forceActiveFocus()
     }
 
     function close() {
+        epicBrowserOpen = false
+        browserInputActive = false
+        epicLoginWebView.url = "about:blank"
         visible = false
         closed()
     }
@@ -68,6 +78,7 @@ Rectangle {
             if (GameManager.isEpicAvailable()) return 2  // Back, Next
             return 3  // Install, Back, Skip
         case 2:
+            if (epicBrowserOpen) return 0  // Browser handles its own navigation
             if (loginInProgress) return 1  // Cancel only
             if (GameManager.isEpicLoggedIn()) return 2  // Back, Next
             return 3  // Login, Back, Skip
@@ -80,7 +91,7 @@ Rectangle {
     }
 
     function isWizFocused(idx) {
-        return epicWizard.visible && wizFocusIndex === idx
+        return epicWizard.visible && !epicBrowserOpen && wizFocusIndex === idx
     }
 
     // Signal connections
@@ -130,6 +141,11 @@ Rectangle {
 
     // Keyboard / controller navigation
     Keys.onPressed: function(event) {
+        // When the embedded browser is open, it handles its own navigation
+        // via ControllerManager connections; skip wizard key handling.
+        if (epicBrowserOpen && currentStep === 2) return
+        if (epicBrowserVK.visible) return
+
         var count = wizFocusCount()
 
         switch (event.key) {
@@ -196,7 +212,7 @@ Rectangle {
             }
             break
         case 2:
-            if (loginInProgress) break
+            if (loginInProgress || epicBrowserOpen) break
             if (GameManager.isEpicLoggedIn()) {
                 if (wizFocusIndex === 0) currentStep = 1       // Back
                 else if (wizFocusIndex === 1) {                // Next
@@ -206,9 +222,9 @@ Rectangle {
                 }
             } else {
                 if (wizFocusIndex === 0) {                     // Login
-                    loginInProgress = true
                     errorMessage = ""
-                    GameManager.epicLogin()
+                    epicLoginWebView.url = GameManager.getEpicLoginUrl()
+                    epicBrowserOpen = true
                 }
                 else if (wizFocusIndex === 1) currentStep = 1  // Back
                 else if (wizFocusIndex === 2) close()          // Skip
@@ -602,10 +618,9 @@ Rectangle {
                     text: GameManager.isEpicLoggedIn()
                           ? "You are logged in as: " + GameManager.getEpicUsername()
                           : loginInProgress
-                            ? "A browser window will open for Epic Games login.\n" +
-                              "Complete the login in the browser, then return here."
-                            : "Click the button below to open a browser window where\n" +
-                              "you can log in to your Epic Games account."
+                            ? "Logging in to Epic Games...\nPlease wait."
+                            : "Click the button below to log in to your\n" +
+                              "Epic Games account."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
                     color: ThemeManager.getColor("textSecondary")
@@ -677,9 +692,9 @@ Rectangle {
                             hoverEnabled: true
                             onEntered: wizFocusIndex = 0
                             onClicked: {
-                                loginInProgress = true
                                 errorMessage = ""
-                                GameManager.epicLogin()
+                                epicLoginWebView.url = GameManager.getEpicLoginUrl()
+                                epicBrowserOpen = true
                             }
                         }
 
@@ -982,6 +997,430 @@ Rectangle {
                     Behavior on border.color { ColorAnimation { duration: 150 } }
                 }
             }
+        }
+    }
+
+    // ─── Navigation overlay script for embedded WebEngineView ───
+    // Injected into the page on each load.  Builds an interactive element
+    // list, draws a purple highlight ring around the focused one, and
+    // supports spatial (directional) navigation from the controller.
+    readonly property string navOverlayScript: "
+(function() {
+    if (window.__lunaNav) return;
+    var nav = {};
+    var currentIndex = 0;
+    var elements = [];
+    var highlightEl = null;
+
+    var SELECTORS = 'a[href], button, input, select, textarea, '
+        + '[role=\"button\"], [role=\"link\"], [role=\"menuitem\"], '
+        + '[tabindex]:not([tabindex=\"-1\"]), [onclick]';
+
+    function isVisible(el) {
+        if (!el || !el.getBoundingClientRect) return false;
+        var r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        var style = window.getComputedStyle(el);
+        return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && style.opacity !== '0';
+    }
+
+    function getVisualRect(el) {
+        var rects = el.getClientRects();
+        var r = el.getBoundingClientRect();
+        if (rects.length > 1) {
+            var best = rects[0];
+            var bestArea = best.width * best.height;
+            for (var i = 1; i < rects.length; i++) {
+                var a = rects[i].width * rects[i].height;
+                if (a > bestArea) { best = rects[i]; bestArea = a; }
+            }
+            r = best;
+        }
+        if ((r.width < 16 || r.height < 16) && el.parentElement) {
+            var pr = el.parentElement.getBoundingClientRect();
+            if (pr.width >= r.width && pr.height >= r.height
+                && pr.width < 500 && pr.height < 120) {
+                r = pr;
+            }
+        }
+        var tag = el.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select'
+            && tag !== 'img' && tag !== 'video') {
+            try {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                var tr = range.getBoundingClientRect();
+                if (tr.width > 0 && tr.height > 0
+                    && tr.width < r.width * 0.75) {
+                    r = tr;
+                }
+            } catch(e) {}
+        }
+        return r;
+    }
+
+    function scanElements() {
+        var all = document.querySelectorAll(SELECTORS);
+        elements = [];
+        for (var i = 0; i < all.length; i++) {
+            if (isVisible(all[i])) elements.push(all[i]);
+        }
+        if (currentIndex >= elements.length) currentIndex = 0;
+    }
+
+    function createHighlight() {
+        if (highlightEl) return;
+        highlightEl = document.createElement('div');
+        highlightEl.id = '__luna-highlight';
+        highlightEl.style.cssText =
+            'position:fixed; pointer-events:none; z-index:999999; '
+            + 'border:3px solid #9b59b6; border-radius:6px; '
+            + 'box-shadow:0 0 12px rgba(155,89,182,0.6), inset 0 0 8px rgba(155,89,182,0.2); '
+            + 'transition:all 0.15s ease; display:none;';
+        document.documentElement.appendChild(highlightEl);
+    }
+
+    function updateHighlight() {
+        if (!highlightEl) createHighlight();
+        if (elements.length === 0) { highlightEl.style.display = 'none'; return; }
+        var el = elements[currentIndex];
+        if (!el) return;
+        var r = getVisualRect(el);
+        var pad = 3;
+        highlightEl.style.left   = (r.left - pad) + 'px';
+        highlightEl.style.top    = (r.top - pad)  + 'px';
+        highlightEl.style.width  = (r.width + pad * 2) + 'px';
+        highlightEl.style.height = (r.height + pad * 2) + 'px';
+        highlightEl.style.display = 'block';
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function findNearest(direction) {
+        if (elements.length < 2) return currentIndex;
+        var cur = elements[currentIndex];
+        if (!cur) return currentIndex;
+        var cr = getVisualRect(cur);
+        var cx = cr.left + cr.width / 2;
+        var cy = cr.top + cr.height / 2;
+        var bestIdx = -1;
+        var bestDist = Infinity;
+
+        for (var i = 0; i < elements.length; i++) {
+            if (i === currentIndex) continue;
+            var er = getVisualRect(elements[i]);
+            var ex = er.left + er.width / 2;
+            var ey = er.top + er.height / 2;
+            var dx = ex - cx;
+            var dy = ey - cy;
+            var inDirection = false;
+            switch (direction) {
+                case 'up':    inDirection = dy < -5; break;
+                case 'down':  inDirection = dy > 5;  break;
+                case 'left':  inDirection = dx < -5; break;
+                case 'right': inDirection = dx > 5;  break;
+            }
+            if (!inDirection) continue;
+            var dist;
+            if (direction === 'up' || direction === 'down') {
+                dist = Math.abs(dy) + Math.abs(dx) * 2;
+            } else {
+                dist = Math.abs(dx) + Math.abs(dy) * 2;
+            }
+            if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+        return bestIdx >= 0 ? bestIdx : currentIndex;
+    }
+
+    nav.move = function(direction) {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        currentIndex = findNearest(direction);
+        updateHighlight();
+        return 'moved:' + direction + ' idx:' + currentIndex + '/' + elements.length;
+    };
+
+    nav.activate = function() {
+        scanElements();
+        if (elements.length === 0) return 'no-elements';
+        var el = elements[currentIndex];
+        if (!el) return 'no-element';
+        el.focus();
+        el.click();
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (tag === 'input' && (type === 'text' || type === 'password'
+                || type === 'email' || type === 'search' || type === 'url'
+                || type === 'tel' || type === 'number')
+            || tag === 'textarea') {
+            return 'input:' + type + ':' + (el.value || '');
+        }
+        return 'clicked:' + el.tagName + ' ' + (el.textContent||'').substring(0,40);
+    };
+
+    nav.setText = function(text) {
+        var el = document.activeElement;
+        if (!el) return 'no-active';
+        var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        );
+        if (!nativeSetter) nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value'
+        );
+        if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(el, text);
+        } else {
+            el.value = text;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'set:' + text.length + ' chars';
+    };
+
+    nav.scrollPage = function(direction) {
+        window.scrollBy(0, direction === 'up' ? -400 : 400);
+        return 'scrolled:' + direction;
+    };
+
+    var observer = new MutationObserver(function() {
+        var oldLen = elements.length;
+        scanElements();
+        if (elements.length !== oldLen) updateHighlight();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    scanElements();
+    if (elements.length > 0) updateHighlight();
+    window.__lunaNav = nav;
+    console.log('__luna:nav-ready count:' + elements.length);
+    return 'ready:' + elements.length;
+})();
+"
+
+    // ─── Controller → Embedded Epic Browser navigation ───
+    Connections {
+        target: ControllerManager
+        enabled: epicWizard.epicBrowserOpen && epicWizard.currentStep === 2 && !epicBrowserVK.visible
+        function onActionTriggered(action) {
+            function logResult(result) {
+                console.log("[epic-browser] nav result:", result)
+            }
+            switch (action) {
+            case "navigate_up":
+                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
+                break
+            case "navigate_down":
+                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
+                break
+            case "navigate_left":
+                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
+                break
+            case "navigate_right":
+                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
+                break
+            case "confirm":
+                epicLoginWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.activate()",
+                    function(result) {
+                        console.log("[epic-browser] activate result:", result)
+                        if (result && result.toString().indexOf("input:") === 0) {
+                            var parts = result.toString().split(":")
+                            var inputType = parts[1] || "text"
+                            var currentVal = parts.slice(2).join(":")
+                            var isPassword = (inputType === "password")
+                            epicWizard.browserInputActive = true
+                            epicBrowserVK.placeholderText = isPassword ? "Enter password..." : "Type here..."
+                            epicBrowserVK.open(currentVal, isPassword)
+                        }
+                    })
+                break
+            case "scroll_up":
+                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
+                break
+            case "scroll_down":
+                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
+                break
+            case "back":
+                console.log("[epic-browser] closing browser")
+                epicLoginWebView.url = "about:blank"
+                epicWizard.epicBrowserOpen = false
+                break
+            default:
+                break
+            }
+        }
+    }
+
+    // ── Embedded browser for Epic Games login ──
+    Rectangle {
+        id: epicLoginBrowser
+        visible: epicWizard.epicBrowserOpen && epicWizard.currentStep === 2
+        anchors.fill: parent
+        z: 250
+        color: ThemeManager.getColor("background")
+
+        // Header bar
+        Rectangle {
+            id: epicBrowserHeader
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 50
+            color: ThemeManager.getColor("surface")
+            z: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: "Epic Games Login"
+                font.pixelSize: ThemeManager.getFontSize("medium")
+                font.bold: true
+                font.family: ThemeManager.getFont("heading")
+                color: ThemeManager.getColor("textPrimary")
+            }
+
+            // Close button
+            Rectangle {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 14
+                width: closeBrowserLabel.width + 28
+                height: 34
+                radius: 8
+                color: "transparent"
+                border.color: Qt.rgba(1, 1, 1, 0.15)
+                border.width: 1
+
+                Text {
+                    id: closeBrowserLabel
+                    anchors.centerIn: parent
+                    text: "B  Close"
+                    font.pixelSize: ThemeManager.getFontSize("small")
+                    font.family: ThemeManager.getFont("body")
+                    color: ThemeManager.getColor("textSecondary")
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        epicLoginWebView.url = "about:blank"
+                        epicWizard.epicBrowserOpen = false
+                    }
+                }
+            }
+        }
+
+        WebEngineView {
+            id: epicLoginWebView
+            anchors.top: epicBrowserHeader.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            url: "about:blank"
+            profile: SharedBrowserProfile
+            settings.focusOnNavigationEnabled: false
+
+            onLoadingChanged: function(loadRequest) {
+                console.log("[epic-browser] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
+                if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                    // Check if we landed on the redirect page with the auth code
+                    epicAuthCodePollTimer.restart()
+                    // Inject the controller navigation overlay
+                    epicNavInjectTimer.restart()
+                }
+            }
+
+            onUrlChanged: {
+                var urlStr = url.toString()
+                console.log("[epic-browser] URL changed:", urlStr)
+                // The redirect URL after login contains the authorization code
+                if (urlStr.indexOf("/id/api/redirect") !== -1) {
+                    console.log("[epic-browser] Detected redirect URL, polling for auth code...")
+                    epicAuthCodePollTimer.restart()
+                }
+            }
+
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[epic-browser-js]", message)
+            }
+        }
+
+        // Poll the redirect page for the authorization code JSON
+        Timer {
+            id: epicAuthCodePollTimer
+            interval: 1000
+            repeat: true
+            onTriggered: {
+                var urlStr = epicLoginWebView.url.toString()
+                if (urlStr.indexOf("/id/api/redirect") === -1) return
+
+                epicLoginWebView.runJavaScript(
+                    "(function() {" +
+                    "  try {" +
+                    "    var text = document.body.innerText || document.body.textContent || '';" +
+                    "    var json = JSON.parse(text);" +
+                    "    if (json.authorizationCode) return json.authorizationCode;" +
+                    "    if (json.code) return json.code;" +
+                    "  } catch(e) {}" +
+                    "  var m = (document.body.innerText || '').match(/authorizationCode[\"']?\\s*[:\\s]\\s*[\"']([a-f0-9]{32})[\"']/i);" +
+                    "  if (m) return m[1];" +
+                    "  return null;" +
+                    "})()",
+                    function(code) {
+                        if (code && code.length > 10) {
+                            console.log("[epic-browser] Got authorization code, length:", code.length)
+                            epicAuthCodePollTimer.stop()
+                            epicLoginWebView.url = "about:blank"
+                            epicWizard.epicBrowserOpen = false
+                            epicWizard.loginInProgress = true
+                            GameManager.epicLoginWithCode(code)
+                        }
+                    }
+                )
+            }
+        }
+
+        // Inject the controller navigation overlay after page load
+        Timer {
+            id: epicNavInjectTimer
+            interval: 800
+            repeat: false
+            onTriggered: {
+                console.log("[epic-browser] injecting navigation overlay")
+                epicLoginWebView.runJavaScript(epicWizard.navOverlayScript,
+                    function(result) {
+                        console.log("[epic-browser] nav inject result:", result)
+                    })
+            }
+        }
+    }
+
+    // ─── Virtual Keyboard for Epic Browser ───
+    VirtualKeyboard {
+        id: epicBrowserVK
+        anchors.fill: parent
+
+        onAccepted: function(typedText) {
+            if (epicWizard.browserInputActive) {
+                epicWizard.browserInputActive = false
+                var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                epicLoginWebView.runJavaScript(
+                    "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
+                    function(result) {
+                        console.log("[epic-browser] setText result:", result)
+                    })
+            }
+            epicWizard.forceActiveFocus()
+        }
+
+        onCancelled: {
+            epicWizard.browserInputActive = false
+            epicWizard.forceActiveFocus()
         }
     }
 }
