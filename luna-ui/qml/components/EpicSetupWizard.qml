@@ -1281,7 +1281,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: epicWizard.awaitingPolicyAcceptance
-                      ? "Accept Epic's Privacy Policy"
+                      ? "Accept Epic's Privacy Policy, then click Retry Login \u2192"
                       : "Epic Games Login"
                 font.pixelSize: ThemeManager.getFontSize("medium")
                 font.bold: true
@@ -1317,6 +1317,39 @@ Rectangle {
                     onClicked: {
                         epicLoginWebView.url = "about:blank"
                         epicWizard.epicBrowserOpen = false
+                    }
+                }
+            }
+
+            // "Retry Login" button — shown after the user accepts Epic's
+            // privacy policy so they can restart the OAuth flow.
+            Rectangle {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 14
+                width: retryLoginLabel.width + 28
+                height: 34
+                radius: 8
+                visible: epicWizard.awaitingPolicyAcceptance
+                color: "#7c3aed"
+
+                Text {
+                    id: retryLoginLabel
+                    anchors.centerIn: parent
+                    text: "Retry Login"
+                    font.pixelSize: ThemeManager.getFontSize("small")
+                    font.family: ThemeManager.getFont("body")
+                    font.bold: true
+                    color: "white"
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        console.log("[epic-browser] User clicked Retry Login after privacy policy")
+                        epicWizard.awaitingPolicyAcceptance = false
+                        epicLoginWebView.url = GameManager.getEpicLoginUrl()
                     }
                 }
             }
@@ -1361,18 +1394,10 @@ Rectangle {
                     console.log("[epic-browser] Detected redirect URL, polling for auth code...")
                     epicAuthCodePollTimer.restart()
                 }
-                // After the user accepts the privacy policy on Epic's site,
-                // they get redirected away from the /id/login page.
-                // Detect this and restart the OAuth flow.
-                if (epicWizard.awaitingPolicyAcceptance) {
-                    var stillOnLogin = urlStr.indexOf("/id/login") !== -1
-                    var isBlank = urlStr === "about:blank"
-                    if (!stillOnLogin && !isBlank) {
-                        console.log("[epic-browser] Privacy policy likely accepted, restarting OAuth flow")
-                        epicWizard.awaitingPolicyAcceptance = false
-                        epicLoginWebView.url = GameManager.getEpicLoginUrl()
-                    }
-                }
+                // While awaiting privacy policy acceptance, do NOT auto-restart
+                // OAuth on URL changes.  The user needs to stay on Epic's site
+                // to read and accept the policy.  A "Retry Login" button in the
+                // browser header lets them restart OAuth once they are done.
             }
 
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
