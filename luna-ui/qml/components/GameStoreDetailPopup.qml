@@ -11,6 +11,8 @@ Rectangle {
 
     property string gameTitle: ""
     property string gameID: ""
+    property string cheapSharkGameID: ""
+    property string nexardaProductID: ""
     property string steamAppID: ""
     property string headerImage: ""
     property string salePrice: ""
@@ -21,7 +23,9 @@ Rectangle {
     property string steamRatingPercent: ""
 
     // Data loaded from APIs
-    property var gameDeals: []
+    property var gameDeals: []        // CheapShark deals
+    property var nexardaDeals: []     // Nexarda deals
+    property var allDeals: []         // Combined deals from all sources
     property string igdbSummary: ""
     property string igdbGenres: ""
     property string igdbPlatforms: ""
@@ -35,6 +39,7 @@ Rectangle {
 
     // Loading states
     property bool loadingDeals: false
+    property bool loadingNexarda: false
     property bool loadingIGDB: false
     property bool loadingProton: false
 
@@ -75,12 +80,12 @@ Rectangle {
             break
         case Qt.Key_Down:
             if (popupNavZone === "screenshots") {
-                if (gameDeals.length > 0) {
+                if (allDeals.length > 0) {
                     popupNavZone = "stores"
                     storeFocusIndex = 0
                 }
             } else if (popupNavZone === "stores") {
-                if (storeFocusIndex < gameDeals.length - 1)
+                if (storeFocusIndex < allDeals.length - 1)
                     storeFocusIndex++
             }
             // Scroll down in the detail flickable
@@ -99,8 +104,8 @@ Rectangle {
             break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            if (popupNavZone === "stores" && storeFocusIndex >= 0 && storeFocusIndex < gameDeals.length) {
-                var deal = gameDeals[storeFocusIndex]
+            if (popupNavZone === "stores" && storeFocusIndex >= 0 && storeFocusIndex < allDeals.length) {
+                var deal = allDeals[storeFocusIndex]
                 if (deal.dealLink) {
                     openDealUrl(deal.dealLink, deal.storeName || "")
                 }
@@ -112,10 +117,12 @@ Rectangle {
 
     function open(deal) {
         gameTitle = deal.title || ""
-        gameID = deal.gameID || ""
+        gameID = deal.gameID || deal.cheapSharkGameID || ""
+        cheapSharkGameID = deal.cheapSharkGameID || deal.gameID || ""
+        nexardaProductID = deal.nexardaProductID || ""
         steamAppID = deal.steamAppID || ""
-        headerImage = deal.headerImage || deal.heroImage || ""
-        salePrice = deal.salePrice || deal.cheapest || ""
+        headerImage = deal.headerImage || deal.heroImage || deal.coverUrl || ""
+        salePrice = deal.salePrice || deal.cheapestPrice || deal.cheapest || ""
         normalPrice = deal.normalPrice || ""
         savings = deal.savings || ""
         metacriticScore = deal.metacriticScore || ""
@@ -124,6 +131,8 @@ Rectangle {
 
         // Reset loaded data
         gameDeals = []
+        nexardaDeals = []
+        allDeals = []
         igdbSummary = ""
         igdbGenres = ""
         igdbPlatforms = ""
@@ -137,8 +146,29 @@ Rectangle {
         dealsErrorMsg = ""
         igdbErrorMsg = ""
         loadingDeals = true
+        loadingNexarda = true
         loadingIGDB = true
         loadingProton = true
+
+        // Pre-populate IGDB data from search results (if available)
+        if (deal.summary) {
+            igdbSummary = deal.summary
+        }
+        if (deal.genres) {
+            igdbGenres = deal.genres
+        }
+        if (deal.platforms) {
+            igdbPlatforms = deal.platforms
+        }
+        if (deal.releaseDate) {
+            igdbReleaseDate = deal.releaseDate
+        }
+        if (deal.rating) {
+            igdbRating = deal.rating
+        }
+        if (deal.screenshots && deal.screenshots.length > 0) {
+            igdbScreenshots = deal.screenshots
+        }
 
         // Reset scroll position, screenshot index, and keyboard nav
         contentFlick.contentY = 0
@@ -148,13 +178,21 @@ Rectangle {
 
         visible = true
 
-        // Fetch details from all APIs
-        if (gameID !== "") {
-            StoreApi.fetchGameDeals(gameID)
+        // Fetch CheapShark deals
+        if (cheapSharkGameID !== "") {
+            StoreApi.fetchGameDeals(cheapSharkGameID)
         } else {
             loadingDeals = false
         }
 
+        // Fetch Nexarda prices
+        if (nexardaProductID !== "") {
+            StoreApi.fetchNexardaPrices(nexardaProductID)
+        } else {
+            loadingNexarda = false
+        }
+
+        // Fetch full IGDB info (may enrich with screenshots, storyline)
         if (gameTitle !== "") {
             StoreApi.fetchIGDBGameInfo(gameTitle)
         } else {
@@ -177,6 +215,16 @@ Rectangle {
         onClicked: detailPopup.close()
     }
 
+    // Merge CheapShark + Nexarda deals into a single combined list
+    function rebuildAllDeals() {
+        var combined = []
+        for (var i = 0; i < gameDeals.length; i++)
+            combined.push(gameDeals[i])
+        for (var j = 0; j < nexardaDeals.length; j++)
+            combined.push(nexardaDeals[j])
+        allDeals = combined
+    }
+
     // ─── API Response Handlers ───
     Connections {
         target: StoreApi
@@ -189,29 +237,53 @@ Rectangle {
                 detailPopup.headerImage = details.headerImage
             detailPopup.dealsErrorMsg = ""
             detailPopup.loadingDeals = false
+            detailPopup.rebuildAllDeals()
         }
 
         function onGameDealsError(error) {
             if (!detailPopup.visible) return
             detailPopup.dealsErrorMsg = error
             detailPopup.loadingDeals = false
+            detailPopup.rebuildAllDeals()
+        }
+
+        function onNexardaPricesReady(prices) {
+            if (!detailPopup.visible) return
+            detailPopup.nexardaDeals = prices.deals || []
+            detailPopup.loadingNexarda = false
+            detailPopup.rebuildAllDeals()
+        }
+
+        function onNexardaPricesError(error) {
+            if (!detailPopup.visible) return
+            detailPopup.loadingNexarda = false
+            detailPopup.rebuildAllDeals()
         }
 
         function onIgdbGameInfoReady(info) {
             if (!detailPopup.visible) return
-            detailPopup.igdbSummary = info.summary || ""
-            detailPopup.igdbGenres = info.genres || ""
-            detailPopup.igdbPlatforms = info.platforms || ""
-            detailPopup.igdbReleaseDate = info.releaseDate || ""
-            detailPopup.igdbRating = info.totalRating || 0
-            detailPopup.igdbScreenshots = info.screenshots || []
+            // Update with full IGDB data (may be richer than search results)
+            if (info.summary)
+                detailPopup.igdbSummary = info.summary
+            if (info.genres)
+                detailPopup.igdbGenres = info.genres
+            if (info.platforms)
+                detailPopup.igdbPlatforms = info.platforms
+            if (info.releaseDate)
+                detailPopup.igdbReleaseDate = info.releaseDate
+            if (info.totalRating)
+                detailPopup.igdbRating = info.totalRating
+            if (info.screenshots && info.screenshots.length > 0)
+                detailPopup.igdbScreenshots = info.screenshots
             detailPopup.igdbErrorMsg = ""
             detailPopup.loadingIGDB = false
         }
 
         function onIgdbGameInfoError(error) {
             if (!detailPopup.visible) return
-            detailPopup.igdbErrorMsg = error
+            // Only set error if we don't already have pre-populated data
+            if (detailPopup.igdbSummary === "")
+                detailPopup.igdbErrorMsg = error
             detailPopup.loadingIGDB = false
         }
 
@@ -1002,7 +1074,7 @@ Rectangle {
                                         }
 
                                         Text {
-                                            visible: loadingDeals
+                                            visible: loadingDeals || loadingNexarda
                                             text: "Loading..."
                                             font.pixelSize: 24
                                             font.family: ThemeManager.getFont("body")
@@ -1013,9 +1085,9 @@ Rectangle {
                                         Item { Layout.fillWidth: true }
                                     }
 
-                                    // Deals list
+                                    // Combined deals list (CheapShark + Nexarda)
                                     Repeater {
-                                        model: gameDeals
+                                        model: allDeals
 
                                         Rectangle {
                                             property bool isKbFocused: detailPopup.visible && popupNavZone === "stores" && storeFocusIndex === index
@@ -1066,6 +1138,27 @@ Rectangle {
                                                     font.bold: true
                                                     color: ThemeManager.getColor("textPrimary")
                                                     Layout.fillWidth: true
+                                                }
+
+                                                // Source badge (CheapShark / Nexarda)
+                                                Rectangle {
+                                                    visible: (modelData.source || "") !== ""
+                                                    Layout.preferredWidth: srcLabel.width + 14
+                                                    Layout.preferredHeight: 28
+                                                    radius: 6
+                                                    color: modelData.source === "Nexarda"
+                                                           ? Qt.rgba(0.29, 0.53, 0.91, 0.15)
+                                                           : Qt.rgba(1, 1, 1, 0.08)
+
+                                                    Text {
+                                                        id: srcLabel
+                                                        anchors.centerIn: parent
+                                                        text: modelData.source || ""
+                                                        font.pixelSize: 18
+                                                        font.family: ThemeManager.getFont("ui")
+                                                        color: ThemeManager.getColor("textSecondary")
+                                                        opacity: 0.7
+                                                    }
                                                 }
 
                                                 // Savings badge
@@ -1161,8 +1254,14 @@ Rectangle {
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: {
                                                     detailPopup.dealsErrorMsg = ""
-                                                    detailPopup.loadingDeals = true
-                                                    StoreApi.fetchGameDeals(detailPopup.gameID)
+                                                    if (detailPopup.cheapSharkGameID !== "") {
+                                                        detailPopup.loadingDeals = true
+                                                        StoreApi.fetchGameDeals(detailPopup.cheapSharkGameID)
+                                                    }
+                                                    if (detailPopup.nexardaProductID !== "") {
+                                                        detailPopup.loadingNexarda = true
+                                                        StoreApi.fetchNexardaPrices(detailPopup.nexardaProductID)
+                                                    }
                                                 }
                                             }
                                         }
@@ -1170,7 +1269,7 @@ Rectangle {
 
                                     // No deals message
                                     Text {
-                                        visible: !loadingDeals && dealsErrorMsg === "" && gameDeals.length === 0
+                                        visible: !loadingDeals && !loadingNexarda && dealsErrorMsg === "" && allDeals.length === 0
                                         text: "No deals found for this game"
                                         font.pixelSize: 24
                                         font.family: ThemeManager.getFont("body")

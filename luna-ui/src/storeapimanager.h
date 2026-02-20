@@ -5,6 +5,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QHash>
+#include <memory>
 
 class QNetworkAccessManager;
 
@@ -17,9 +18,14 @@ public:
     Q_INVOKABLE void fetchDeals(const QString& sortBy = "Deal Rating",
                                 int pageNumber = 0, int pageSize = 60);
     Q_INVOKABLE void fetchRecentDeals(int pageSize = 20);
-    Q_INVOKABLE void searchGames(const QString& title);
     Q_INVOKABLE void fetchGameDeals(const QString& cheapSharkGameId);
     Q_INVOKABLE void fetchStores();
+
+    // ── Search (IGDB + CheapShark + Nexarda) ──
+    Q_INVOKABLE void searchGames(const QString& title);
+
+    // ── Nexarda API ──
+    Q_INVOKABLE void fetchNexardaPrices(const QString& nexardaId);
 
     // ── IGDB API ──
     Q_INVOKABLE void fetchIGDBGameInfo(const QString& gameName);
@@ -45,12 +51,18 @@ signals:
     void dealsError(const QString& error);
     void recentDealsReady(QVariantList deals);
     void recentDealsError(const QString& error);
-    void searchResultsReady(QVariantList results);
-    void searchError(const QString& error);
     void gameDealsReady(QVariantMap details);
     void gameDealsError(const QString& error);
     void storesReady(QVariantList stores);
     void storesError(const QString& error);
+
+    // Search (merged IGDB + price sources)
+    void searchResultsReady(QVariantList results);
+    void searchError(const QString& error);
+
+    // Nexarda
+    void nexardaPricesReady(QVariantMap prices);
+    void nexardaPricesError(const QString& error);
 
     // IGDB
     void igdbGameInfoReady(QVariantMap gameInfo);
@@ -75,6 +87,16 @@ private:
     QString m_igdbAccessToken;
     qint64 m_igdbTokenExpiry = 0;
     bool m_usingBuiltInCredentials = false;
+
+    // Search merge state for parallel IGDB + CheapShark + Nexarda queries
+    struct SearchMergeState {
+        QVariantList igdbResults;
+        QVariantList cheapSharkResults;
+        QVariantList nexardaResults;
+        int completedCount = 0;
+    };
+    int m_searchGeneration = 0;
+    void mergeSearchResults(std::shared_ptr<SearchMergeState> state, int generation);
 
     void loadIGDBCredentials();
     void saveIGDBCredentials();

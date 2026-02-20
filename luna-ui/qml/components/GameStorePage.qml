@@ -877,7 +877,7 @@ Item {
 
                         Text {
                             Layout.alignment: Qt.AlignHCenter
-                            text: "Searching game stores..."
+                            text: "Searching IGDB & price sources..."
                             font.pixelSize: 28
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
@@ -901,11 +901,14 @@ Item {
                         }
 
                         Text {
-                            text: "Try a different search term"
+                            text: "No Windows/Linux games with pricing found. Try a different search term."
                             font.pixelSize: 24
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                             Layout.alignment: Qt.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            Layout.maximumWidth: 500
+                            horizontalAlignment: Text.AlignHCenter
                         }
                     }
 
@@ -922,14 +925,14 @@ Item {
                                 width: Math.floor((mainFlickable.width - 64) / 3)
                                 height: width * 0.55
                                 gameTitle: modelData.title || ""
-                                headerImage: modelData.headerImage || modelData.thumb || ""
-                                salePrice: modelData.cheapest || ""
+                                headerImage: modelData.headerImage || modelData.coverUrl || modelData.thumb || ""
+                                salePrice: modelData.salePrice || modelData.cheapestPrice || ""
                                 normalPrice: ""
-                                savings: ""
+                                savings: modelData.savings || ""
                                 metacriticScore: ""
-                                steamRatingText: ""
+                                steamRatingText: modelData.genres || ""
                                 steamAppID: modelData.steamAppID || ""
-                                gameID: modelData.gameID || ""
+                                gameID: modelData.cheapSharkGameID || ""
                                 isKeyboardFocused: hasKeyboardFocus && navZone === "searchResults" && searchResultFocusIndex === index
 
                                 onClicked: {
@@ -1594,7 +1597,7 @@ Item {
                         }
 
                         Text {
-                            text: "Game descriptions, screenshots & ratings enabled"
+                            text: "IGDB-powered search, descriptions, screenshots & ratings enabled"
                             font.pixelSize: 22
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
@@ -1681,8 +1684,9 @@ Item {
                         }
 
                         Text {
-                            text: "Add your Twitch developer credentials to get rich game descriptions, " +
-                                  "screenshots, and ratings from IGDB. Register at dev.twitch.tv"
+                            text: "Add your Twitch developer credentials to enable IGDB-powered search " +
+                                  "with rich game descriptions, screenshots, and platform filtering. " +
+                                  "Register at dev.twitch.tv"
                             font.pixelSize: 24
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
