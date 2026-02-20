@@ -1334,7 +1334,7 @@ Rectangle {
 
             // Handle popup windows (e.g. "Sign in with Google/Apple/Facebook")
             // by opening them in the same view instead of a new window.
-            onNewViewRequested: function(request) {
+            onNewWindowRequested: function(request) {
                 console.log("[epic-browser] Popup requested, opening in same view")
                 request.openIn(epicLoginWebView)
             }
