@@ -59,6 +59,8 @@ Rectangle {
         awaitingPolicyAcceptance = false
         browserHeaderFocused = false
         epicLoginWebView.url = "about:blank"
+        epicPopupWebView.url = "about:blank"
+        epicPopupWebView.visible = false
         visible = false
         closed()
     }
@@ -161,6 +163,8 @@ Rectangle {
             if (event.key === Qt.Key_Escape) {
                 epicWizard.browserHeaderFocused = false
                 epicLoginWebView.url = "about:blank"
+                epicPopupWebView.url = "about:blank"
+                epicPopupWebView.visible = false
                 epicWizard.epicBrowserOpen = false
                 event.accepted = true
                 return
@@ -1250,6 +1254,8 @@ Rectangle {
                 case "back":
                     epicWizard.browserHeaderFocused = false
                     epicLoginWebView.url = "about:blank"
+                    epicPopupWebView.url = "about:blank"
+                    epicPopupWebView.visible = false
                     epicWizard.epicBrowserOpen = false
                     return
                 }
@@ -1305,7 +1311,12 @@ Rectangle {
                 epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
-                if (epicLoginWebView.canGoBack) {
+                // If a popup overlay is open, close that first
+                if (epicPopupWebView.visible) {
+                    console.log("[epic-browser] closing popup overlay")
+                    epicPopupWebView.url = "about:blank"
+                    epicPopupWebView.visible = false
+                } else if (epicLoginWebView.canGoBack) {
                     console.log("[epic-browser] navigating back")
                     epicLoginWebView.goBack()
                 } else {
@@ -1376,6 +1387,8 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         epicLoginWebView.url = "about:blank"
+                        epicPopupWebView.url = "about:blank"
+                        epicPopupWebView.visible = false
                         epicWizard.epicBrowserOpen = false
                     }
                 }
@@ -1432,11 +1445,13 @@ Rectangle {
             profile: SharedBrowserProfile
             settings.focusOnNavigationEnabled: false
 
-            // Handle popup windows (e.g. "Sign in with Google/Apple/Facebook")
-            // by opening them in the same view instead of a new window.
+            // Open popups (e.g. social-login, CAPTCHA, verification) in a
+            // separate overlay view so the original Epic page stays alive and
+            // can receive the callback when the popup finishes.
             onNewWindowRequested: function(request) {
-                console.log("[epic-browser] Popup requested, opening in same view")
-                request.openIn(epicLoginWebView)
+                console.log("[epic-browser] Popup requested — opening in overlay view")
+                epicPopupWebView.visible = true
+                request.openIn(epicPopupWebView)
             }
 
             onLoadingChanged: function(loadRequest) {
@@ -1469,6 +1484,55 @@ Rectangle {
 
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
                 console.log("[epic-browser-js]", message)
+            }
+        }
+
+        // Overlay for popup windows opened by Epic's login page (social
+        // login, CAPTCHA, verification dialogs, etc.).  Keeping these in
+        // a separate WebEngineView means the original page stays loaded
+        // and can receive the post-login callback from the popup.
+        WebEngineView {
+            id: epicPopupWebView
+            anchors.fill: epicLoginWebView
+            z: 1
+            visible: false
+            profile: SharedBrowserProfile
+            settings.focusOnNavigationEnabled: false
+
+            // When the popup calls window.close(), hide the overlay so the
+            // original Epic page is visible again and can process the result.
+            onWindowCloseRequested: {
+                console.log("[epic-browser] Popup closed by page")
+                epicPopupWebView.url = "about:blank"
+                epicPopupWebView.visible = false
+            }
+
+            // Also watch for the auth redirect landing in the popup itself
+            onUrlChanged: {
+                var urlStr = url.toString()
+                console.log("[epic-browser-popup] URL changed:", urlStr)
+                if (urlStr.indexOf("/id/api/redirect") !== -1) {
+                    console.log("[epic-browser-popup] Auth redirect detected in popup")
+                    epicAuthCodePollTimer.restart()
+                }
+            }
+
+            onLoadingChanged: function(loadRequest) {
+                console.log("[epic-browser-popup] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
+            }
+
+            // Nested popups: open in the same overlay
+            onNewWindowRequested: function(request) {
+                console.log("[epic-browser-popup] Nested popup, reusing overlay")
+                request.openIn(epicPopupWebView)
+            }
+
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[epic-browser-popup-js]", message)
             }
         }
 
@@ -1508,6 +1572,8 @@ Rectangle {
                             console.log("[epic-browser] Got authorization code, length:", code.length)
                             epicAuthCodePollTimer.stop()
                             epicLoginWebView.url = "about:blank"
+                            epicPopupWebView.url = "about:blank"
+                            epicPopupWebView.visible = false
                             epicWizard.epicBrowserOpen = false
                             epicWizard.loginInProgress = true
                             GameManager.epicLoginWithCode(code)
