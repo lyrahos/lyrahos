@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QUrlQuery>
+#include <QRegularExpression>
 #include <QSet>
 #include <QDir>
 #include <QFile>
@@ -15,10 +16,21 @@
 #include <memory>
 
 static const QString CHEAPSHARK_BASE = "https://www.cheapshark.com/api/1.0";
+static const QString NEXARDA_BASE    = "https://www.nexarda.com/api/v3";
 static const QString PROTONDB_BASE   = "https://www.protondb.com/api/v1/reports/summaries";
 static const QString IGDB_BASE       = "https://api.igdb.com/v4";
 static const QString TWITCH_TOKEN    = "https://id.twitch.tv/oauth2/token";
 static const QString STEAM_CDN       = "https://cdn.akamai.steamstatic.com/steam/apps";
+
+// Normalize a game title for fuzzy matching
+static QString normalizeTitle(const QString& title) {
+    QString norm = title.toLower().trimmed();
+    // Remove common suffixes/prefixes, punctuation
+    norm.remove(QRegularExpression("[^a-z0-9 ]"));
+    // Collapse whitespace
+    norm = norm.simplified();
+    return norm;
+}
 
 StoreApiManager::StoreApiManager(QObject *parent)
     : QObject(parent)
@@ -181,58 +193,396 @@ void StoreApiManager::fetchRecentDeals(int pageSize)
     });
 }
 
-// ─── CheapShark: Search Games ───
+// ─── Search: IGDB + CheapShark + Nexarda (parallel) ───
 
 void StoreApiManager::searchGames(const QString& title)
 {
-    QUrl url(CHEAPSHARK_BASE + "/games");
-    QUrlQuery query;
-    query.addQueryItem("title", title);
-    query.addQueryItem("limit", "60");
-    url.setQuery(query);
+    if (title.trimmed().isEmpty()) {
+        emit searchResultsReady(QVariantList());
+        return;
+    }
 
-    QNetworkRequest req(url);
-    req.setTransferTimeout(15000);
-    QNetworkReply *reply = m_nam->get(req);
+    int generation = ++m_searchGeneration;
+    auto state = std::make_shared<SearchMergeState>();
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError) {
-            emit searchError(reply->errorString());
-            return;
+    // Lambda to check if all 3 searches are done, then merge
+    auto checkMerge = [this, state, generation]() {
+        if (state->completedCount >= 3)
+            mergeSearchResults(state, generation);
+    };
+
+    // ── 1. IGDB search (primary: game metadata, platform-filtered) ──
+    if (m_igdbClientId.isEmpty() || m_igdbClientSecret.isEmpty()) {
+        // No IGDB credentials — skip IGDB, emit error
+        state->completedCount++;
+        // Still try CheapShark + Nexarda below
+    } else {
+        refreshIGDBToken([this, title, state, generation, checkMerge]() {
+            if (generation != m_searchGeneration) return;
+
+            QUrl url(IGDB_BASE + "/games");
+            QNetworkRequest req(url);
+            req.setHeader(QNetworkRequest::ContentTypeHeader, "text/plain");
+            req.setRawHeader("Client-ID", m_igdbClientId.toUtf8());
+            req.setRawHeader("Authorization", ("Bearer " + m_igdbAccessToken).toUtf8());
+            req.setTransferTimeout(15000);
+
+            // Search IGDB filtered to Windows (6) and Linux (3) platforms
+            QString body = QString(
+                "search \"%1\"; "
+                "fields name,summary,cover.url,screenshots.url,"
+                "genres.name,platforms.name,first_release_date,rating,"
+                "aggregated_rating,total_rating,"
+                "external_games.uid,external_games.category; "
+                "where platforms = (6,3); "
+                "limit 30;"
+            ).arg(title);
+
+            QNetworkReply *reply = m_nam->post(req, body.toUtf8());
+
+            connect(reply, &QNetworkReply::finished, this, [this, reply, state, generation, checkMerge]() {
+                reply->deleteLater();
+                if (generation != m_searchGeneration) return;
+
+                if (reply->error() != QNetworkReply::NoError) {
+                    qWarning() << "IGDB search failed:" << reply->errorString();
+                    state->completedCount++;
+                    checkMerge();
+                    return;
+                }
+
+                QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
+                for (const auto& val : arr) {
+                    QJsonObject obj = val.toObject();
+                    QVariantMap game;
+                    game["igdbId"] = obj["id"].toInt();
+                    game["title"]  = obj["name"].toString();
+                    game["summary"] = obj["summary"].toString();
+                    game["rating"]  = obj["total_rating"].toDouble();
+                    game["aggregatedRating"] = obj["aggregated_rating"].toDouble();
+
+                    // Release date
+                    if (obj.contains("first_release_date")) {
+                        qint64 ts = obj["first_release_date"].toInteger();
+                        game["releaseDate"] = QDateTime::fromSecsSinceEpoch(ts).toString("MMM d, yyyy");
+                    }
+
+                    // Cover URL
+                    if (obj.contains("cover")) {
+                        QString coverUrl = obj["cover"].toObject()["url"].toString();
+                        if (coverUrl.startsWith("//"))
+                            coverUrl = "https:" + coverUrl;
+                        coverUrl.replace("t_thumb", "t_cover_big");
+                        game["coverUrl"] = coverUrl;
+                        // Also use as header image fallback
+                        QString headerUrl = coverUrl;
+                        headerUrl.replace("t_cover_big", "t_screenshot_big");
+                        game["igdbHeaderUrl"] = headerUrl;
+                    }
+
+                    // Screenshots
+                    QVariantList screenshots;
+                    QJsonArray ssArr = obj["screenshots"].toArray();
+                    for (const auto& ss : ssArr) {
+                        QString ssUrl = ss.toObject()["url"].toString();
+                        if (ssUrl.startsWith("//"))
+                            ssUrl = "https:" + ssUrl;
+                        ssUrl.replace("t_thumb", "t_screenshot_big");
+                        screenshots.append(ssUrl);
+                    }
+                    game["screenshots"] = screenshots;
+
+                    // Genres
+                    QStringList genres;
+                    QJsonArray genreArr = obj["genres"].toArray();
+                    for (const auto& g : genreArr)
+                        genres.append(g.toObject()["name"].toString());
+                    game["genres"] = genres.join(", ");
+
+                    // Platforms
+                    QStringList platforms;
+                    QJsonArray platArr = obj["platforms"].toArray();
+                    for (const auto& p : platArr)
+                        platforms.append(p.toObject()["name"].toString());
+                    game["platforms"] = platforms.join(", ");
+
+                    // Extract Steam App ID from external_games (category 1 = Steam)
+                    QJsonArray extArr = obj["external_games"].toArray();
+                    for (const auto& ext : extArr) {
+                        QJsonObject extObj = ext.toObject();
+                        if (extObj["category"].toInt() == 1) {
+                            game["steamAppID"] = extObj["uid"].toString();
+                            break;
+                        }
+                    }
+
+                    // Build image URLs from Steam App ID if available
+                    QString appId = game["steamAppID"].toString();
+                    if (!appId.isEmpty() && appId != "0") {
+                        game["headerImage"] = getSteamHeaderUrl(appId);
+                        game["heroImage"]   = getSteamHeroUrl(appId);
+                        game["capsuleImage"] = getSteamCapsuleUrl(appId);
+                    } else if (game.contains("coverUrl")) {
+                        game["headerImage"] = game["igdbHeaderUrl"];
+                        game["heroImage"]   = game["igdbHeaderUrl"];
+                        game["capsuleImage"] = game["coverUrl"];
+                    }
+
+                    state->igdbResults.append(game);
+                }
+
+                state->completedCount++;
+                checkMerge();
+            });
+        });
+    }
+
+    // ── 2. CheapShark search (for price data + CheapShark game IDs) ──
+    {
+        QUrl url(CHEAPSHARK_BASE + "/games");
+        QUrlQuery query;
+        query.addQueryItem("title", title);
+        query.addQueryItem("limit", "60");
+        url.setQuery(query);
+
+        QNetworkRequest req(url);
+        req.setTransferTimeout(15000);
+        QNetworkReply *reply = m_nam->get(req);
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply, state, generation, checkMerge]() {
+            reply->deleteLater();
+            if (generation != m_searchGeneration) return;
+
+            if (reply->error() != QNetworkReply::NoError) {
+                qWarning() << "CheapShark search failed:" << reply->errorString();
+                state->completedCount++;
+                checkMerge();
+                return;
+            }
+
+            QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
+            for (const auto& val : arr) {
+                QJsonObject obj = val.toObject();
+                QVariantMap game;
+                game["gameID"]     = obj["gameID"].toString();
+                game["title"]      = obj["external"].toString();
+                game["cheapest"]   = obj["cheapest"].toString();
+                game["steamAppID"] = obj["steamAppID"].toString();
+                game["thumb"]      = obj["thumb"].toString();
+                state->cheapSharkResults.append(game);
+            }
+
+            state->completedCount++;
+            checkMerge();
+        });
+    }
+
+    // ── 3. Nexarda search (for Nexarda product IDs + prices) ──
+    {
+        QUrl url(NEXARDA_BASE + "/search");
+        QUrlQuery query;
+        query.addQueryItem("q", title);
+        query.addQueryItem("type", "games");
+        query.addQueryItem("currency", "USD");
+        url.setQuery(query);
+
+        QNetworkRequest req(url);
+        req.setTransferTimeout(15000);
+        QNetworkReply *reply = m_nam->get(req);
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply, state, generation, checkMerge]() {
+            reply->deleteLater();
+            if (generation != m_searchGeneration) return;
+
+            if (reply->error() != QNetworkReply::NoError) {
+                qWarning() << "Nexarda search failed:" << reply->errorString();
+                state->completedCount++;
+                checkMerge();
+                return;
+            }
+
+            QByteArray data = reply->readAll();
+            QJsonDocument doc = QJsonDocument::fromJson(data);
+
+            // Nexarda may return array directly or under a key
+            QJsonArray arr;
+            if (doc.isArray()) {
+                arr = doc.array();
+            } else if (doc.isObject()) {
+                QJsonObject root = doc.object();
+                if (root.contains("results"))
+                    arr = root["results"].toArray();
+                else if (root.contains("data"))
+                    arr = root["data"].toArray();
+                else if (root.contains("games"))
+                    arr = root["games"].toArray();
+            }
+
+            for (const auto& val : arr) {
+                QJsonObject obj = val.toObject();
+                QVariantMap game;
+                game["nexardaId"] = obj["id"].toVariant().toString();
+                game["title"]     = obj["name"].toString();
+                if (game["title"].toString().isEmpty())
+                    game["title"] = obj["title"].toString();
+
+                // Price info
+                if (obj.contains("lowest_price"))
+                    game["lowestPrice"] = obj["lowest_price"].toVariant().toString();
+                else if (obj.contains("price"))
+                    game["lowestPrice"] = obj["price"].toVariant().toString();
+
+                if (obj.contains("discount"))
+                    game["discount"] = obj["discount"].toVariant().toString();
+
+                state->nexardaResults.append(game);
+            }
+
+            state->completedCount++;
+            checkMerge();
+        });
+    }
+}
+
+void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state, int generation)
+{
+    if (generation != m_searchGeneration)
+        return;
+
+    // Build lookup maps for CheapShark and Nexarda by normalized title and Steam ID
+    QHash<QString, int> csByTitle;  // normalized title → index
+    QHash<QString, int> csBySteam;  // steam app ID → index
+    for (int i = 0; i < state->cheapSharkResults.size(); i++) {
+        QVariantMap cs = state->cheapSharkResults[i].toMap();
+        QString norm = normalizeTitle(cs["title"].toString());
+        if (!norm.isEmpty())
+            csByTitle.insert(norm, i);
+        QString steamId = cs["steamAppID"].toString();
+        if (!steamId.isEmpty() && steamId != "null" && steamId != "0")
+            csBySteam.insert(steamId, i);
+    }
+
+    QHash<QString, int> nxByTitle;
+    for (int i = 0; i < state->nexardaResults.size(); i++) {
+        QVariantMap nx = state->nexardaResults[i].toMap();
+        QString norm = normalizeTitle(nx["title"].toString());
+        if (!norm.isEmpty())
+            nxByTitle.insert(norm, i);
+    }
+
+    QVariantList results;
+
+    for (const auto& igdbVar : state->igdbResults) {
+        QVariantMap game = igdbVar.toMap();
+        QString norm = normalizeTitle(game["title"].toString());
+        QString steamId = game["steamAppID"].toString();
+
+        // Try to match CheapShark by Steam ID first, then by title
+        int csIdx = -1;
+        if (!steamId.isEmpty() && csBySteam.contains(steamId))
+            csIdx = csBySteam[steamId];
+        else if (csByTitle.contains(norm))
+            csIdx = csByTitle[norm];
+
+        // Try to match Nexarda by title
+        int nxIdx = -1;
+        if (nxByTitle.contains(norm))
+            nxIdx = nxByTitle[norm];
+
+        // Only include if we have a price from at least one source
+        bool hasPrice = false;
+        QString cheapestPrice;
+        QString normalPrice;
+        QString savings;
+
+        if (csIdx >= 0) {
+            QVariantMap cs = state->cheapSharkResults[csIdx].toMap();
+            game["cheapSharkGameID"] = cs["gameID"];
+            QString csPrice = cs["cheapest"].toString();
+            if (!csPrice.isEmpty()) {
+                hasPrice = true;
+                cheapestPrice = csPrice;
+            }
+            // Propagate Steam App ID from CheapShark if we didn't have one
+            if (steamId.isEmpty() || steamId == "0") {
+                QString csAppId = cs["steamAppID"].toString();
+                if (!csAppId.isEmpty() && csAppId != "null" && csAppId != "0") {
+                    game["steamAppID"] = csAppId;
+                    game["headerImage"] = getSteamHeaderUrl(csAppId);
+                    game["heroImage"]   = getSteamHeroUrl(csAppId);
+                    game["capsuleImage"] = getSteamCapsuleUrl(csAppId);
+                }
+            }
         }
 
-        QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
-        QVariantList results;
-        for (const auto& val : arr) {
-            QJsonObject obj = val.toObject();
-            QVariantMap game;
-            game["gameID"]      = obj["gameID"].toString();
-            game["title"]       = obj["external"].toString();
-            game["cheapest"]    = obj["cheapest"].toString();
-            game["steamAppID"]  = obj["steamAppID"].toString();
-            game["thumb"]       = obj["thumb"].toString();
+        if (nxIdx >= 0) {
+            QVariantMap nx = state->nexardaResults[nxIdx].toMap();
+            game["nexardaProductID"] = nx["nexardaId"];
+            QString nxPrice = nx["lowestPrice"].toString();
+            if (!nxPrice.isEmpty()) {
+                hasPrice = true;
+                // Use whichever is cheaper
+                if (cheapestPrice.isEmpty() ||
+                    nxPrice.toDouble() < cheapestPrice.toDouble()) {
+                    cheapestPrice = nxPrice;
+                }
+            }
+            if (nx.contains("discount")) {
+                QString disc = nx["discount"].toString();
+                if (!disc.isEmpty())
+                    savings = disc;
+            }
+        }
 
-            QString appId = obj["steamAppID"].toString();
+        if (!hasPrice)
+            continue;
+
+        game["cheapestPrice"] = cheapestPrice;
+        game["salePrice"]     = cheapestPrice;
+        if (!savings.isEmpty())
+            game["savings"] = savings;
+
+        results.append(game);
+    }
+
+    // If no IGDB results came through but CheapShark has results, show those
+    // (graceful fallback if IGDB is down or has no credentials)
+    if (state->igdbResults.isEmpty() && !state->cheapSharkResults.isEmpty()) {
+        for (const auto& csVar : state->cheapSharkResults) {
+            QVariantMap cs = csVar.toMap();
+            QVariantMap game;
+            game["title"]     = cs["title"];
+            game["steamAppID"] = cs["steamAppID"];
+            game["cheapSharkGameID"] = cs["gameID"];
+            game["cheapestPrice"] = cs["cheapest"];
+            game["salePrice"]     = cs["cheapest"];
+
+            QString appId = cs["steamAppID"].toString();
             if (!appId.isEmpty() && appId != "null" && appId != "0") {
                 game["headerImage"] = getSteamHeaderUrl(appId);
+                game["heroImage"]   = getSteamHeroUrl(appId);
                 game["capsuleImage"] = getSteamCapsuleUrl(appId);
             } else {
-                game["headerImage"] = obj["thumb"].toString();
-                game["capsuleImage"] = obj["thumb"].toString();
+                game["headerImage"] = cs["thumb"];
+                game["capsuleImage"] = cs["thumb"];
             }
 
             results.append(game);
         }
+    }
 
-        emit searchResultsReady(results);
-    });
+    emit searchResultsReady(results);
 }
 
 // ─── CheapShark: Game Details (all deals for one game) ───
 
 void StoreApiManager::fetchGameDeals(const QString& cheapSharkGameId)
 {
+    if (cheapSharkGameId.isEmpty()) {
+        emit gameDealsReady(QVariantMap());
+        return;
+    }
+
     // Ensure store metadata is available for resolving store names
     if (!m_storesLoaded) {
         auto successConn = std::make_shared<QMetaObject::Connection>();
@@ -312,6 +662,7 @@ void StoreApiManager::fetchGameDeals(const QString& cheapSharkGameId)
             deal["storeIcon"] = getStoreIconUrl(storeId);
             deal["dealLink"]  = QStringLiteral("https://www.cheapshark.com/redirect?dealID=")
                                 + obj["dealID"].toString();
+            deal["source"]    = QStringLiteral("CheapShark");
 
             deals.append(deal);
         }
@@ -362,6 +713,120 @@ void StoreApiManager::fetchStores()
 
         m_storesLoaded = true;
         emit storesReady(stores);
+    });
+}
+
+// ─── Nexarda: Fetch Prices for a specific product ───
+
+void StoreApiManager::fetchNexardaPrices(const QString& nexardaId)
+{
+    if (nexardaId.isEmpty()) {
+        emit nexardaPricesError("No Nexarda product ID");
+        return;
+    }
+
+    QUrl url(NEXARDA_BASE + "/prices");
+    QUrlQuery query;
+    query.addQueryItem("type", "game");
+    query.addQueryItem("id", nexardaId);
+    query.addQueryItem("currency", "USD");
+    url.setQuery(query);
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(15000);
+    QNetworkReply *reply = m_nam->get(req);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            emit nexardaPricesError(reply->errorString());
+            return;
+        }
+
+        QByteArray data = reply->readAll();
+        QJsonDocument doc = QJsonDocument::fromJson(data);
+        QVariantMap result;
+
+        if (doc.isObject()) {
+            QJsonObject root = doc.object();
+            result["lowest"]  = root["lowest"].toVariant();
+            result["highest"] = root["highest"].toVariant();
+            result["stores"]  = root["stores"].toVariant();
+            result["offers"]  = root["offers"].toVariant();
+
+            // Parse individual edition/offer details
+            QVariantList deals;
+
+            // Nexarda may structure offers under "editions" or as a flat list
+            QJsonArray editionsArr;
+            if (root.contains("editions"))
+                editionsArr = root["editions"].toArray();
+            else if (root.contains("offers"))
+                editionsArr = root["offers"].toArray();
+            else if (root.contains("data"))
+                editionsArr = root["data"].toArray();
+
+            for (const auto& edVal : editionsArr) {
+                QJsonObject edObj = edVal.toObject();
+
+                // Each edition may have multiple offers
+                QJsonArray offersArr;
+                if (edObj.contains("offers"))
+                    offersArr = edObj["offers"].toArray();
+                else {
+                    // Treat the edition itself as a single offer
+                    offersArr.append(edVal);
+                }
+
+                for (const auto& offerVal : offersArr) {
+                    QJsonObject offer = offerVal.toObject();
+                    QVariantMap deal;
+                    deal["storeName"] = offer["store"].toVariant().toString();
+                    if (deal["storeName"].toString().isEmpty())
+                        deal["storeName"] = offer["retailer"].toVariant().toString();
+                    if (deal["storeName"].toString().isEmpty())
+                        deal["storeName"] = offer["shop"].toVariant().toString();
+
+                    deal["price"]       = offer["price"].toVariant().toString();
+                    deal["retailPrice"] = offer["original_price"].toVariant().toString();
+                    if (deal["retailPrice"].toString().isEmpty())
+                        deal["retailPrice"] = offer["retail_price"].toVariant().toString();
+
+                    deal["discount"] = offer["discount"].toVariant().toString();
+
+                    // Build savings percentage from discount or prices
+                    QString discStr = deal["discount"].toString();
+                    if (!discStr.isEmpty() && discStr != "0") {
+                        deal["savings"] = discStr;
+                    } else {
+                        double price = deal["price"].toString().toDouble();
+                        double retail = deal["retailPrice"].toString().toDouble();
+                        if (retail > 0 && price < retail) {
+                            double sav = ((retail - price) / retail) * 100.0;
+                            deal["savings"] = QString::number(sav, 'f', 1);
+                        }
+                    }
+
+                    deal["dealLink"] = offer["url"].toVariant().toString();
+                    if (deal["dealLink"].toString().isEmpty())
+                        deal["dealLink"] = offer["link"].toVariant().toString();
+
+                    deal["source"]    = QStringLiteral("Nexarda");
+                    deal["edition"]   = edObj["name"].toVariant().toString();
+                    deal["region"]    = offer["region"].toVariant().toString();
+
+                    // Only include if we have a store name and price
+                    if (!deal["storeName"].toString().isEmpty() &&
+                        !deal["price"].toString().isEmpty()) {
+                        deals.append(deal);
+                    }
+                }
+            }
+
+            result["deals"] = deals;
+        }
+
+        emit nexardaPricesReady(result);
     });
 }
 
