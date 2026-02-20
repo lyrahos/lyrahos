@@ -144,6 +144,24 @@ Rectangle {
 
     // Keyboard / controller navigation
     Keys.onPressed: function(event) {
+        // When awaiting privacy policy acceptance, allow keyboard shortcuts
+        // to reach the Retry Login and Close buttons in the browser header.
+        if (epicBrowserOpen && currentStep === 2 && awaitingPolicyAcceptance) {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                console.log("[epic-browser] Keyboard: Retry Login after privacy policy")
+                epicWizard.awaitingPolicyAcceptance = false
+                epicLoginWebView.url = GameManager.getEpicLoginUrl()
+                event.accepted = true
+                return
+            }
+            if (event.key === Qt.Key_Escape) {
+                epicLoginWebView.url = "about:blank"
+                epicWizard.epicBrowserOpen = false
+                event.accepted = true
+                return
+            }
+            return
+        }
         // When the embedded browser is open, it handles its own navigation
         // via ControllerManager connections; skip wizard key handling.
         if (epicBrowserOpen && currentStep === 2) return
@@ -1209,6 +1227,14 @@ Rectangle {
             function logResult(result) {
                 console.log("[epic-browser] nav result:", result)
             }
+            // When awaiting privacy policy acceptance, A (confirm) retries login
+            // and B (back) closes the browser.  D-pad still navigates the page.
+            if (epicWizard.awaitingPolicyAcceptance && action === "confirm") {
+                console.log("[epic-browser] Controller: Retry Login after privacy policy")
+                epicWizard.awaitingPolicyAcceptance = false
+                epicLoginWebView.url = GameManager.getEpicLoginUrl()
+                return
+            }
             switch (action) {
             case "navigate_up":
                 epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
@@ -1281,7 +1307,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: epicWizard.awaitingPolicyAcceptance
-                      ? "Accept Epic's Privacy Policy, then click Retry Login \u2192"
+                      ? "Accept Epic's Privacy Policy, then press A to Retry Login"
                       : "Epic Games Login"
                 font.pixelSize: ThemeManager.getFontSize("medium")
                 font.bold: true
@@ -1336,7 +1362,7 @@ Rectangle {
                 Text {
                     id: retryLoginLabel
                     anchors.centerIn: parent
-                    text: "Retry Login"
+                    text: "A  Retry Login"
                     font.pixelSize: ThemeManager.getFontSize("small")
                     font.family: ThemeManager.getFont("body")
                     font.bold: true
@@ -1436,7 +1462,7 @@ Rectangle {
                             console.log("[epic-browser] Corrective action required (privacy policy) — redirecting to Epic")
                             epicAuthCodePollTimer.stop()
                             epicWizard.awaitingPolicyAcceptance = true
-                            epicLoginWebView.url = "https://www.epicgames.com/id/login?lang=en-US&noAccountCreate=true"
+                            epicLoginWebView.url = "https://www.epicgames.com"
                         } else if (code && code.length > 10) {
                             console.log("[epic-browser] Got authorization code, length:", code.length)
                             epicAuthCodePollTimer.stop()

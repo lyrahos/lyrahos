@@ -2319,7 +2319,7 @@ void GameManager::epicLogin() {
             // Open Epic's correction/policy page in the browser so the
             // user can accept the privacy policy or EULA
             QProcess::startDetached("xdg-open",
-                QStringList() << "https://www.epicgames.com/id/login?lang=en-US&noAccountCreate=true");
+                QStringList() << "https://www.epicgames.com");
 
             emit epicLoginError(
                 "Epic requires you to accept an updated privacy policy.\n\n"
