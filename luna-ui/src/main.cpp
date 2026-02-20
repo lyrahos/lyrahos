@@ -3,7 +3,9 @@
 #include <QQmlContext>
 #include <QTimer>
 #include <QCursor>
+#include <QStandardPaths>
 #include <QtWebEngineQuick>
+#include <QWebEngineProfile>
 #include "thememanager.h"
 #include "gamemanager.h"
 #include "database.h"
@@ -36,6 +38,16 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("Luna UI");
     app.setOrganizationName("Lyrah OS");
+
+    // ── WebEngine storage diagnostics (logged to luna-session.log) ──
+    // Qt WebEngine stores persistent data under AppDataLocation, not ConfigLocation.
+    {
+        QString dataPath  = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QString cachePath = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        qInfo() << "[webengine-diag] data path:" << dataPath;
+        qInfo() << "[webengine-diag] cache path:" << cachePath;
+        qInfo() << "[webengine-diag] shared cookie store:" << dataPath + "/QtWebEngine/luna-browser";
+    }
 
     Database db;
     if (!db.initialize()) {
@@ -94,6 +106,15 @@ int main(int argc, char *argv[]) {
         }
     });
 
+    // ── Shared WebEngine profile for all embedded browsers ──
+    // Passing storageName to the constructor guarantees the Chromium
+    // browser-context is created with disk storage from the start.
+    // (QML's WebEngineProfile {} evaluated property bindings AFTER context
+    // creation on Qt 6.9, silently running off-the-record.)
+    QWebEngineProfile sharedBrowserProfile("luna-browser");
+    sharedBrowserProfile.setHttpCacheType(QWebEngineProfile::DiskHttpCache);
+    sharedBrowserProfile.setPersistentCookiesPolicy(QWebEngineProfile::ForcePersistentCookies);
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("ThemeManager", &themeManager);
     engine.rootContext()->setContextProperty("GameManager", &gameManager);
@@ -102,6 +123,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("ArtworkManager", &artworkManager);
     engine.rootContext()->setContextProperty("StoreApi", &storeApiManager);
     engine.rootContext()->setContextProperty("BrowserBridge", &browserBridge);
+    engine.rootContext()->setContextProperty("SharedBrowserProfile", &sharedBrowserProfile);
 
     // RESOURCE_PREFIX / in CMakeLists.txt places QML files at :/LunaUI/...
     engine.load(QUrl(QStringLiteral("qrc:/LunaUI/qml/Main.qml")));

@@ -50,6 +50,22 @@ fi
 export DXVK_LOG_LEVEL=none
 export VKD3D_CONFIG=dxr
 
+# ── WebEngine cookie/session persistence ──
+# luna-ui creates a single QWebEngineProfile in C++ (main.cpp) with
+# storageName "luna-browser" passed to the constructor, then exposes it
+# to QML as SharedBrowserProfile.  Both the Steam setup wizard and the
+# game store browser share this profile (same cookie jar).
+#
+# The profile is created in C++ rather than QML because Qt 6.9's QML
+# WebEngineProfile {} evaluates property bindings AFTER the Chromium
+# context is created, silently running off-the-record (no disk cookies).
+# Passing storageName to the C++ constructor avoids this entirely.
+#
+# Shared cookie storage (logged at startup as [webengine-diag]):
+#   ~/.local/share/Lyrah OS/Luna UI/QtWebEngine/luna-browser/
+#
+# To diagnose: grep this log for [webengine-diag] and [store-browser]
+
 # Signal files written by luna-ui before it exits:
 #   luna-switch-to-desktop  → user wants KDE, exit to SDDM
 #   luna-launch-steam       → user wants Steam login

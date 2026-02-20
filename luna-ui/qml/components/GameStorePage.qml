@@ -1819,6 +1819,7 @@ Item {
         anchors.fill: parent
 
         onOpenDealUrl: function(url, storeName) {
+            console.log("[store-browser] opening deal URL:", url, "store:", storeName)
             storePage.storeBrowserTitle = storeName || "Store"
             storeBrowserWebView.url = url
             storePage.storeBrowserOpen = true
@@ -2111,13 +2112,9 @@ Item {
             }
         }
 
-        WebEngineProfile {
-            id: storeWebProfile
-            storageName: "store-browser"
-            httpCacheType: WebEngineProfile.DiskHttpCache
-            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-        }
-
+        // SharedBrowserProfile is a QWebEngineProfile created in C++
+        // (main.cpp) with storageName "luna-browser" passed to the
+        // constructor, guaranteeing disk persistence from the start.
         WebEngineView {
             id: storeBrowserWebView
             anchors.top: storeBrowserHeader.bottom
@@ -2125,7 +2122,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
-            profile: storeWebProfile
+            profile: SharedBrowserProfile
             settings.focusOnNavigationEnabled: false
 
             onLoadingChanged: function(loadRequest) {

@@ -1966,19 +1966,11 @@ Rectangle {
             }
         }
 
-        // Persistent profile so cookies / session data survive across
-        // browser open/close cycles (Steam login is preserved).
-        WebEngineProfile {
-            id: steamWebProfile
-            storageName: "steam-wizard"
-            httpCacheType: WebEngineProfile.DiskHttpCache
-            // Steam login uses session cookies (no expiry).  The default
-            // AllowPersistentCookies only saves cookies with an explicit
-            // expiry date, so the login is lost on close.  Force ALL
-            // cookies to disk so the session survives.
-            persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-        }
-
+        // SharedBrowserProfile is a QWebEngineProfile created in C++
+        // (main.cpp) with storageName "luna-browser" passed to the
+        // constructor, guaranteeing disk persistence from the start.
+        // Steam login uses session cookies (no expiry) — the profile's
+        // ForcePersistentCookies policy saves ALL cookies to disk.
         WebEngineView {
             id: apiKeyWebView
             anchors.top: browserHeader.bottom
@@ -1986,7 +1978,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             url: "about:blank"
-            profile: steamWebProfile
+            profile: SharedBrowserProfile
             // Prevent WebEngineView from stealing focus so the wizard's
             // key handler keeps working for non-browser steps.
             settings.focusOnNavigationEnabled: false
