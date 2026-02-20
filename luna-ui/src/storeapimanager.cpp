@@ -546,12 +546,18 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
         scrapeState->pending += 2;
     }
 
-    if (scrapeState->pending == 0)
+    if (scrapeState->pending == 0) {
+        qDebug() << "Price scraping: all games already have prices, skipping scrape";
         return;
+    }
+
+    qDebug() << "Price scraping: starting" << scrapeState->pending << "requests for games without CheapShark prices";
 
     auto emitIfDone = [this, scrapeState, results, generation]() {
-        if (scrapeState->pending <= 0 && generation == m_searchGeneration)
+        if (scrapeState->pending <= 0 && generation == m_searchGeneration) {
+            qDebug() << "Price scraping: all requests completed, re-emitting results";
             emit searchResultsReady(*results);
+        }
     };
 
     // Second pass: fire requests
@@ -579,7 +585,7 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             QUrlQuery query;
             query.addQueryItem("appids", steamId);
             query.addQueryItem("cc", "us");
-            query.addQueryItem("filters", "price_overview");
+            query.addQueryItem("filters", "basic,price_overview");
             url.setQuery(query);
 
             QNetworkRequest req(url);
@@ -599,17 +605,26 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                         QJsonObject po = data["price_overview"].toObject();
                         QVariantMap game = (*results)[i].toMap();
                         if (!po.isEmpty()) {
+                            qDebug() << "Steam scrape: found price for appId" << steamId
+                                     << "$" << (po["final"].toInt() / 100.0);
                             updateIfCheaper(game,
                                 po["final"].toInt() / 100.0,
                                 po["initial"].toInt() / 100.0,
                                 po["discount_percent"].toInt());
                         } else if (data["is_free"].toBool()) {
+                            qDebug() << "Steam scrape: appId" << steamId << "is free";
                             game["salePrice"] = QStringLiteral("0.00");
                             game["cheapestPrice"] = QStringLiteral("0.00");
                             game["hasPrice"] = true;
+                        } else {
+                            qDebug() << "Steam scrape: no price data for appId" << steamId;
                         }
                         (*results)[i] = game;
+                    } else {
+                        qDebug() << "Steam scrape: API returned failure for appId" << steamId;
                     }
+                } else {
+                    qWarning() << "Steam scrape failed for appId" << steamId << ":" << reply->errorString();
                 }
                 scrapeState->pending--;
                 emitIfDone();
@@ -618,7 +633,7 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
 
         // ── 2. GOG catalog API ──
         if (!gogUrl.isEmpty()) {
-            QRegularExpression gogSlugRe("/game/([a-z0-9_]+)");
+            QRegularExpression gogSlugRe("/game/([a-z0-9_-]+)");
             QRegularExpressionMatch match = gogSlugRe.match(gogUrl);
             if (match.hasMatch()) {
                 QString slug = match.captured(1);
@@ -710,9 +725,13 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                         ["elements"].toArray();
 
                     if (!elements.isEmpty()) {
-                        // Verify title is a reasonable match
+                        // Verify title is a reasonable match (startsWith handles edition suffixes)
                         QString foundTitle = elements.first().toObject()["title"].toString();
-                        if (normalizeTitle(foundTitle) == normalizeTitle(gameTitle)) {
+                        QString normFound = normalizeTitle(foundTitle);
+                        QString normSearch = normalizeTitle(gameTitle);
+                        if (normFound == normSearch
+                            || normFound.startsWith(normSearch)
+                            || normSearch.startsWith(normFound)) {
                             QJsonObject totalPrice = elements.first().toObject()
                                 ["price"].toObject()["totalPrice"].toObject();
                             int decimals = totalPrice["currencyInfo"].toObject()["decimals"].toInt(2);
@@ -723,12 +742,21 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                             int discountPct = (origPrice > 0) ? qRound(discountAmt / divisor / origPrice * 100.0) : 0;
 
                             if (finalPrice >= 0) {
+                                qDebug() << "Epic scrape: found price for" << gameTitle
+                                         << "$" << finalPrice;
                                 QVariantMap game = (*results)[i].toMap();
                                 updateIfCheaper(game, finalPrice, origPrice, discountPct);
                                 (*results)[i] = game;
                             }
+                        } else {
+                            qDebug() << "Epic scrape: title mismatch for" << gameTitle
+                                     << "- Epic returned:" << foundTitle;
                         }
+                    } else {
+                        qDebug() << "Epic scrape: no results for" << gameTitle;
                     }
+                } else {
+                    qWarning() << "Epic scrape failed for" << gameTitle << ":" << epicReply->errorString();
                 }
                 scrapeState->pending--;
                 emitIfDone();
@@ -764,13 +792,18 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                     if (arr.isEmpty() && doc.isObject())
                         arr = doc.object()["products"].toArray();
 
+                    bool found = false;
                     for (const auto& val : arr) {
                         QJsonObject product = val.toObject();
                         QString title = product["name"].toString();
                         if (title.isEmpty())
                             title = product["title"].toString();
 
-                        if (normalizeTitle(title) != normalizeTitle(gameTitle))
+                        QString normProduct = normalizeTitle(title);
+                        QString normSearch = normalizeTitle(gameTitle);
+                        if (normProduct != normSearch
+                            && !normProduct.startsWith(normSearch)
+                            && !normSearch.startsWith(normProduct))
                             continue;
 
                         // Try multiple price field patterns GMG has used
@@ -788,14 +821,21 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                         }
 
                         if (price >= 0) {
+                            qDebug() << "GMG scrape: found price for" << gameTitle
+                                     << "$" << price;
                             int discountPct = (basePrice > 0 && basePrice > price)
                                 ? qRound((1.0 - price / basePrice) * 100.0) : 0;
                             QVariantMap game = (*results)[i].toMap();
                             updateIfCheaper(game, price, basePrice, discountPct);
                             (*results)[i] = game;
+                            found = true;
                         }
                         break;
                     }
+                    if (!found)
+                        qDebug() << "GMG scrape: no matching result for" << gameTitle;
+                } else {
+                    qWarning() << "GMG scrape failed for" << gameTitle << ":" << gmgReply->errorString();
                 }
                 scrapeState->pending--;
                 emitIfDone();
@@ -987,7 +1027,7 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
         QUrlQuery query;
         query.addQueryItem("appids", steamAppId);
         query.addQueryItem("cc", "us");
-        query.addQueryItem("filters", "price_overview");
+        query.addQueryItem("filters", "basic,price_overview");
         url.setQuery(query);
 
         QNetworkRequest req(url);
@@ -1035,7 +1075,7 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
         if (cat == 13 || cat == 16) continue;  // Steam + Epic handled separately
 
         if (cat == 17 && storeUrl.contains("gog.com")) {
-            QRegularExpression gogSlugRe("/game/([a-z0-9_]+)");
+            QRegularExpression gogSlugRe("/game/([a-z0-9_-]+)");
             QRegularExpressionMatch match = gogSlugRe.match(storeUrl);
             if (match.hasMatch()) {
                 QString slug = match.captured(1);
@@ -1133,7 +1173,11 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
 
                 if (!elements.isEmpty()) {
                     QString foundTitle = elements.first().toObject()["title"].toString();
-                    if (normalizeTitle(foundTitle) == normalizeTitle(gameTitle)) {
+                    QString normFound = normalizeTitle(foundTitle);
+                    QString normSearch = normalizeTitle(gameTitle);
+                    if (normFound == normSearch
+                        || normFound.startsWith(normSearch)
+                        || normSearch.startsWith(normFound)) {
                         QJsonObject tp = elements.first().toObject()
                             ["price"].toObject()["totalPrice"].toObject();
                         int decimals = tp["currencyInfo"].toObject()["decimals"].toInt(2);
@@ -1191,7 +1235,11 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
                     QJsonObject product = val.toObject();
                     QString title = product["name"].toString();
                     if (title.isEmpty()) title = product["title"].toString();
-                    if (normalizeTitle(title) != normalizeTitle(gameTitle))
+                    QString normProduct = normalizeTitle(title);
+                    QString normSearch = normalizeTitle(gameTitle);
+                    if (normProduct != normSearch
+                        && !normProduct.startsWith(normSearch)
+                        && !normSearch.startsWith(normProduct))
                         continue;
 
                     double price = -1, basePrice = -1;
