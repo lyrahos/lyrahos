@@ -183,10 +183,10 @@ Rectangle {
             StoreApi.fetchGameDeals(cheapSharkGameID)
         } else {
             loadingDeals = false
-            // No CheapShark data — try scraping prices from IGDB purchase links
-            if (steamAppID !== "" || (purchaseUrls && purchaseUrls.length > 0)) {
+            // No CheapShark data — try scraping prices from store APIs
+            if (steamAppID !== "" || (purchaseUrls && purchaseUrls.length > 0) || gameTitle !== "") {
                 loadingStorePrices = true
-                StoreApi.fetchStorePrices(steamAppID, purchaseUrls)
+                StoreApi.fetchStorePrices(steamAppID, purchaseUrls, gameTitle)
             }
         }
 
@@ -245,9 +245,10 @@ Rectangle {
 
             // CheapShark failed — fall back to store price scraping
             if (detailPopup.steamAppID !== "" ||
-                (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0)) {
+                (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0) ||
+                detailPopup.gameTitle !== "") {
                 detailPopup.loadingStorePrices = true
-                StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls)
+                StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls, detailPopup.gameTitle)
             } else {
                 detailPopup.rebuildAllDeals()
             }
@@ -1162,6 +1163,8 @@ Rectangle {
                                                         var src = modelData.source || ""
                                                         if (src === "Steam") return Qt.rgba(0.10, 0.36, 0.69, 0.15)
                                                         if (src === "GOG") return Qt.rgba(0.60, 0.20, 0.80, 0.15)
+                                                        if (src === "Epic Games") return Qt.rgba(0.0, 0.0, 0.0, 0.25)
+                                                        if (src === "GMG") return Qt.rgba(0.18, 0.65, 0.25, 0.15)
                                                         return Qt.rgba(1, 1, 1, 0.08)
                                                     }
 
@@ -1275,9 +1278,10 @@ Rectangle {
                                                         detailPopup.loadingDeals = true
                                                         StoreApi.fetchGameDeals(detailPopup.cheapSharkGameID)
                                                     } else if (detailPopup.steamAppID !== "" ||
-                                                               (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0)) {
+                                                               (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0) ||
+                                                               detailPopup.gameTitle !== "") {
                                                         detailPopup.loadingStorePrices = true
-                                                        StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls)
+                                                        StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls, detailPopup.gameTitle)
                                                     }
                                                 }
                                             }

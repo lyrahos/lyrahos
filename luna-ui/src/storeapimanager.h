@@ -33,7 +33,8 @@ public:
     Q_INVOKABLE QString getIGDBClientId();
 
     // ── Store Price Scraping (fallback when CheapShark has no price) ──
-    Q_INVOKABLE void fetchStorePrices(const QString& steamAppId, const QVariantList& purchaseUrls);
+    Q_INVOKABLE void fetchStorePrices(const QString& steamAppId, const QVariantList& purchaseUrls,
+                                       const QString& gameTitle = QString());
 
     // ── ProtonDB API ──
     Q_INVOKABLE void fetchProtonRating(const QString& steamAppId);
