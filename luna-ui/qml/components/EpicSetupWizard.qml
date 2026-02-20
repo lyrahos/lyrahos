@@ -408,8 +408,11 @@ Rectangle {
                 Text {
                     text: GameManager.isEpicAvailable()
                           ? "Legendary is already installed and ready!"
-                          : "Legendary is an open-source Epic Games Store client for Linux.\n" +
-                            "It handles authentication, game downloads, and launching."
+                          : legendaryInstalling
+                            ? "Installing Legendary and its dependencies...\n" +
+                              "This may take a minute (installing pipx + legendary)."
+                            : "Legendary is an open-source Epic Games Store client for Linux.\n" +
+                              "It handles authentication, game downloads, and launching."
                     font.pixelSize: ThemeManager.getFontSize("medium")
                     font.family: ThemeManager.getFont("body")
                     color: ThemeManager.getColor("textSecondary")

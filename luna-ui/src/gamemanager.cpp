@@ -2184,7 +2184,8 @@ void GameManager::ensureLegendary() {
     // bare `pip3 install --user` is rejected. We try multiple methods
     // in order of preference:
     //   1. pipx — Fedora's recommended way to install Python CLI tools
-    //      (isolated venv, no system conflicts)
+    //      (isolated venv, no system conflicts). If pipx itself is
+    //      missing we auto-install it via dnf or pip3 first.
     //   2. pip3 --user --break-system-packages — override PEP 668 guard
     //      (works on any distro, slightly messy)
     //   3. pip3 --user — legacy fallback for older distros without PEP 668
@@ -2199,12 +2200,45 @@ void GameManager::ensureLegendary() {
 
     // Try each method in sequence; stop at the first success.
     // pipx installs into ~/.local/bin which is already in PATH on Fedora.
+    //
+    // Key fix: if pipx is not found, install it first via dnf (preferred)
+    // or pip3, then use it to install legendary.
     QString script = R"(
+        export PATH="$HOME/.local/bin:$PATH"
+
+        # ── Step 0: Install pipx if missing ──
+        if ! command -v pipx &>/dev/null; then
+            echo '[legendary-install] pipx not found, installing pipx first...'
+
+            # Prefer dnf (Fedora/RHEL) — installs system-wide, no PEP 668 issues
+            if command -v dnf &>/dev/null; then
+                echo '[legendary-install] Installing pipx via dnf...'
+                sudo dnf install -y pipx 2>&1
+            fi
+
+            # If dnf didn't work or isn't available, try pip3
+            if ! command -v pipx &>/dev/null; then
+                if command -v pip3 &>/dev/null; then
+                    echo '[legendary-install] Installing pipx via pip3...'
+                    pip3 install --user --break-system-packages pipx 2>&1 || \
+                    pip3 install --user pipx 2>&1
+                fi
+            fi
+
+            # Ensure pipx paths are set up
+            if command -v pipx &>/dev/null; then
+                pipx ensurepath 2>&1 || true
+                export PATH="$HOME/.local/bin:$PATH"
+            fi
+        fi
+
+        # ── Step 1: Try pipx (now hopefully available) ──
         if command -v pipx &>/dev/null; then
             echo '[legendary-install] Trying pipx...'
             pipx install legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
         fi
 
+        # ── Step 2: Fall back to pip3 directly ──
         if command -v pip3 &>/dev/null; then
             echo '[legendary-install] Trying pip3 --break-system-packages...'
             pip3 install --user --break-system-packages legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
@@ -2231,7 +2265,8 @@ void GameManager::ensureLegendary() {
             qDebug() << "Failed to install Legendary:" << err;
             emit legendaryInstallError(
                 "Failed to install Legendary automatically.\n"
-                "Try manually: pipx install legendary-gl\n"
+                "Try running in a terminal:\n"
+                "  sudo dnf install pipx && pipx install legendary-gl\n"
                 "Or: pip3 install --user --break-system-packages legendary-gl");
         }
     });
