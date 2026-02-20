@@ -1245,9 +1245,14 @@ Rectangle {
                 epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
-                console.log("[epic-browser] closing browser")
-                epicLoginWebView.url = "about:blank"
-                epicWizard.epicBrowserOpen = false
+                if (epicLoginWebView.canGoBack) {
+                    console.log("[epic-browser] navigating back")
+                    epicLoginWebView.goBack()
+                } else {
+                    console.log("[epic-browser] closing browser")
+                    epicLoginWebView.url = "about:blank"
+                    epicWizard.epicBrowserOpen = false
+                }
                 break
             default:
                 break
@@ -1326,6 +1331,13 @@ Rectangle {
             url: "about:blank"
             profile: SharedBrowserProfile
             settings.focusOnNavigationEnabled: false
+
+            // Handle popup windows (e.g. "Sign in with Google/Apple/Facebook")
+            // by opening them in the same view instead of a new window.
+            onNewViewRequested: function(request) {
+                console.log("[epic-browser] Popup requested, opening in same view")
+                request.openIn(epicLoginWebView)
+            }
 
             onLoadingChanged: function(loadRequest) {
                 console.log("[epic-browser] loadingChanged:",
