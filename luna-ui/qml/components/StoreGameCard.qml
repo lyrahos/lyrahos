@@ -166,12 +166,14 @@ Rectangle {
                 font.strikeout: true
             }
 
-            // Sale price
+            // Sale price (scraped prices fill in automatically via re-emit)
             Text {
                 text: {
                     if (salePrice === "0.00") return "FREE"
-                    return "$" + salePrice
+                    if (salePrice !== "") return "$" + salePrice
+                    return ""
                 }
+                visible: salePrice !== ""
                 font.pixelSize: 28
                 font.family: ThemeManager.getFont("ui")
                 font.bold: true

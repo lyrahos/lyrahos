@@ -12,6 +12,7 @@ BuildRequires:  cmake gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtweb
 Requires:       qt6-qtbase qt6-qtdeclarative qt6-qtwebsockets SDL2 sqlite
 Requires:       google-noto-sans-fonts
 Requires:       xdotool
+Requires:       pipx
 
 %description
 Custom store-agnostic gaming frontend for Lyrah OS Luna Mode.

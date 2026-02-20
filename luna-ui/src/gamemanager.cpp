@@ -1,6 +1,7 @@
 #include "gamemanager.h"
 #include "storebackends/steambackend.h"
 #include "storebackends/heroicbackend.h"
+#include "storebackends/epicbackend.h"
 #include "storebackends/lutrisbackend.h"
 #include "storebackends/custombackend.h"
 #include <QProcess>
@@ -18,6 +19,9 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <QRegularExpression>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <memory>
 #include <unistd.h>
 
@@ -48,6 +52,7 @@ GameManager::GameManager(Database *db, QObject *parent)
 
 void GameManager::registerBackends() {
     m_backends.append(new SteamBackend());
+    m_backends.append(new EpicBackend());
     m_backends.append(new HeroicBackend());
     m_backends.append(new LutrisBackend());
     m_backends.append(new CustomBackend());
@@ -71,6 +76,11 @@ void GameManager::scanAllStores() {
     // If Steam API key is configured, also fetch all owned games
     if (hasSteamApiKey() && isSteamAvailable()) {
         fetchSteamOwnedGames();
+    }
+
+    // If Epic is set up, refresh the library from Legendary metadata
+    if (isEpicLoggedIn()) {
+        fetchEpicLibrary();
     }
 }
 
@@ -1006,6 +1016,13 @@ QString GameManager::getSteamUsername() {
 
 void GameManager::installGame(int gameId) {
     Game game = m_db->getGameById(gameId);
+
+    // Route Epic games to Epic-specific installer
+    if (game.storeSource == "epic" && !game.appId.isEmpty()) {
+        installEpicGame(gameId);
+        return;
+    }
+
     if (game.storeSource != "steam" || game.appId.isEmpty()) return;
 
     // Already downloading?
@@ -2103,4 +2120,531 @@ void GameManager::cancelSteamCmdSetup() {
         m_steamCmdSetupProc->deleteLater();
         m_steamCmdSetupProc = nullptr;
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Epic Games integration via Legendary
+// ═══════════════════════════════════════════════════════════════════
+
+QString GameManager::findLegendaryBin() const {
+    QString inPath = QStandardPaths::findExecutable("legendary");
+    if (!inPath.isEmpty()) return inPath;
+
+    QString home = QDir::homePath();
+    QStringList candidates = {
+        home + "/.local/bin/legendary",
+        "/usr/local/bin/legendary",
+        "/usr/bin/legendary",
+    };
+    for (const QString& path : candidates) {
+        if (QFile::exists(path)) return path;
+    }
+    return QString();
+}
+
+bool GameManager::isEpicAvailable() {
+    return !findLegendaryBin().isEmpty();
+}
+
+bool GameManager::isEpicLoggedIn() {
+    for (StoreBackend* backend : m_backends) {
+        if (backend->name() == "epic") {
+            EpicBackend* epic = static_cast<EpicBackend*>(backend);
+            return epic->isLoggedIn();
+        }
+    }
+    return false;
+}
+
+bool GameManager::isEpicSetupComplete() {
+    return isEpicAvailable() && isEpicLoggedIn();
+}
+
+QString GameManager::getEpicUsername() {
+    QString userFile = EpicBackend::legendaryConfigDir() + "/user.json";
+    QFile file(userFile);
+    if (!file.open(QIODevice::ReadOnly)) return QString();
+
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (doc.isNull() || !doc.isObject()) return QString();
+
+    QJsonObject root = doc.object();
+    // Legendary stores the display name in the user.json
+    QString displayName = root["displayName"].toString();
+    if (!displayName.isEmpty()) return displayName;
+
+    // Fallback: try account_id
+    return root["account_id"].toString();
+}
+
+void GameManager::ensureLegendary() {
+    // Auto-install Legendary if not found.
+    //
+    // Fedora 42+ enforces PEP 668 ("externally managed" Python), so
+    // bare `pip3 install --user` is rejected. We try multiple methods
+    // in order of preference:
+    //   1. pipx — Fedora's recommended way to install Python CLI tools
+    //      (isolated venv, no system conflicts)
+    //   2. pip3 --user --break-system-packages — override PEP 668 guard
+    //      (works on any distro, slightly messy)
+    //   3. pip3 --user — legacy fallback for older distros without PEP 668
+
+    if (isEpicAvailable()) {
+        qDebug() << "Legendary already available";
+        emit legendaryInstalled();
+        return;
+    }
+
+    QProcess *installProc = new QProcess(this);
+
+    // Try each method in sequence; stop at the first success.
+    // pipx installs into ~/.local/bin which is already in PATH on Fedora.
+    QString script = R"(
+        if command -v pipx &>/dev/null; then
+            echo '[legendary-install] Trying pipx...'
+            pipx install legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
+        fi
+
+        if command -v pip3 &>/dev/null; then
+            echo '[legendary-install] Trying pip3 --break-system-packages...'
+            pip3 install --user --break-system-packages legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
+
+            echo '[legendary-install] Trying pip3 --user (legacy)...'
+            pip3 install --user legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
+        fi
+
+        echo '[legendary-install] No pip3 or pipx found'
+        exit 1
+    )";
+
+    connect(installProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, installProc](int exitCode, QProcess::ExitStatus) {
+        QString output = QString::fromUtf8(installProc->readAllStandardOutput());
+        installProc->deleteLater();
+
+        if (exitCode == 0 && output.contains("LEGENDARY_READY")) {
+            qDebug() << "Legendary installed successfully";
+            emit legendaryInstalled();
+        } else {
+            QString err = output.trimmed();
+            if (err.length() > 300) err = err.right(300);
+            qDebug() << "Failed to install Legendary:" << err;
+            emit legendaryInstallError(
+                "Failed to install Legendary automatically.\n"
+                "Try manually: pipx install legendary-gl\n"
+                "Or: pip3 install --user --break-system-packages legendary-gl");
+        }
+    });
+
+    installProc->start("bash", QStringList() << "-c" << script);
+    qDebug() << "Installing Legendary...";
+}
+
+void GameManager::epicLogin() {
+    QString bin = findLegendaryBin();
+    if (bin.isEmpty()) {
+        emit epicLoginError("Legendary not found. Please install it first.");
+        return;
+    }
+
+    if (m_epicLoginProc && m_epicLoginProc->state() == QProcess::Running) {
+        qDebug() << "Epic login already in progress";
+        return;
+    }
+
+    if (m_epicLoginProc) {
+        m_epicLoginProc->deleteLater();
+        m_epicLoginProc = nullptr;
+    }
+
+    m_epicLoginProc = new QProcess(this);
+    emit epicLoginStarted();
+
+    // Legendary auth opens a browser for Epic OAuth. The user logs in on
+    // Epic's site and is redirected back with an auth code that Legendary
+    // captures to generate tokens stored in ~/.config/legendary/user.json.
+    //
+    // Known issue: Epic sometimes requires a "corrective action" (e.g.
+    // accepting an updated privacy policy) before issuing tokens. The
+    // OAuth redirect page shows a raw JSON error instead of a form to
+    // accept. When we detect this, we open Epic's correction page in the
+    // browser so the user can accept, then ask them to retry.
+
+    // Accumulate output to detect the corrective action error
+    auto *loginOutput = new QString();
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this, loginOutput]() {
+        if (!m_epicLoginProc) return;
+        QString output = QString::fromUtf8(m_epicLoginProc->readAllStandardOutput());
+        loginOutput->append(output);
+        qDebug() << "[epic-login]" << output.trimmed();
+    });
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this, loginOutput]() {
+        if (!m_epicLoginProc) return;
+        QString output = QString::fromUtf8(m_epicLoginProc->readAllStandardError());
+        loginOutput->append(output);
+        qDebug() << "[epic-login stderr]" << output.trimmed();
+    });
+
+    connect(m_epicLoginProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, loginOutput](int exitCode, QProcess::ExitStatus) {
+        if (m_epicLoginProc) {
+            m_epicLoginProc->deleteLater();
+            m_epicLoginProc = nullptr;
+        }
+
+        // Verify login succeeded by checking for user.json
+        if (isEpicLoggedIn()) {
+            qDebug() << "Epic Games login successful";
+            delete loginOutput;
+            emit epicLoginSuccess();
+
+            // Immediately sync the library metadata
+            fetchEpicLibrary();
+            return;
+        }
+
+        // Check for the corrective action error (privacy policy, EULA, etc.)
+        // Epic returns this as JSON in the OAuth redirect when policies
+        // need to be accepted before tokens can be issued.
+        bool needsCorrection = loginOutput->contains("corrective_action_required") ||
+                               loginOutput->contains("PRIVACY_POLICY_ACCEPTANCE") ||
+                               loginOutput->contains("correctiveAction");
+        delete loginOutput;
+
+        if (needsCorrection) {
+            qDebug() << "[epic-login] Corrective action required — opening Epic's correction page";
+
+            // Open Epic's correction/policy page in the browser so the
+            // user can accept the privacy policy or EULA
+            QProcess::startDetached("xdg-open",
+                QStringList() << "https://www.epicgames.com/id/login?lang=en-US&noAccountCreate=true");
+
+            emit epicLoginError(
+                "Epic requires you to accept an updated privacy policy.\n\n"
+                "A browser window has been opened to epicgames.com.\n"
+                "Please log in and accept the policy, then click\n"
+                "\"Log In to Epic\" again.");
+        } else if (exitCode == 0) {
+            // Exit 0 but no token — may happen if user closed browser
+            emit epicLoginError("Login was not completed. Please try again.");
+        } else {
+            emit epicLoginError("Login failed. Please try again.");
+        }
+    });
+
+    // Run `legendary auth` which handles the full browser-based OAuth flow
+    m_epicLoginProc->start(bin, QStringList() << "auth");
+    qDebug() << "Starting Epic Games login via Legendary...";
+}
+
+QString GameManager::getEpicLoginUrl() {
+    // Epic OAuth login page that redirects with an authorization code.
+    // Client ID 34a02cf8f4414e29b15921876da36f9a is the Epic Games launcher
+    // client used by Legendary.
+    return QStringLiteral(
+        "https://www.epicgames.com/id/login"
+        "?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect"
+        "%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode");
+}
+
+void GameManager::epicLoginWithCode(const QString& authorizationCode) {
+    QString bin = findLegendaryBin();
+    if (bin.isEmpty()) {
+        emit epicLoginError("Legendary not found. Please install it first.");
+        return;
+    }
+
+    if (authorizationCode.trimmed().isEmpty()) {
+        emit epicLoginError("No authorization code received.");
+        return;
+    }
+
+    if (m_epicLoginProc && m_epicLoginProc->state() == QProcess::Running) {
+        qDebug() << "Epic login already in progress";
+        return;
+    }
+
+    if (m_epicLoginProc) {
+        m_epicLoginProc->deleteLater();
+        m_epicLoginProc = nullptr;
+    }
+
+    m_epicLoginProc = new QProcess(this);
+    emit epicLoginStarted();
+
+    auto *loginOutput = new QString();
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this, loginOutput]() {
+        if (!m_epicLoginProc) return;
+        QString chunk = QString::fromUtf8(m_epicLoginProc->readAllStandardOutput()).trimmed();
+        qDebug() << "[epic-login-code]" << chunk;
+        loginOutput->append(chunk);
+    });
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this, loginOutput]() {
+        if (!m_epicLoginProc) return;
+        QString chunk = QString::fromUtf8(m_epicLoginProc->readAllStandardError()).trimmed();
+        qDebug() << "[epic-login-code stderr]" << chunk;
+        loginOutput->append(chunk);
+    });
+
+    connect(m_epicLoginProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, loginOutput](int exitCode, QProcess::ExitStatus) {
+        if (m_epicLoginProc) {
+            m_epicLoginProc->deleteLater();
+            m_epicLoginProc = nullptr;
+        }
+
+        if (isEpicLoggedIn()) {
+            qDebug() << "Epic Games login via code successful";
+            delete loginOutput;
+            emit epicLoginSuccess();
+            fetchEpicLibrary();
+            return;
+        }
+
+        // Check for the corrective action error (privacy policy, EULA, etc.)
+        bool needsCorrection = loginOutput->contains("corrective_action_required") ||
+                               loginOutput->contains("PRIVACY_POLICY_ACCEPTANCE") ||
+                               loginOutput->contains("correctiveAction");
+        delete loginOutput;
+
+        if (needsCorrection) {
+            qDebug() << "[epic-login-code] Corrective action required — privacy policy";
+            emit epicLoginError(
+                "Epic requires you to accept an updated privacy policy.\n\n"
+                "Please click \"Log In to Epic\" again — you will be\n"
+                "directed to accept the policy first.");
+        } else if (exitCode == 0) {
+            emit epicLoginError("Login was not completed. Please try again.");
+        } else {
+            emit epicLoginError("Login failed (code may have expired). Please try again.");
+        }
+    });
+
+    qDebug() << "Exchanging Epic authorization code via Legendary...";
+    m_epicLoginProc->start(bin, QStringList() << "auth" << "--code" << authorizationCode.trimmed());
+}
+
+void GameManager::epicLogout() {
+    QString bin = findLegendaryBin();
+    if (bin.isEmpty()) return;
+
+    QProcess *proc = new QProcess(this);
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int, QProcess::ExitStatus) {
+        proc->deleteLater();
+        qDebug() << "Epic Games logout complete";
+        emit gamesUpdated();
+    });
+
+    proc->start(bin, QStringList() << "auth" << "--delete");
+}
+
+void GameManager::fetchEpicLibrary() {
+    QString bin = findLegendaryBin();
+    if (bin.isEmpty()) {
+        emit epicLibraryFetchError("Legendary not found");
+        return;
+    }
+    if (!isEpicLoggedIn()) {
+        emit epicLibraryFetchError("Not logged in to Epic Games");
+        return;
+    }
+
+    QProcess *proc = new QProcess(this);
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        proc->deleteLater();
+
+        if (exitCode != 0) {
+            QString err = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+            qDebug() << "[epic] list-games failed:" << err;
+            // Even if the command fails, try scanning local metadata
+        }
+
+        // After `legendary list-games`, metadata files are written to
+        // ~/.config/legendary/metadata/. Scan those via the backend.
+        EpicBackend* epic = nullptr;
+        for (StoreBackend* backend : m_backends) {
+            if (backend->name() == "epic") {
+                epic = static_cast<EpicBackend*>(backend);
+                break;
+            }
+        }
+        if (!epic) {
+            emit epicLibraryFetchError("Epic backend not found");
+            return;
+        }
+
+        QVector<Game> games = epic->scanLibrary();
+        int count = 0;
+        for (const Game& game : games) {
+            m_db->addOrUpdateGame(game);
+            count++;
+        }
+
+        qDebug() << "Fetched" << count << "Epic Games via Legendary";
+        emit epicLibraryFetched(count);
+        emit gamesUpdated();
+    });
+
+    // `legendary list-games` refreshes metadata from Epic's servers
+    // and writes JSON files to ~/.config/legendary/metadata/
+    proc->start(bin, QStringList() << "list-games" << "--json");
+    qDebug() << "Fetching Epic Games library via Legendary...";
+}
+
+void GameManager::installEpicGame(int gameId) {
+    Game game = m_db->getGameById(gameId);
+    if (game.storeSource != "epic" || game.appId.isEmpty()) return;
+
+    // Already downloading?
+    if (m_activeDownloads.contains(game.appId)) return;
+
+    QString bin = findLegendaryBin();
+    if (bin.isEmpty()) {
+        emit epicInstallError(game.appId, "Legendary not found. Please install it first.");
+        return;
+    }
+
+    if (!isEpicLoggedIn()) {
+        emit epicInstallError(game.appId, "Not logged in to Epic Games. Please log in first.");
+        return;
+    }
+
+    m_activeDownloads.insert(game.appId, gameId);
+    m_downloadProgressCache.insert(game.appId, 0.0);
+    emit epicDownloadStarted(game.appId, gameId);
+    emit downloadStarted(game.appId, gameId);
+
+    QProcess *proc = new QProcess(this);
+
+    // Parse Legendary's download progress output
+    connect(proc, &QProcess::readyReadStandardError, this, [this, proc, appId = game.appId]() {
+        handleLegendaryOutput(appId, proc);
+    });
+
+    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc, appId = game.appId]() {
+        handleLegendaryOutput(appId, proc);
+    });
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, proc, appId = game.appId, gameId](int exitCode, QProcess::ExitStatus) {
+        m_legendaryProcesses.remove(appId);
+        proc->deleteLater();
+        m_downloadProgressCache.remove(appId);
+
+        if (exitCode == 0) {
+            qDebug() << "[epic] Installation complete for" << appId;
+
+            Game game = m_db->getGameById(gameId);
+            game.isInstalled = true;
+            game.launchCommand = "legendary launch " + appId;
+
+            // Read install path from installed.json
+            QString installedPath = EpicBackend::legendaryConfigDir() + "/installed.json";
+            QFile instFile(installedPath);
+            if (instFile.open(QIODevice::ReadOnly)) {
+                QJsonDocument instDoc = QJsonDocument::fromJson(instFile.readAll());
+                if (!instDoc.isNull() && instDoc.isObject()) {
+                    QJsonObject instObj = instDoc.object()[appId].toObject();
+                    game.installPath = instObj["install_path"].toString();
+                }
+            }
+
+            m_db->updateGame(game);
+            m_activeDownloads.remove(appId);
+            emit epicDownloadComplete(appId, gameId);
+            emit downloadComplete(appId, gameId);
+            emit gamesUpdated();
+        } else {
+            qDebug() << "[epic] Installation failed for" << appId << "exit code:" << exitCode;
+            m_activeDownloads.remove(appId);
+            emit epicInstallError(appId, "Installation failed. Check your connection and try again.");
+            emit downloadProgressChanged(appId, -1.0);
+        }
+
+        if (m_activeDownloads.isEmpty()) {
+            m_downloadMonitor->stop();
+        }
+    });
+
+    m_legendaryProcesses.insert(game.appId, proc);
+
+    // `legendary install <app_name> -y` installs without confirmation prompt
+    proc->start(bin, QStringList() << "install" << game.appId << "-y");
+
+    if (!m_downloadMonitor->isActive()) {
+        m_downloadMonitor->start(2000);
+    }
+
+    qDebug() << "[epic] Started download for" << game.title << "(appId:" << game.appId << ")";
+}
+
+void GameManager::handleLegendaryOutput(const QString& appId, QProcess *proc) {
+    // Legendary outputs progress to stderr in the format:
+    // [DLManager] INFO: = Progress: 12.34% (1234/5678), Running for 00:01:23, ETA: 00:05:00
+    // [DLManager] INFO: = Downloaded: 1.23 GiB, Written: 1.45 GiB
+    // Also check stdout for some messages
+    QString output = QString::fromUtf8(proc->readAllStandardError())
+                   + QString::fromUtf8(proc->readAllStandardOutput());
+
+    for (const QString& line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (trimmed.isEmpty()) continue;
+
+        qDebug() << "[legendary]" << appId << ":" << trimmed;
+
+        // Parse progress: "Progress: XX.XX% (downloaded/total)"
+        QRegularExpression progressRe("Progress:\\s+(\\d+\\.?\\d*)%");
+        auto match = progressRe.match(trimmed);
+        if (match.hasMatch()) {
+            double pct = match.captured(1).toDouble() / 100.0;
+            pct = qBound(0.0, pct, 1.0);
+            m_downloadProgressCache.insert(appId, pct);
+            emit downloadProgressChanged(appId, pct);
+            emit epicDownloadProgressChanged(appId, pct);
+            continue;
+        }
+
+        // Detect completion
+        if (trimmed.contains("Finished installation", Qt::CaseInsensitive) ||
+            trimmed.contains("Game has been successfully installed", Qt::CaseInsensitive)) {
+            m_downloadProgressCache.insert(appId, 1.0);
+            emit downloadProgressChanged(appId, 1.0);
+            emit epicDownloadProgressChanged(appId, 1.0);
+        }
+
+        // Detect errors
+        if (trimmed.contains("ERROR", Qt::CaseInsensitive) ||
+            trimmed.contains("CRITICAL", Qt::CaseInsensitive)) {
+            // Don't emit for every stderr line that says "error" — only real failures
+            if (trimmed.contains("Login failed", Qt::CaseInsensitive) ||
+                trimmed.contains("not found", Qt::CaseInsensitive) ||
+                trimmed.contains("disk space", Qt::CaseInsensitive)) {
+                emit epicInstallError(appId, trimmed);
+                emit installError(appId, trimmed);
+            }
+        }
+    }
+}
+
+void GameManager::cancelEpicDownload(const QString& appId) {
+    if (m_legendaryProcesses.contains(appId)) {
+        QProcess *proc = m_legendaryProcesses.value(appId);
+        if (proc && proc->state() == QProcess::Running) {
+            proc->terminate();
+            if (!proc->waitForFinished(3000)) {
+                proc->kill();
+            }
+        }
+    }
+    m_activeDownloads.remove(appId);
+    m_downloadProgressCache.remove(appId);
+    emit downloadProgressChanged(appId, -1.0);
+    qDebug() << "[epic] Cancelled download for appId:" << appId;
 }

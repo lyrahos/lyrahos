@@ -19,6 +19,7 @@ qt_add_executable(luna-ui
     src/thememanager.cpp
     src/artworkmanager.cpp
     src/storebackends/steambackend.cpp
+    src/storebackends/epicbackend.cpp
     src/storebackends/heroicbackend.cpp
     src/storebackends/lutrisbackend.cpp
     src/storebackends/custombackend.cpp
@@ -54,6 +55,7 @@ qt_add_qml_module(luna-ui
         qml/components/SearchBar.qml
         qml/components/GameDetailView.qml
         qml/components/SteamSetupWizard.qml
+        qml/components/EpicSetupWizard.qml
         qml/components/GameStorePage.qml
         qml/components/StoreGameCard.qml
         qml/components/GameStoreDetailPopup.qml

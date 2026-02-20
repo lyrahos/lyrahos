@@ -1280,15 +1280,12 @@ jobs:
             # the squashfs lives — prevents mismatches when the rootfs is
             # built from scratch rather than extracted from the original ISO.
             # Add Plymouth splash parameters for smooth boot experience.
-            # nomodeset: Disable hardware GPU drivers for the live session.
-            # This forces software rendering (llvmpipe) which works on ALL
-            # hardware. Without it, kwin_wayland fails to initialize on GPUs
-            # with poor open-source driver support (notably newer NVIDIA with
-            # nouveau). The installed system does NOT inherit nomodeset — after
-            # Calamares writes to disk, the system boots with full GPU accel.
-            # UEFI GOP sets native resolution before the kernel, so the
-            # installer still displays at the monitor's native resolution.
-            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 nomodeset splash plymouth.enable=1/' "$cfg" || true
+            # NOTE: nouveau is already blacklisted via modprobe.d and the
+            # proprietary NVIDIA driver is pre-compiled with akmods, so
+            # nomodeset is not needed. Keeping KMS enabled allows native
+            # display resolution, proper Plymouth theming, and gamescope
+            # DRM access for the gaming session.
+            sudo sed -i -E 's/(rd\.live\.image)/\1 rd.live.dir=\/LiveOS selinux=0 splash plymouth.enable=1/' "$cfg" || true
             # Cosmetic: replace entire menuentry titles with clean Lyrah OS names.
             # The naive "s/Fedora/Lyrah OS/g" turns "Start Fedora-KDE-Desktop-Live-43-1.6"
             # into "Start Lyrah OS-KDE-Desktop-Live-43-1.6" — ugly. Instead, replace
