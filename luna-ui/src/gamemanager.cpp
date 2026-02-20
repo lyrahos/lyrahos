@@ -2374,18 +2374,24 @@ void GameManager::epicLoginWithCode(const QString& authorizationCode) {
     m_epicLoginProc = new QProcess(this);
     emit epicLoginStarted();
 
-    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this]() {
+    auto *loginOutput = new QString();
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this, loginOutput]() {
         if (!m_epicLoginProc) return;
-        qDebug() << "[epic-login-code]" << QString::fromUtf8(m_epicLoginProc->readAllStandardOutput()).trimmed();
+        QString chunk = QString::fromUtf8(m_epicLoginProc->readAllStandardOutput()).trimmed();
+        qDebug() << "[epic-login-code]" << chunk;
+        loginOutput->append(chunk);
     });
 
-    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this]() {
+    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this, loginOutput]() {
         if (!m_epicLoginProc) return;
-        qDebug() << "[epic-login-code stderr]" << QString::fromUtf8(m_epicLoginProc->readAllStandardError()).trimmed();
+        QString chunk = QString::fromUtf8(m_epicLoginProc->readAllStandardError()).trimmed();
+        qDebug() << "[epic-login-code stderr]" << chunk;
+        loginOutput->append(chunk);
     });
 
     connect(m_epicLoginProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOutput](int exitCode, QProcess::ExitStatus) {
         if (m_epicLoginProc) {
             m_epicLoginProc->deleteLater();
             m_epicLoginProc = nullptr;
@@ -2393,12 +2399,25 @@ void GameManager::epicLoginWithCode(const QString& authorizationCode) {
 
         if (isEpicLoggedIn()) {
             qDebug() << "Epic Games login via code successful";
+            delete loginOutput;
             emit epicLoginSuccess();
             fetchEpicLibrary();
             return;
         }
 
-        if (exitCode == 0) {
+        // Check for the corrective action error (privacy policy, EULA, etc.)
+        bool needsCorrection = loginOutput->contains("corrective_action_required") ||
+                               loginOutput->contains("PRIVACY_POLICY_ACCEPTANCE") ||
+                               loginOutput->contains("correctiveAction");
+        delete loginOutput;
+
+        if (needsCorrection) {
+            qDebug() << "[epic-login-code] Corrective action required — privacy policy";
+            emit epicLoginError(
+                "Epic requires you to accept an updated privacy policy.\n\n"
+                "Please click \"Log In to Epic\" again — you will be\n"
+                "directed to accept the policy first.");
+        } else if (exitCode == 0) {
             emit epicLoginError("Login was not completed. Please try again.");
         } else {
             emit epicLoginError("Login failed (code may have expired). Please try again.");

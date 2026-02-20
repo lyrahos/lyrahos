@@ -31,6 +31,7 @@ Rectangle {
     // Embedded browser for Epic login
     property bool epicBrowserOpen: false
     property bool browserInputActive: false
+    property bool awaitingPolicyAcceptance: false
 
     // Controller focus
     property int wizFocusIndex: 0
@@ -44,6 +45,7 @@ Rectangle {
         fetchingLibrary = false
         epicBrowserOpen = false
         browserInputActive = false
+        awaitingPolicyAcceptance = false
         wizFocusIndex = 0
         visible = true
         epicWizard.forceActiveFocus()
@@ -52,6 +54,7 @@ Rectangle {
     function close() {
         epicBrowserOpen = false
         browserInputActive = false
+        awaitingPolicyAcceptance = false
         epicLoginWebView.url = "about:blank"
         visible = false
         closed()
@@ -1242,9 +1245,14 @@ Rectangle {
                 epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
-                console.log("[epic-browser] closing browser")
-                epicLoginWebView.url = "about:blank"
-                epicWizard.epicBrowserOpen = false
+                if (epicLoginWebView.canGoBack) {
+                    console.log("[epic-browser] navigating back")
+                    epicLoginWebView.goBack()
+                } else {
+                    console.log("[epic-browser] closing browser")
+                    epicLoginWebView.url = "about:blank"
+                    epicWizard.epicBrowserOpen = false
+                }
                 break
             default:
                 break
@@ -1272,11 +1280,14 @@ Rectangle {
 
             Text {
                 anchors.centerIn: parent
-                text: "Epic Games Login"
+                text: epicWizard.awaitingPolicyAcceptance
+                      ? "Accept Epic's Privacy Policy"
+                      : "Epic Games Login"
                 font.pixelSize: ThemeManager.getFontSize("medium")
                 font.bold: true
                 font.family: ThemeManager.getFont("heading")
-                color: ThemeManager.getColor("textPrimary")
+                color: epicWizard.awaitingPolicyAcceptance
+                       ? "#f59e0b" : ThemeManager.getColor("textPrimary")
             }
 
             // Close button
@@ -1321,6 +1332,13 @@ Rectangle {
             profile: SharedBrowserProfile
             settings.focusOnNavigationEnabled: false
 
+            // Handle popup windows (e.g. "Sign in with Google/Apple/Facebook")
+            // by opening them in the same view instead of a new window.
+            onNewViewRequested: function(request) {
+                console.log("[epic-browser] Popup requested, opening in same view")
+                request.openIn(epicLoginWebView)
+            }
+
             onLoadingChanged: function(loadRequest) {
                 console.log("[epic-browser] loadingChanged:",
                             loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
@@ -1343,6 +1361,18 @@ Rectangle {
                     console.log("[epic-browser] Detected redirect URL, polling for auth code...")
                     epicAuthCodePollTimer.restart()
                 }
+                // After the user accepts the privacy policy on Epic's site,
+                // they get redirected away from the /id/login page.
+                // Detect this and restart the OAuth flow.
+                if (epicWizard.awaitingPolicyAcceptance) {
+                    var stillOnLogin = urlStr.indexOf("/id/login") !== -1
+                    var isBlank = urlStr === "about:blank"
+                    if (!stillOnLogin && !isBlank) {
+                        console.log("[epic-browser] Privacy policy likely accepted, restarting OAuth flow")
+                        epicWizard.awaitingPolicyAcceptance = false
+                        epicLoginWebView.url = GameManager.getEpicLoginUrl()
+                    }
+                }
             }
 
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
@@ -1364,6 +1394,11 @@ Rectangle {
                     "  try {" +
                     "    var text = document.body.innerText || document.body.textContent || '';" +
                     "    var json = JSON.parse(text);" +
+                    "    if (json.correctiveAction || " +
+                    "        (json.errorCode && json.errorCode.indexOf('corrective_action') !== -1) ||" +
+                    "        text.indexOf('PRIVACY_POLICY_ACCEPTANCE') !== -1) {" +
+                    "      return '__CORRECTIVE_ACTION__';" +
+                    "    }" +
                     "    if (json.authorizationCode) return json.authorizationCode;" +
                     "    if (json.code) return json.code;" +
                     "  } catch(e) {}" +
@@ -1372,7 +1407,12 @@ Rectangle {
                     "  return null;" +
                     "})()",
                     function(code) {
-                        if (code && code.length > 10) {
+                        if (code === "__CORRECTIVE_ACTION__") {
+                            console.log("[epic-browser] Corrective action required (privacy policy) — redirecting to Epic")
+                            epicAuthCodePollTimer.stop()
+                            epicWizard.awaitingPolicyAcceptance = true
+                            epicLoginWebView.url = "https://www.epicgames.com/id/login?lang=en-US&noAccountCreate=true"
+                        } else if (code && code.length > 10) {
                             console.log("[epic-browser] Got authorization code, length:", code.length)
                             epicAuthCodePollTimer.stop()
                             epicLoginWebView.url = "about:blank"
