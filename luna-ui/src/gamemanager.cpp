@@ -2260,32 +2260,35 @@ void GameManager::epicLogin() {
     m_epicLoginProc = new QProcess(this);
     emit epicLoginStarted();
 
-    // Legendary auth uses a web-based flow:
-    // `legendary auth` opens a browser for Epic OAuth, then stores tokens
-    // in ~/.config/legendary/user.json
+    // Legendary auth opens a browser for Epic OAuth. The user logs in on
+    // Epic's site and is redirected back with an auth code that Legendary
+    // captures to generate tokens stored in ~/.config/legendary/user.json.
     //
-    // We use --code mode which prints a URL for the user to visit,
-    // then waits for the authorization code to be pasted back.
-    // But actually, for a console-based flow, we use the sid-based login.
-    //
-    // Use `legendary auth --code` which provides a URL and waits for
-    // the user to paste a code, OR just run `legendary auth` which
-    // automatically opens a browser.
+    // Known issue: Epic sometimes requires a "corrective action" (e.g.
+    // accepting an updated privacy policy) before issuing tokens. The
+    // OAuth redirect page shows a raw JSON error instead of a form to
+    // accept. When we detect this, we open Epic's correction page in the
+    // browser so the user can accept, then ask them to retry.
 
-    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this]() {
+    // Accumulate output to detect the corrective action error
+    auto *loginOutput = new QString();
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this, loginOutput]() {
         if (!m_epicLoginProc) return;
         QString output = QString::fromUtf8(m_epicLoginProc->readAllStandardOutput());
+        loginOutput->append(output);
         qDebug() << "[epic-login]" << output.trimmed();
     });
 
-    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this]() {
+    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this, loginOutput]() {
         if (!m_epicLoginProc) return;
         QString output = QString::fromUtf8(m_epicLoginProc->readAllStandardError());
+        loginOutput->append(output);
         qDebug() << "[epic-login stderr]" << output.trimmed();
     });
 
     connect(m_epicLoginProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this](int exitCode, QProcess::ExitStatus) {
+            this, [this, loginOutput](int exitCode, QProcess::ExitStatus) {
         if (m_epicLoginProc) {
             m_epicLoginProc->deleteLater();
             m_epicLoginProc = nullptr;
@@ -2294,10 +2297,35 @@ void GameManager::epicLogin() {
         // Verify login succeeded by checking for user.json
         if (isEpicLoggedIn()) {
             qDebug() << "Epic Games login successful";
+            delete loginOutput;
             emit epicLoginSuccess();
 
             // Immediately sync the library metadata
             fetchEpicLibrary();
+            return;
+        }
+
+        // Check for the corrective action error (privacy policy, EULA, etc.)
+        // Epic returns this as JSON in the OAuth redirect when policies
+        // need to be accepted before tokens can be issued.
+        bool needsCorrection = loginOutput->contains("corrective_action_required") ||
+                               loginOutput->contains("PRIVACY_POLICY_ACCEPTANCE") ||
+                               loginOutput->contains("correctiveAction");
+        delete loginOutput;
+
+        if (needsCorrection) {
+            qDebug() << "[epic-login] Corrective action required — opening Epic's correction page";
+
+            // Open Epic's correction/policy page in the browser so the
+            // user can accept the privacy policy or EULA
+            QProcess::startDetached("xdg-open",
+                QStringList() << "https://www.epicgames.com/id/login?lang=en-US&noAccountCreate=true");
+
+            emit epicLoginError(
+                "Epic requires you to accept an updated privacy policy.\n\n"
+                "A browser window has been opened to epicgames.com.\n"
+                "Please log in and accept the policy, then click\n"
+                "\"Log In to Epic\" again.");
         } else if (exitCode == 0) {
             // Exit 0 but no token — may happen if user closed browser
             emit epicLoginError("Login was not completed. Please try again.");
