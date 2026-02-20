@@ -32,6 +32,7 @@ Rectangle {
     property bool epicBrowserOpen: false
     property bool browserInputActive: false
     property bool awaitingPolicyAcceptance: false
+    property bool browserHeaderFocused: false
 
     // Controller focus
     property int wizFocusIndex: 0
@@ -46,6 +47,7 @@ Rectangle {
         epicBrowserOpen = false
         browserInputActive = false
         awaitingPolicyAcceptance = false
+        browserHeaderFocused = false
         wizFocusIndex = 0
         visible = true
         epicWizard.forceActiveFocus()
@@ -55,6 +57,7 @@ Rectangle {
         epicBrowserOpen = false
         browserInputActive = false
         awaitingPolicyAcceptance = false
+        browserHeaderFocused = false
         epicLoginWebView.url = "about:blank"
         visible = false
         closed()
@@ -149,12 +152,14 @@ Rectangle {
         if (epicBrowserOpen && currentStep === 2 && awaitingPolicyAcceptance) {
             if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 console.log("[epic-browser] Keyboard: Retry Login after privacy policy")
+                epicWizard.browserHeaderFocused = false
                 epicWizard.awaitingPolicyAcceptance = false
                 epicLoginWebView.url = GameManager.getEpicLoginUrl()
                 event.accepted = true
                 return
             }
             if (event.key === Qt.Key_Escape) {
+                epicWizard.browserHeaderFocused = false
                 epicLoginWebView.url = "about:blank"
                 epicWizard.epicBrowserOpen = false
                 event.accepted = true
@@ -1157,8 +1162,10 @@ Rectangle {
     nav.move = function(direction) {
         scanElements();
         if (elements.length === 0) return 'no-elements';
+        var oldIndex = currentIndex;
         currentIndex = findNearest(direction);
         updateHighlight();
+        if (oldIndex === currentIndex) return 'boundary:' + direction;
         return 'moved:' + direction + ' idx:' + currentIndex + '/' + elements.length;
     };
 
@@ -1227,17 +1234,44 @@ Rectangle {
             function logResult(result) {
                 console.log("[epic-browser] nav result:", result)
             }
-            // When awaiting privacy policy acceptance, A (confirm) retries login
-            // and B (back) closes the browser.  D-pad still navigates the page.
-            if (epicWizard.awaitingPolicyAcceptance && action === "confirm") {
-                console.log("[epic-browser] Controller: Retry Login after privacy policy")
-                epicWizard.awaitingPolicyAcceptance = false
-                epicLoginWebView.url = GameManager.getEpicLoginUrl()
+
+            // When the header Retry button is focused, handle it here
+            if (epicWizard.browserHeaderFocused) {
+                switch (action) {
+                case "confirm":
+                    console.log("[epic-browser] Controller: Retry Login (header focused)")
+                    epicWizard.browserHeaderFocused = false
+                    epicWizard.awaitingPolicyAcceptance = false
+                    epicLoginWebView.url = GameManager.getEpicLoginUrl()
+                    return
+                case "navigate_down":
+                    epicWizard.browserHeaderFocused = false
+                    return
+                case "back":
+                    epicWizard.browserHeaderFocused = false
+                    epicLoginWebView.url = "about:blank"
+                    epicWizard.epicBrowserOpen = false
+                    return
+                }
                 return
             }
+
             switch (action) {
             case "navigate_up":
-                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
+                // When awaiting policy, check if we hit the top boundary
+                // so we can shift focus to the Retry button in the header.
+                if (epicWizard.awaitingPolicyAcceptance) {
+                    epicLoginWebView.runJavaScript(
+                        "window.__lunaNav && window.__lunaNav.move('up')",
+                        function(result) {
+                            logResult(result)
+                            if (result && result.toString().indexOf("boundary:") === 0) {
+                                epicWizard.browserHeaderFocused = true
+                            }
+                        })
+                } else {
+                    epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
+                }
                 break
             case "navigate_down":
                 epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
@@ -1307,7 +1341,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: epicWizard.awaitingPolicyAcceptance
-                      ? "Accept Epic's Privacy Policy, then press A to Retry Login"
+                      ? "Accept the policy below, then navigate up to Retry Login"
                       : "Epic Games Login"
                 font.pixelSize: ThemeManager.getFontSize("medium")
                 font.bold: true
@@ -1349,6 +1383,7 @@ Rectangle {
 
             // "Retry Login" button — shown after the user accepts Epic's
             // privacy policy so they can restart the OAuth flow.
+            // Navigable: D-pad up from the top of the page focuses this button.
             Rectangle {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
@@ -1357,12 +1392,17 @@ Rectangle {
                 height: 34
                 radius: 8
                 visible: epicWizard.awaitingPolicyAcceptance
-                color: "#7c3aed"
+                color: epicWizard.browserHeaderFocused ? "#9b59b6" : "#7c3aed"
+                border.color: epicWizard.browserHeaderFocused ? "#c084fc" : "transparent"
+                border.width: epicWizard.browserHeaderFocused ? 2 : 0
+                scale: epicWizard.browserHeaderFocused ? 1.05 : 1.0
+                Behavior on scale { NumberAnimation { duration: 150 } }
+                Behavior on color { ColorAnimation { duration: 150 } }
 
                 Text {
                     id: retryLoginLabel
                     anchors.centerIn: parent
-                    text: "A  Retry Login"
+                    text: "Retry Login"
                     font.pixelSize: ThemeManager.getFontSize("small")
                     font.family: ThemeManager.getFont("body")
                     font.bold: true
@@ -1374,6 +1414,7 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         console.log("[epic-browser] User clicked Retry Login after privacy policy")
+                        epicWizard.browserHeaderFocused = false
                         epicWizard.awaitingPolicyAcceptance = false
                         epicLoginWebView.url = GameManager.getEpicLoginUrl()
                     }
