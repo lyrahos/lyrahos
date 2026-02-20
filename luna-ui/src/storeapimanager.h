@@ -21,11 +21,8 @@ public:
     Q_INVOKABLE void fetchGameDeals(const QString& cheapSharkGameId);
     Q_INVOKABLE void fetchStores();
 
-    // ── Search (IGDB + CheapShark + Nexarda) ──
+    // ── Search (IGDB + CheapShark) ──
     Q_INVOKABLE void searchGames(const QString& title);
-
-    // ── Nexarda API ──
-    Q_INVOKABLE void fetchNexardaPrices(const QString& nexardaId);
 
     // ── IGDB API ──
     Q_INVOKABLE void fetchIGDBGameInfo(const QString& gameName);
@@ -34,6 +31,10 @@ public:
     Q_INVOKABLE bool hasIGDBCredentials();
     Q_INVOKABLE bool hasBuiltInIGDBCredentials();
     Q_INVOKABLE QString getIGDBClientId();
+
+    // ── Store Price Scraping (fallback when CheapShark has no price) ──
+    Q_INVOKABLE void fetchStorePrices(const QString& steamAppId, const QVariantList& purchaseUrls,
+                                       const QString& gameTitle = QString());
 
     // ── ProtonDB API ──
     Q_INVOKABLE void fetchProtonRating(const QString& steamAppId);
@@ -60,9 +61,9 @@ signals:
     void searchResultsReady(QVariantList results);
     void searchError(const QString& error);
 
-    // Nexarda
-    void nexardaPricesReady(QVariantMap prices);
-    void nexardaPricesError(const QString& error);
+    // Store price scraping
+    void storePricesReady(QVariantList deals);
+    void storePricesError(const QString& error);
 
     // IGDB
     void igdbGameInfoReady(QVariantMap gameInfo);
@@ -88,11 +89,10 @@ private:
     qint64 m_igdbTokenExpiry = 0;
     bool m_usingBuiltInCredentials = false;
 
-    // Search merge state for parallel IGDB + CheapShark + Nexarda queries
+    // Search merge state for parallel IGDB + CheapShark queries
     struct SearchMergeState {
         QVariantList igdbResults;
         QVariantList cheapSharkResults;
-        QVariantList nexardaResults;
         int completedCount = 0;
     };
     int m_searchGeneration = 0;

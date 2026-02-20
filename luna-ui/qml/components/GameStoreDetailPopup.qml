@@ -12,7 +12,6 @@ Rectangle {
     property string gameTitle: ""
     property string gameID: ""
     property string cheapSharkGameID: ""
-    property string nexardaProductID: ""
     property string steamAppID: ""
     property string headerImage: ""
     property string salePrice: ""
@@ -24,8 +23,9 @@ Rectangle {
 
     // Data loaded from APIs
     property var gameDeals: []        // CheapShark deals
-    property var nexardaDeals: []     // Nexarda deals
+    property var scrapedDeals: []     // Deals from Steam/GOG/IGDB purchase links
     property var allDeals: []         // Combined deals from all sources
+    property var purchaseUrls: []     // IGDB purchase URLs for price scraping
     property string igdbSummary: ""
     property string igdbGenres: ""
     property string igdbPlatforms: ""
@@ -39,7 +39,7 @@ Rectangle {
 
     // Loading states
     property bool loadingDeals: false
-    property bool loadingNexarda: false
+    property bool loadingStorePrices: false
     property bool loadingIGDB: false
     property bool loadingProton: false
 
@@ -119,7 +119,6 @@ Rectangle {
         gameTitle = deal.title || ""
         gameID = deal.gameID || deal.cheapSharkGameID || ""
         cheapSharkGameID = deal.cheapSharkGameID || deal.gameID || ""
-        nexardaProductID = deal.nexardaProductID || ""
         steamAppID = deal.steamAppID || ""
         headerImage = deal.headerImage || deal.heroImage || deal.coverUrl || ""
         salePrice = deal.salePrice || deal.cheapestPrice || deal.cheapest || ""
@@ -128,10 +127,11 @@ Rectangle {
         metacriticScore = deal.metacriticScore || ""
         steamRatingText = deal.steamRatingText || ""
         steamRatingPercent = deal.steamRatingPercent || ""
+        purchaseUrls = deal.purchaseUrls || []
 
         // Reset loaded data
         gameDeals = []
-        nexardaDeals = []
+        scrapedDeals = []
         allDeals = []
         igdbSummary = ""
         igdbGenres = ""
@@ -146,7 +146,7 @@ Rectangle {
         dealsErrorMsg = ""
         igdbErrorMsg = ""
         loadingDeals = true
-        loadingNexarda = true
+        loadingStorePrices = false
         loadingIGDB = true
         loadingProton = true
 
@@ -178,18 +178,16 @@ Rectangle {
 
         visible = true
 
-        // Fetch CheapShark deals
+        // Fetch CheapShark deals (if we have a CheapShark game ID)
         if (cheapSharkGameID !== "") {
             StoreApi.fetchGameDeals(cheapSharkGameID)
         } else {
             loadingDeals = false
-        }
-
-        // Fetch Nexarda prices
-        if (nexardaProductID !== "") {
-            StoreApi.fetchNexardaPrices(nexardaProductID)
-        } else {
-            loadingNexarda = false
+            // No CheapShark data — try scraping prices from store APIs
+            if (steamAppID !== "" || (purchaseUrls && purchaseUrls.length > 0) || gameTitle !== "") {
+                loadingStorePrices = true
+                StoreApi.fetchStorePrices(steamAppID, purchaseUrls, gameTitle)
+            }
         }
 
         // Fetch full IGDB info (may enrich with screenshots, storyline)
@@ -215,13 +213,13 @@ Rectangle {
         onClicked: detailPopup.close()
     }
 
-    // Merge CheapShark + Nexarda deals into a single combined list
+    // Merge CheapShark + scraped deals into a single combined list
     function rebuildAllDeals() {
         var combined = []
         for (var i = 0; i < gameDeals.length; i++)
             combined.push(gameDeals[i])
-        for (var j = 0; j < nexardaDeals.length; j++)
-            combined.push(nexardaDeals[j])
+        for (var j = 0; j < scrapedDeals.length; j++)
+            combined.push(scrapedDeals[j])
         allDeals = combined
     }
 
@@ -244,19 +242,28 @@ Rectangle {
             if (!detailPopup.visible) return
             detailPopup.dealsErrorMsg = error
             detailPopup.loadingDeals = false
+
+            // CheapShark failed — fall back to store price scraping
+            if (detailPopup.steamAppID !== "" ||
+                (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0) ||
+                detailPopup.gameTitle !== "") {
+                detailPopup.loadingStorePrices = true
+                StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls, detailPopup.gameTitle)
+            } else {
+                detailPopup.rebuildAllDeals()
+            }
+        }
+
+        function onStorePricesReady(deals) {
+            if (!detailPopup.visible) return
+            detailPopup.scrapedDeals = deals || []
+            detailPopup.loadingStorePrices = false
             detailPopup.rebuildAllDeals()
         }
 
-        function onNexardaPricesReady(prices) {
+        function onStorePricesError(error) {
             if (!detailPopup.visible) return
-            detailPopup.nexardaDeals = prices.deals || []
-            detailPopup.loadingNexarda = false
-            detailPopup.rebuildAllDeals()
-        }
-
-        function onNexardaPricesError(error) {
-            if (!detailPopup.visible) return
-            detailPopup.loadingNexarda = false
+            detailPopup.loadingStorePrices = false
             detailPopup.rebuildAllDeals()
         }
 
@@ -626,12 +633,18 @@ Rectangle {
                             text: {
                                 if (salePrice === "0.00") return "FREE"
                                 if (salePrice !== "") return "$" + salePrice
+                                if (loadingDeals || loadingStorePrices) return "Loading prices..."
                                 return ""
                             }
+                            visible: salePrice !== "" || loadingDeals || loadingStorePrices
                             font.pixelSize: 36
                             font.family: ThemeManager.getFont("ui")
-                            font.bold: true
-                            color: "#4ade80"
+                            font.bold: salePrice !== ""
+                            color: {
+                                if (salePrice === "" || salePrice === undefined)
+                                    return ThemeManager.getColor("textSecondary")
+                                return "#4ade80"
+                            }
                         }
                     }
                 }
@@ -1074,7 +1087,7 @@ Rectangle {
                                         }
 
                                         Text {
-                                            visible: loadingDeals || loadingNexarda
+                                            visible: loadingDeals || loadingStorePrices
                                             text: "Loading..."
                                             font.pixelSize: 24
                                             font.family: ThemeManager.getFont("body")
@@ -1085,7 +1098,7 @@ Rectangle {
                                         Item { Layout.fillWidth: true }
                                     }
 
-                                    // Combined deals list (CheapShark + Nexarda)
+                                    // Combined deals list (CheapShark + scraped store prices)
                                     Repeater {
                                         model: allDeals
 
@@ -1140,15 +1153,20 @@ Rectangle {
                                                     Layout.fillWidth: true
                                                 }
 
-                                                // Source badge (CheapShark / Nexarda)
+                                                // Source badge
                                                 Rectangle {
                                                     visible: (modelData.source || "") !== ""
                                                     Layout.preferredWidth: srcLabel.width + 14
                                                     Layout.preferredHeight: 28
                                                     radius: 6
-                                                    color: modelData.source === "Nexarda"
-                                                           ? Qt.rgba(0.29, 0.53, 0.91, 0.15)
-                                                           : Qt.rgba(1, 1, 1, 0.08)
+                                                    color: {
+                                                        var src = modelData.source || ""
+                                                        if (src === "Steam") return Qt.rgba(0.10, 0.36, 0.69, 0.15)
+                                                        if (src === "GOG") return Qt.rgba(0.60, 0.20, 0.80, 0.15)
+                                                        if (src === "Epic Games") return Qt.rgba(0.0, 0.0, 0.0, 0.25)
+                                                        if (src === "GMG") return Qt.rgba(0.18, 0.65, 0.25, 0.15)
+                                                        return Qt.rgba(1, 1, 1, 0.08)
+                                                    }
 
                                                     Text {
                                                         id: srcLabel
@@ -1195,11 +1213,13 @@ Rectangle {
                                                     font.strikeout: true
                                                 }
 
-                                                // Current price
+                                                // Current price or "Buy" for links without prices
                                                 Text {
                                                     text: {
                                                         if (modelData.price === "0.00") return "FREE"
-                                                        return "$" + (modelData.price || "")
+                                                        if (modelData.price && modelData.price !== "")
+                                                            return "$" + modelData.price
+                                                        return "Buy"
                                                     }
                                                     font.pixelSize: 28
                                                     font.family: ThemeManager.getFont("ui")
@@ -1257,10 +1277,11 @@ Rectangle {
                                                     if (detailPopup.cheapSharkGameID !== "") {
                                                         detailPopup.loadingDeals = true
                                                         StoreApi.fetchGameDeals(detailPopup.cheapSharkGameID)
-                                                    }
-                                                    if (detailPopup.nexardaProductID !== "") {
-                                                        detailPopup.loadingNexarda = true
-                                                        StoreApi.fetchNexardaPrices(detailPopup.nexardaProductID)
+                                                    } else if (detailPopup.steamAppID !== "" ||
+                                                               (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0) ||
+                                                               detailPopup.gameTitle !== "") {
+                                                        detailPopup.loadingStorePrices = true
+                                                        StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls, detailPopup.gameTitle)
                                                     }
                                                 }
                                             }
@@ -1269,7 +1290,7 @@ Rectangle {
 
                                     // No deals message
                                     Text {
-                                        visible: !loadingDeals && !loadingNexarda && dealsErrorMsg === "" && allDeals.length === 0
+                                        visible: !loadingDeals && !loadingStorePrices && dealsErrorMsg === "" && allDeals.length === 0
                                         text: "No deals found for this game"
                                         font.pixelSize: 24
                                         font.family: ThemeManager.getFont("body")
