@@ -2339,6 +2339,76 @@ void GameManager::epicLogin() {
     qDebug() << "Starting Epic Games login via Legendary...";
 }
 
+QString GameManager::getEpicLoginUrl() {
+    // Epic OAuth login page that redirects with an authorization code.
+    // Client ID 34a02cf8f4414e29b15921876da36f9a is the Epic Games launcher
+    // client used by Legendary.
+    return QStringLiteral(
+        "https://www.epicgames.com/id/login"
+        "?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect"
+        "%3FclientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode");
+}
+
+void GameManager::epicLoginWithCode(const QString& authorizationCode) {
+    QString bin = findLegendaryBin();
+    if (bin.isEmpty()) {
+        emit epicLoginError("Legendary not found. Please install it first.");
+        return;
+    }
+
+    if (authorizationCode.trimmed().isEmpty()) {
+        emit epicLoginError("No authorization code received.");
+        return;
+    }
+
+    if (m_epicLoginProc && m_epicLoginProc->state() == QProcess::Running) {
+        qDebug() << "Epic login already in progress";
+        return;
+    }
+
+    if (m_epicLoginProc) {
+        m_epicLoginProc->deleteLater();
+        m_epicLoginProc = nullptr;
+    }
+
+    m_epicLoginProc = new QProcess(this);
+    emit epicLoginStarted();
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardOutput, this, [this]() {
+        if (!m_epicLoginProc) return;
+        qDebug() << "[epic-login-code]" << QString::fromUtf8(m_epicLoginProc->readAllStandardOutput()).trimmed();
+    });
+
+    connect(m_epicLoginProc, &QProcess::readyReadStandardError, this, [this]() {
+        if (!m_epicLoginProc) return;
+        qDebug() << "[epic-login-code stderr]" << QString::fromUtf8(m_epicLoginProc->readAllStandardError()).trimmed();
+    });
+
+    connect(m_epicLoginProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this](int exitCode, QProcess::ExitStatus) {
+        if (m_epicLoginProc) {
+            m_epicLoginProc->deleteLater();
+            m_epicLoginProc = nullptr;
+        }
+
+        if (isEpicLoggedIn()) {
+            qDebug() << "Epic Games login via code successful";
+            emit epicLoginSuccess();
+            fetchEpicLibrary();
+            return;
+        }
+
+        if (exitCode == 0) {
+            emit epicLoginError("Login was not completed. Please try again.");
+        } else {
+            emit epicLoginError("Login failed (code may have expired). Please try again.");
+        }
+    });
+
+    qDebug() << "Exchanging Epic authorization code via Legendary...";
+    m_epicLoginProc->start(bin, QStringList() << "auth" << "--code" << authorizationCode.trimmed());
+}
+
 void GameManager::epicLogout() {
     QString bin = findLegendaryBin();
     if (bin.isEmpty()) return;

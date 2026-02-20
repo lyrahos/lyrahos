@@ -89,6 +89,8 @@ public:
     Q_INVOKABLE bool isEpicAvailable();
     Q_INVOKABLE bool isEpicLoggedIn();
     Q_INVOKABLE void epicLogin();
+    Q_INVOKABLE void epicLoginWithCode(const QString& authorizationCode);
+    Q_INVOKABLE QString getEpicLoginUrl();
     Q_INVOKABLE void epicLogout();
     Q_INVOKABLE void fetchEpicLibrary();
     Q_INVOKABLE void installEpicGame(int gameId);
