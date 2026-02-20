@@ -45,7 +45,7 @@ Rectangle {
     // components loaded via Loader/StackLayout may not propagate reliably
     // back to this handler, but the legacy signals always fire.
     function switchToPreviousTab() {
-        if (steamSetupWizard.visible || gamesVirtualKeyboard.visible) return
+        if (steamSetupWizard.visible || epicSetupWizard.visible || gamesVirtualKeyboard.visible) return
         if (activeTab > 0) {
             if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
                 gameStoreLoader.item.loseFocus()
@@ -56,7 +56,7 @@ Rectangle {
         }
     }
     function switchToNextTab() {
-        if (steamSetupWizard.visible || gamesVirtualKeyboard.visible) return
+        if (steamSetupWizard.visible || epicSetupWizard.visible || gamesVirtualKeyboard.visible) return
         if (activeTab < 2) {
             if (gameStoreLoader.item && typeof gameStoreLoader.item.loseFocus === "function")
                 gameStoreLoader.item.loseFocus()
@@ -80,8 +80,9 @@ Rectangle {
             event.accepted = true
             return
         }
-        // Setup wizard handles its own keys
+        // Setup wizards handle their own keys
         if (steamSetupWizard.visible) return
+        if (epicSetupWizard.visible) return
         // Credential dialog navigation
         if (credentialDialog.visible) {
             handleCredDialogKeys(event)
@@ -306,6 +307,14 @@ Rectangle {
                     steamSetupWizard.open()
                 } else {
                     gameStoresTab.steamSettingsOpen = !gameStoresTab.steamSettingsOpen
+                }
+            }
+            // Activate Epic card (index 1)
+            if (clientsFocusIndex === 1) {
+                if (!GameManager.isEpicLoggedIn()) {
+                    epicSetupWizard.open()
+                } else {
+                    gameStoresTab.epicSettingsOpen = !gameStoresTab.epicSettingsOpen
                 }
             }
             event.accepted = true
@@ -543,6 +552,9 @@ Rectangle {
                 property string steamFetchStatus: ""
                 property bool steamFetching: false
                 property bool steamSettingsOpen: false
+                property bool epicSettingsOpen: false
+                property string epicFetchStatus: ""
+                property bool epicFetching: false
 
                 // Refresh network status when tab becomes visible
                 Timer {
@@ -582,6 +594,15 @@ Rectangle {
                     function onSteamOwnedGamesFetchError(error) {
                         gameStoresTab.steamFetching = false
                         gameStoresTab.steamFetchStatus = "Error: " + error
+                    }
+                    function onEpicLibraryFetched(gamesFound) {
+                        gameStoresTab.epicFetching = false
+                        gameStoresTab.epicFetchStatus = "Found " + gamesFound + " games!"
+                        refreshGames()
+                    }
+                    function onEpicLibraryFetchError(error) {
+                        gameStoresTab.epicFetching = false
+                        gameStoresTab.epicFetchStatus = "Error: " + error
                     }
                 }
 
@@ -1102,14 +1123,12 @@ Rectangle {
                                 Behavior on border.color { ColorAnimation { duration: 150 } }
                             }
 
-                            // ── Epic (placeholder) ──
+                            // ── Epic Games ──
                             Rectangle {
                                 width: 220
                                 height: 72
                                 radius: 12
-                                color: Qt.rgba(ThemeManager.getColor("surface").r,
-                                               ThemeManager.getColor("surface").g,
-                                               ThemeManager.getColor("surface").b, 0.4)
+                                color: ThemeManager.getColor("surface")
                                 border.color: (epicCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 1))
                                               ? ThemeManager.getColor("focus") : "transparent"
                                 border.width: (epicCardArea.containsMouse || (focusState === "content" && activeTab === 1 && clientsFocusIndex === 1)) ? 2 : 0
@@ -1119,6 +1138,7 @@ Rectangle {
                                     anchors.margins: 12
                                     spacing: 12
 
+                                    // Icon
                                     Rectangle {
                                         Layout.preferredWidth: 44
                                         Layout.preferredHeight: 44
@@ -1130,10 +1150,11 @@ Rectangle {
                                             text: "E"
                                             font.pixelSize: 22
                                             font.bold: true
-                                            color: "#888"
+                                            color: GameManager.isEpicSetupComplete() ? "white" : "#888"
                                         }
                                     }
 
+                                    // Name + status
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 2
@@ -1143,14 +1164,64 @@ Rectangle {
                                             font.pixelSize: ThemeManager.getFontSize("medium")
                                             font.family: ThemeManager.getFont("body")
                                             font.bold: true
+                                            color: ThemeManager.getColor("textPrimary")
+                                        }
+
+                                        RowLayout {
+                                            spacing: 5
+
+                                            Rectangle {
+                                                Layout.preferredWidth: 8
+                                                Layout.preferredHeight: 8
+                                                radius: 4
+                                                color: {
+                                                    if (!GameManager.isEpicAvailable())
+                                                        return ThemeManager.getColor("textSecondary")
+                                                    if (GameManager.isEpicLoggedIn())
+                                                        return ThemeManager.getColor("accent")
+                                                    return "#ff6b6b"
+                                                }
+                                            }
+
+                                            Text {
+                                                text: {
+                                                    if (!GameManager.isEpicAvailable())
+                                                        return "Not installed"
+                                                    if (GameManager.isEpicSetupComplete())
+                                                        return "Ready"
+                                                    if (GameManager.isEpicLoggedIn())
+                                                        return "Connected"
+                                                    return "Not set up"
+                                                }
+                                                font.pixelSize: ThemeManager.getFontSize("small")
+                                                font.family: ThemeManager.getFont("body")
+                                                color: ThemeManager.getColor("textSecondary")
+                                            }
+                                        }
+                                    }
+
+                                    // Settings gear
+                                    Rectangle {
+                                        visible: GameManager.isEpicAvailable()
+                                        Layout.preferredWidth: 32
+                                        Layout.preferredHeight: 32
+                                        radius: 8
+                                        color: epicGearArea.containsMouse
+                                               ? ThemeManager.getColor("hover") : "transparent"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "\u2699"
+                                            font.pixelSize: 18
                                             color: ThemeManager.getColor("textSecondary")
                                         }
 
-                                        Text {
-                                            text: "Coming soon"
-                                            font.pixelSize: ThemeManager.getFontSize("small")
-                                            font.family: ThemeManager.getFont("body")
-                                            color: ThemeManager.getColor("textSecondary")
+                                        MouseArea {
+                                            id: epicGearArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gameStoresTab.epicSettingsOpen = !gameStoresTab.epicSettingsOpen
                                         }
                                     }
                                 }
@@ -1158,11 +1229,20 @@ Rectangle {
                                 MouseArea {
                                     id: epicCardArea
                                     anchors.fill: parent
+                                    z: -1
                                     hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onEntered: {
                                         clientsFocusIndex = 1
                                         focusState = "content"
                                         gamesRoot.forceActiveFocus()
+                                    }
+                                    onClicked: {
+                                        if (!GameManager.isEpicLoggedIn()) {
+                                            epicSetupWizard.open()
+                                        } else {
+                                            gameStoresTab.epicSettingsOpen = !gameStoresTab.epicSettingsOpen
+                                        }
                                     }
                                 }
 
@@ -1575,6 +1655,250 @@ Rectangle {
                             }
                         }
 
+                        // ─── Epic Games Settings Panel (expandable) ───
+                        Rectangle {
+                            visible: gameStoresTab.epicSettingsOpen && GameManager.isEpicAvailable()
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: epicSettingsCol.height + 32
+                            radius: 12
+                            color: ThemeManager.getColor("surface")
+                            border.color: Qt.rgba(0.486, 0.227, 0.929, 0.3)
+                            border.width: 1
+
+                            ColumnLayout {
+                                id: epicSettingsCol
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 16
+                                spacing: 12
+
+                                // Header
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    Text {
+                                        text: "Epic Games Settings"
+                                        font.pixelSize: ThemeManager.getFontSize("medium")
+                                        font.family: ThemeManager.getFont("body")
+                                        font.bold: true
+                                        color: ThemeManager.getColor("textPrimary")
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 28
+                                        Layout.preferredHeight: 28
+                                        radius: 6
+                                        color: closeEpicSettingsArea.containsMouse
+                                               ? ThemeManager.getColor("hover") : "transparent"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "\u2715"
+                                            font.pixelSize: 14
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        MouseArea {
+                                            id: closeEpicSettingsArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: gameStoresTab.epicSettingsOpen = false
+                                        }
+                                    }
+                                }
+
+                                // Separator
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: Qt.rgba(1, 1, 1, 0.06)
+                                }
+
+                                // Legendary status row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    Text {
+                                        text: "Legendary"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                        Layout.preferredWidth: 100
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 8
+                                        Layout.preferredHeight: 8
+                                        radius: 4
+                                        color: GameManager.isEpicAvailable()
+                                               ? ThemeManager.getColor("accent") : "#ff6b6b"
+                                    }
+
+                                    Text {
+                                        text: GameManager.isEpicAvailable() ? "Installed" : "Not found"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textPrimary")
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                // Account status row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    Text {
+                                        text: "Account"
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textSecondary")
+                                        Layout.preferredWidth: 100
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 8
+                                        Layout.preferredHeight: 8
+                                        radius: 4
+                                        color: GameManager.isEpicLoggedIn()
+                                               ? ThemeManager.getColor("accent") : "#ff6b6b"
+                                    }
+
+                                    Text {
+                                        text: {
+                                            if (GameManager.isEpicLoggedIn()) {
+                                                var user = GameManager.getEpicUsername()
+                                                return user ? "Logged in (" + user + ")" : "Logged in"
+                                            }
+                                            return "Not logged in"
+                                        }
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: ThemeManager.getColor("textPrimary")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    // Re-run setup wizard
+                                    Rectangle {
+                                        visible: !GameManager.isEpicLoggedIn()
+                                        Layout.preferredWidth: epicSetupBtnLabel.width + 24
+                                        Layout.preferredHeight: 32
+                                        radius: 6
+                                        color: "#2a2a2a"
+
+                                        Text {
+                                            id: epicSetupBtnLabel
+                                            anchors.centerIn: parent
+                                            text: "Run Setup"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: "white"
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: epicSetupWizard.open()
+                                        }
+                                    }
+
+                                    // Logout button
+                                    Rectangle {
+                                        visible: GameManager.isEpicLoggedIn()
+                                        Layout.preferredWidth: epicLogoutLabel.width + 24
+                                        Layout.preferredHeight: 32
+                                        radius: 6
+                                        color: "transparent"
+                                        border.color: Qt.rgba(1, 1, 1, 0.12)
+                                        border.width: 1
+
+                                        Text {
+                                            id: epicLogoutLabel
+                                            anchors.centerIn: parent
+                                            text: "Logout"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            color: ThemeManager.getColor("textSecondary")
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: GameManager.epicLogout()
+                                        }
+                                    }
+                                }
+
+                                // Separator
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: Qt.rgba(1, 1, 1, 0.06)
+                                }
+
+                                // Action buttons row
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
+
+                                    // Fetch library
+                                    Rectangle {
+                                        visible: GameManager.isEpicLoggedIn()
+                                        Layout.preferredWidth: epicFetchLabel.width + 28
+                                        Layout.preferredHeight: 36
+                                        radius: 8
+                                        color: gameStoresTab.epicFetching
+                                               ? ThemeManager.getColor("textSecondary")
+                                               : "#2a2a2a"
+
+                                        Text {
+                                            id: epicFetchLabel
+                                            anchors.centerIn: parent
+                                            text: gameStoresTab.epicFetching
+                                                  ? "Fetching..."
+                                                  : "Fetch All Owned Games"
+                                            font.pixelSize: ThemeManager.getFontSize("small")
+                                            font.family: ThemeManager.getFont("body")
+                                            font.bold: true
+                                            color: "white"
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: gameStoresTab.epicFetching
+                                                         ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (!gameStoresTab.epicFetching) {
+                                                    gameStoresTab.epicFetching = true
+                                                    gameStoresTab.epicFetchStatus = "Fetching library..."
+                                                    GameManager.fetchEpicLibrary()
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    // Status text
+                                    Text {
+                                        visible: gameStoresTab.epicFetchStatus !== ""
+                                        text: gameStoresTab.epicFetchStatus
+                                        font.pixelSize: ThemeManager.getFontSize("small")
+                                        font.family: ThemeManager.getFont("body")
+                                        color: gameStoresTab.epicFetchStatus.startsWith("Error")
+                                               ? "#ff6b6b" : ThemeManager.getColor("accent")
+                                    }
+                                }
+                            }
+                        }
+
                         Item { Layout.fillHeight: true }
                     }
                 }
@@ -1610,6 +1934,19 @@ Rectangle {
             focusedTabIndex = 0
             focusState = "tabs"
             gamesRoot.forceActiveFocus()
+        }
+    }
+
+    // ── Epic Setup Wizard ──
+    EpicSetupWizard {
+        id: epicSetupWizard
+        onClosed: {
+            // After setup completes, switch to My Games tab
+            activeTab = 0
+            focusedTabIndex = 0
+            focusState = "tabs"
+            gamesRoot.forceActiveFocus()
+            refreshGames()
         }
     }
 
