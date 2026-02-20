@@ -681,7 +681,7 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
 
         // ── 3. Epic Games Store (GraphQL search) ──
         {
-            QUrl epicUrl("https://graphql.epicgames.com/graphql");
+            QUrl epicUrl("https://store.epicgames.com/graphql");
             QNetworkRequest epicReq(epicUrl);
             epicReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
             epicReq.setTransferTimeout(15000);
@@ -763,21 +763,21 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             });
         }
 
-        // ── 4. Green Man Gaming (search API) ──
+        // ── 4. Green Man Gaming (Algolia search API) ──
         {
-            QUrl gmgUrl("https://www.greenmangaming.com/api/quicksearch/autocomplete/suggestions");
-            QUrlQuery gmgQuery;
-            gmgQuery.addQueryItem("term", gameTitle);
-            gmgQuery.addQueryItem("max", "1");
-            gmgUrl.setQuery(gmgQuery);
+            QUrl gmgUrl("https://SCZIZSP09Z-dsn.algolia.net/1/indexes/prod_ProductSearch_US/query");
 
             QNetworkRequest gmgReq(gmgUrl);
-            gmgReq.setRawHeader("Accept", "application/json");
-            gmgReq.setRawHeader("User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36");
+            gmgReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+            gmgReq.setRawHeader("X-Algolia-Application-Id", "SCZIZSP09Z");
+            gmgReq.setRawHeader("X-Algolia-API-Key", "3bc4cebab2aa8cddab9e9a3cfad5aef3");
             gmgReq.setTransferTimeout(15000);
 
-            QNetworkReply *gmgReply = m_nam->get(gmgReq);
+            QJsonObject gmgBody;
+            gmgBody["query"] = gameTitle;
+            gmgBody["hitsPerPage"] = 1;
+
+            QNetworkReply *gmgReply = m_nam->post(gmgReq, QJsonDocument(gmgBody).toJson(QJsonDocument::Compact));
 
             connect(gmgReply, &QNetworkReply::finished, this,
                 [this, gmgReply, i, gameTitle, results, scrapeState, generation, updateIfCheaper, emitIfDone]() {
@@ -785,19 +785,13 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                 if (generation != m_searchGeneration) return;
 
                 if (gmgReply->error() == QNetworkReply::NoError) {
-                    QJsonDocument doc = QJsonDocument::fromJson(gmgReply->readAll());
-                    // GMG autocomplete returns an array of products
-                    QJsonArray arr = doc.isArray() ? doc.array() : QJsonArray();
-                    // Or it may be { products: [...] }
-                    if (arr.isEmpty() && doc.isObject())
-                        arr = doc.object()["products"].toArray();
+                    QJsonObject root = QJsonDocument::fromJson(gmgReply->readAll()).object();
+                    QJsonArray hits = root["hits"].toArray();
 
                     bool found = false;
-                    for (const auto& val : arr) {
+                    for (const auto& val : hits) {
                         QJsonObject product = val.toObject();
-                        QString title = product["name"].toString();
-                        if (title.isEmpty())
-                            title = product["title"].toString();
+                        QString title = product["DisplayName"].toString();
 
                         QString normProduct = normalizeTitle(title);
                         QString normSearch = normalizeTitle(gameTitle);
@@ -806,19 +800,11 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
                             && !normSearch.startsWith(normProduct))
                             continue;
 
-                        // Try multiple price field patterns GMG has used
-                        double price = -1;
-                        double basePrice = -1;
-
-                        if (product.contains("currentPrice")) {
-                            price = product["currentPrice"].toDouble(-1);
-                            basePrice = product["basePrice"].toDouble(price);
-                        } else if (product.contains("price")) {
-                            QJsonObject priceObj = product["price"].toObject();
-                            price = priceObj["current"].toDouble(-1);
-                            if (price < 0) price = priceObj["amount"].toDouble(-1);
-                            basePrice = priceObj["base"].toDouble(price);
-                        }
+                        // Extract price from Regions.US
+                        QJsonObject regions = product["Regions"].toObject();
+                        QJsonObject usRegion = regions["US"].toObject();
+                        double price = usRegion["Drp"].toDouble(-1);  // Discounted/current price
+                        double basePrice = usRegion["Mrp"].toDouble(price);  // Retail price
 
                         if (price >= 0) {
                             qDebug() << "GMG scrape: found price for" << gameTitle
@@ -1133,7 +1119,7 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
 
     // ── 3. Epic Games Store (GraphQL) ──
     if (hasTitle) {
-        QUrl epicUrl("https://graphql.epicgames.com/graphql");
+        QUrl epicUrl("https://store.epicgames.com/graphql");
         QNetworkRequest epicReq(epicUrl);
         epicReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
         epicReq.setTransferTimeout(15000);
@@ -1206,35 +1192,32 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
         });
     }
 
-    // ── 4. Green Man Gaming (search API) ──
+    // ── 4. Green Man Gaming (Algolia search API) ──
     if (hasTitle) {
-        QUrl gmgUrl("https://www.greenmangaming.com/api/quicksearch/autocomplete/suggestions");
-        QUrlQuery gmgQuery;
-        gmgQuery.addQueryItem("term", gameTitle);
-        gmgQuery.addQueryItem("max", "1");
-        gmgUrl.setQuery(gmgQuery);
+        QUrl gmgUrl("https://SCZIZSP09Z-dsn.algolia.net/1/indexes/prod_ProductSearch_US/query");
 
         QNetworkRequest gmgReq(gmgUrl);
-        gmgReq.setRawHeader("Accept", "application/json");
-        gmgReq.setRawHeader("User-Agent",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36");
+        gmgReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        gmgReq.setRawHeader("X-Algolia-Application-Id", "SCZIZSP09Z");
+        gmgReq.setRawHeader("X-Algolia-API-Key", "3bc4cebab2aa8cddab9e9a3cfad5aef3");
         gmgReq.setTransferTimeout(15000);
 
-        QNetworkReply *gmgReply = m_nam->get(gmgReq);
+        QJsonObject gmgBody;
+        gmgBody["query"] = gameTitle;
+        gmgBody["hitsPerPage"] = 1;
+
+        QNetworkReply *gmgReply = m_nam->post(gmgReq, QJsonDocument(gmgBody).toJson(QJsonDocument::Compact));
 
         connect(gmgReply, &QNetworkReply::finished, this,
             [gmgReply, gameTitle, priceState, checkDone]() {
             gmgReply->deleteLater();
             if (gmgReply->error() == QNetworkReply::NoError) {
-                QJsonDocument doc = QJsonDocument::fromJson(gmgReply->readAll());
-                QJsonArray arr = doc.isArray() ? doc.array() : QJsonArray();
-                if (arr.isEmpty() && doc.isObject())
-                    arr = doc.object()["products"].toArray();
+                QJsonObject root = QJsonDocument::fromJson(gmgReply->readAll()).object();
+                QJsonArray hits = root["hits"].toArray();
 
-                for (const auto& val : arr) {
+                for (const auto& val : hits) {
                     QJsonObject product = val.toObject();
-                    QString title = product["name"].toString();
-                    if (title.isEmpty()) title = product["title"].toString();
+                    QString title = product["DisplayName"].toString();
                     QString normProduct = normalizeTitle(title);
                     QString normSearch = normalizeTitle(gameTitle);
                     if (normProduct != normSearch
@@ -1242,16 +1225,11 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
                         && !normSearch.startsWith(normProduct))
                         continue;
 
-                    double price = -1, basePrice = -1;
-                    if (product.contains("currentPrice")) {
-                        price = product["currentPrice"].toDouble(-1);
-                        basePrice = product["basePrice"].toDouble(price);
-                    } else if (product.contains("price")) {
-                        QJsonObject po = product["price"].toObject();
-                        price = po["current"].toDouble(-1);
-                        if (price < 0) price = po["amount"].toDouble(-1);
-                        basePrice = po["base"].toDouble(price);
-                    }
+                    // Extract price from Regions.US
+                    QJsonObject regions = product["Regions"].toObject();
+                    QJsonObject usRegion = regions["US"].toObject();
+                    double price = usRegion["Drp"].toDouble(-1);
+                    double basePrice = usRegion["Mrp"].toDouble(price);
 
                     if (price >= 0) {
                         int discountPct = (basePrice > 0 && basePrice > price)
@@ -1261,7 +1239,9 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
                         deal["price"] = QString::number(price, 'f', 2);
                         deal["retailPrice"] = QString::number(basePrice, 'f', 2);
                         deal["savings"] = QString::number(discountPct);
-                        deal["dealLink"] = product["url"].toString();
+                        QString productUrl = product["Url"].toString();
+                        if (!productUrl.isEmpty())
+                            deal["dealLink"] = QStringLiteral("https://www.greenmangaming.com") + productUrl;
                         deal["source"] = QStringLiteral("GMG");
                         priceState->deals.append(deal);
                     }

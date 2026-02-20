@@ -496,7 +496,13 @@ Item {
         }
 
         function onSearchResultsReady(results) {
-            storePage.searchResults = results
+            // Only show games that have a price (from CheapShark or scraped)
+            var filtered = []
+            for (var i = 0; i < results.length; i++) {
+                if (results[i].hasPrice === true)
+                    filtered.push(results[i])
+            }
+            storePage.searchResults = filtered
             storePage.loadingSearch = false
         }
 
