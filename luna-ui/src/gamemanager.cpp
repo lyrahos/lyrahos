@@ -2178,7 +2178,17 @@ QString GameManager::getEpicUsername() {
 }
 
 void GameManager::ensureLegendary() {
-    // Auto-install Legendary via pip if not found
+    // Auto-install Legendary if not found.
+    //
+    // Fedora 42+ enforces PEP 668 ("externally managed" Python), so
+    // bare `pip3 install --user` is rejected. We try multiple methods
+    // in order of preference:
+    //   1. pipx — Fedora's recommended way to install Python CLI tools
+    //      (isolated venv, no system conflicts)
+    //   2. pip3 --user --break-system-packages — override PEP 668 guard
+    //      (works on any distro, slightly messy)
+    //   3. pip3 --user — legacy fallback for older distros without PEP 668
+
     if (isEpicAvailable()) {
         qDebug() << "Legendary already available";
         emit legendaryInstalled();
@@ -2186,9 +2196,26 @@ void GameManager::ensureLegendary() {
     }
 
     QProcess *installProc = new QProcess(this);
-    QString script =
-        "pip3 install --user legendary-gl 2>&1 && "
-        "echo 'LEGENDARY_READY'";
+
+    // Try each method in sequence; stop at the first success.
+    // pipx installs into ~/.local/bin which is already in PATH on Fedora.
+    QString script = R"(
+        if command -v pipx &>/dev/null; then
+            echo '[legendary-install] Trying pipx...'
+            pipx install legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
+        fi
+
+        if command -v pip3 &>/dev/null; then
+            echo '[legendary-install] Trying pip3 --break-system-packages...'
+            pip3 install --user --break-system-packages legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
+
+            echo '[legendary-install] Trying pip3 --user (legacy)...'
+            pip3 install --user legendary-gl 2>&1 && echo 'LEGENDARY_READY' && exit 0
+        fi
+
+        echo '[legendary-install] No pip3 or pipx found'
+        exit 1
+    )";
 
     connect(installProc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [this, installProc](int exitCode, QProcess::ExitStatus) {
@@ -2196,19 +2223,21 @@ void GameManager::ensureLegendary() {
         installProc->deleteLater();
 
         if (exitCode == 0 && output.contains("LEGENDARY_READY")) {
-            qDebug() << "Legendary installed successfully via pip";
+            qDebug() << "Legendary installed successfully";
             emit legendaryInstalled();
         } else {
             QString err = output.trimmed();
-            if (err.length() > 200) err = err.right(200);
+            if (err.length() > 300) err = err.right(300);
             qDebug() << "Failed to install Legendary:" << err;
             emit legendaryInstallError(
-                "Failed to install Legendary. Install it manually: pip3 install legendary-gl");
+                "Failed to install Legendary automatically.\n"
+                "Try manually: pipx install legendary-gl\n"
+                "Or: pip3 install --user --break-system-packages legendary-gl");
         }
     });
 
     installProc->start("bash", QStringList() << "-c" << script);
-    qDebug() << "Installing Legendary via pip3...";
+    qDebug() << "Installing Legendary...";
 }
 
 void GameManager::epicLogin() {
