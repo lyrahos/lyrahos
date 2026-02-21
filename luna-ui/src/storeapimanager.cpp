@@ -12,6 +12,8 @@
 #include <QDir>
 #include <QFile>
 #include <QDateTime>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QDebug>
 #include <memory>
 #include <cmath>
@@ -31,6 +33,58 @@ static QString normalizeTitle(const QString& title) {
     // Collapse whitespace
     norm = norm.simplified();
     return norm;
+}
+
+// ─── Legendary helpers for Epic pricing ───
+
+static QString findLegendaryBin() {
+    QString inPath = QStandardPaths::findExecutable("legendary");
+    if (!inPath.isEmpty()) return inPath;
+
+    QString home = QDir::homePath();
+    for (const QString& path : {home + "/.local/bin/legendary",
+                                 QStringLiteral("/usr/local/bin/legendary"),
+                                 QStringLiteral("/usr/bin/legendary")}) {
+        if (QFile::exists(path)) return path;
+    }
+    return QString();
+}
+
+static QString legendaryConfigDir() {
+    return QDir::homePath() + "/.config/legendary";
+}
+
+// Scan Legendary's metadata cache for a game matching `title`.
+// Returns the app_name if found, empty string otherwise.
+static QString findEpicAppNameByTitle(const QString& title) {
+    QString metadataDir = legendaryConfigDir() + "/metadata";
+    QDir dir(metadataDir);
+    if (!dir.exists()) return QString();
+
+    QString normSearch = normalizeTitle(title);
+    if (normSearch.isEmpty()) return QString();
+
+    QStringList jsonFiles = dir.entryList(QStringList() << "*.json", QDir::Files);
+    for (const QString& filename : jsonFiles) {
+        QFile file(dir.absoluteFilePath(filename));
+        if (!file.open(QIODevice::ReadOnly)) continue;
+
+        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        if (doc.isNull() || !doc.isObject()) continue;
+
+        QJsonObject obj = doc.object();
+        QString appTitle = obj["app_title"].toString();
+        if (appTitle.isEmpty())
+            appTitle = obj["metadata"].toObject()["title"].toString();
+
+        QString normFound = normalizeTitle(appTitle);
+        if (normFound == normSearch
+            || normFound.startsWith(normSearch)
+            || normSearch.startsWith(normFound)) {
+            return obj["app_name"].toString();
+        }
+    }
+    return QString();
 }
 
 StoreApiManager::StoreApiManager(QObject *parent)
@@ -507,7 +561,7 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
     emit searchResultsReady(*results);
 
     // ── Scrape prices for games that have no CheapShark data ──
-    // Sources: Steam Store API, GOG catalog, Epic GraphQL, Green Man Gaming
+    // Sources: Steam Store API, GOG catalog, Epic (Legendary), Green Man Gaming
     struct ScrapeState {
         int pending = 0;
     };
@@ -542,7 +596,7 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             if (cat == 17) scrapeState->pending++;  // GOG
         }
 
-        // Epic and GMG: always search by title
+        // Epic (Legendary metadata) and GMG: always search by title
         scrapeState->pending += 2;
     }
 
@@ -679,88 +733,59 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             }
         }
 
-        // ── 3. Epic Games Store (GraphQL search) ──
+        // ── 3. Epic Games Store (via Legendary metadata) ──
         {
-            QUrl epicUrl("https://store.epicgames.com/graphql");
-            QNetworkRequest epicReq(epicUrl);
-            epicReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-            epicReq.setTransferTimeout(15000);
+            QString bin = findLegendaryBin();
+            QString appName = findEpicAppNameByTitle(gameTitle);
 
-            QJsonObject variables;
-            variables["keywords"] = gameTitle;
-            variables["country"] = QStringLiteral("US");
-
-            QJsonObject body;
-            body["query"] = QStringLiteral(
-                "query searchStoreQuery($keywords: String!, $country: String!) {"
-                "  Catalog {"
-                "    searchStore(keywords: $keywords, country: $country, count: 1,"
-                "               sortBy: \"relevancy\", sortDir: \"DESC\", category: \"games\") {"
-                "      elements {"
-                "        title"
-                "        price(country: $country) {"
-                "          totalPrice {"
-                "            discountPrice originalPrice discount"
-                "            currencyCode currencyInfo { decimals }"
-                "          }"
-                "        }"
-                "      }"
-                "    }"
-                "  }"
-                "}");
-            body["variables"] = variables;
-
-            QNetworkReply *epicReply = m_nam->post(epicReq, QJsonDocument(body).toJson(QJsonDocument::Compact));
-
-            connect(epicReply, &QNetworkReply::finished, this,
-                [this, epicReply, i, gameTitle, results, scrapeState, generation, updateIfCheaper, emitIfDone]() {
-                epicReply->deleteLater();
-                if (generation != m_searchGeneration) return;
-
-                if (epicReply->error() == QNetworkReply::NoError) {
-                    QJsonObject root = QJsonDocument::fromJson(epicReply->readAll()).object();
-                    QJsonArray elements = root["data"].toObject()
-                        ["Catalog"].toObject()
-                        ["searchStore"].toObject()
-                        ["elements"].toArray();
-
-                    if (!elements.isEmpty()) {
-                        // Verify title is a reasonable match (startsWith handles edition suffixes)
-                        QString foundTitle = elements.first().toObject()["title"].toString();
-                        QString normFound = normalizeTitle(foundTitle);
-                        QString normSearch = normalizeTitle(gameTitle);
-                        if (normFound == normSearch
-                            || normFound.startsWith(normSearch)
-                            || normSearch.startsWith(normFound)) {
-                            QJsonObject totalPrice = elements.first().toObject()
-                                ["price"].toObject()["totalPrice"].toObject();
-                            int decimals = totalPrice["currencyInfo"].toObject()["decimals"].toInt(2);
-                            double divisor = std::pow(10.0, decimals);
-                            double finalPrice = totalPrice["discountPrice"].toInt() / divisor;
-                            double origPrice = totalPrice["originalPrice"].toInt() / divisor;
-                            int discountAmt = totalPrice["discount"].toInt();
-                            int discountPct = (origPrice > 0) ? qRound(discountAmt / divisor / origPrice * 100.0) : 0;
-
-                            if (finalPrice >= 0) {
-                                qDebug() << "Epic scrape: found price for" << gameTitle
-                                         << "$" << finalPrice;
-                                QVariantMap game = (*results)[i].toMap();
-                                updateIfCheaper(game, finalPrice, origPrice, discountPct);
-                                (*results)[i] = game;
-                            }
-                        } else {
-                            qDebug() << "Epic scrape: title mismatch for" << gameTitle
-                                     << "- Epic returned:" << foundTitle;
-                        }
-                    } else {
-                        qDebug() << "Epic scrape: no results for" << gameTitle;
-                    }
-                } else {
-                    qWarning() << "Epic scrape failed for" << gameTitle << ":" << epicReply->errorString();
-                }
+            if (bin.isEmpty() || appName.isEmpty()) {
+                qDebug() << "Epic (legendary): skipping" << gameTitle
+                         << (bin.isEmpty() ? "— legendary not found" : "— no metadata match");
                 scrapeState->pending--;
                 emitIfDone();
-            });
+            } else {
+                QProcess *proc = new QProcess(this);
+                connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, proc, i, gameTitle, results, scrapeState, generation, updateIfCheaper, emitIfDone]() {
+                    proc->deleteLater();
+                    if (generation != m_searchGeneration) { scrapeState->pending--; emitIfDone(); return; }
+
+                    QByteArray output = proc->readAllStandardOutput();
+                    QJsonObject root = QJsonDocument::fromJson(output).object();
+
+                    // Legendary's --json output wraps game info; look for price fields.
+                    // The catalog metadata may include price data from Epic's API.
+                    QJsonObject metadata = root["metadata"].toObject();
+                    QJsonObject price = metadata["price"].toObject();
+                    if (price.isEmpty()) price = root["price"].toObject();
+                    QJsonObject totalPrice = price["totalPrice"].toObject();
+
+                    if (!totalPrice.isEmpty()) {
+                        int decimals = totalPrice["currencyInfo"].toObject()["decimals"].toInt(2);
+                        double divisor = std::pow(10.0, decimals);
+                        double finalPrice = totalPrice["discountPrice"].toInt() / divisor;
+                        double origPrice = totalPrice["originalPrice"].toInt() / divisor;
+                        int discountAmt = totalPrice["discount"].toInt();
+                        int discountPct = (origPrice > 0) ? qRound(discountAmt / divisor / origPrice * 100.0) : 0;
+
+                        if (finalPrice >= 0) {
+                            qDebug() << "Epic (legendary): found price for" << gameTitle << "$" << finalPrice;
+                            QVariantMap game = (*results)[i].toMap();
+                            updateIfCheaper(game, finalPrice, origPrice, discountPct);
+                            (*results)[i] = game;
+                        }
+                    } else {
+                        qDebug() << "Epic (legendary): no price data for" << gameTitle;
+                    }
+                    scrapeState->pending--;
+                    emitIfDone();
+                });
+
+                QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+                env.insert("PYTHONUNBUFFERED", "1");
+                proc->setProcessEnvironment(env);
+                proc->start(bin, QStringList() << "info" << appName << "--json");
+            }
         }
 
         // ── 4. Green Man Gaming (Algolia search API) ──
@@ -1117,79 +1142,60 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
         checkDone();
     }
 
-    // ── 3. Epic Games Store (GraphQL) ──
+    // ── 3. Epic Games Store (via Legendary) ──
     if (hasTitle) {
-        QUrl epicUrl("https://store.epicgames.com/graphql");
-        QNetworkRequest epicReq(epicUrl);
-        epicReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-        epicReq.setTransferTimeout(15000);
+        QString bin = findLegendaryBin();
+        QString appName = findEpicAppNameByTitle(gameTitle);
 
-        QJsonObject variables;
-        variables["keywords"] = gameTitle;
-        variables["country"] = QStringLiteral("US");
-        QJsonObject body;
-        body["query"] = QStringLiteral(
-            "query searchStoreQuery($keywords: String!, $country: String!) {"
-            "  Catalog {"
-            "    searchStore(keywords: $keywords, country: $country, count: 1,"
-            "               sortBy: \"relevancy\", sortDir: \"DESC\", category: \"games\") {"
-            "      elements {"
-            "        title"
-            "        price(country: $country) {"
-            "          totalPrice {"
-            "            discountPrice originalPrice discount"
-            "            currencyCode currencyInfo { decimals }"
-            "          }"
-            "        }"
-            "      }"
-            "    }"
-            "  }"
-            "}");
-        body["variables"] = variables;
-
-        QNetworkReply *epicReply = m_nam->post(epicReq, QJsonDocument(body).toJson(QJsonDocument::Compact));
-
-        connect(epicReply, &QNetworkReply::finished, this,
-            [epicReply, gameTitle, priceState, checkDone]() {
-            epicReply->deleteLater();
-            if (epicReply->error() == QNetworkReply::NoError) {
-                QJsonArray elements = QJsonDocument::fromJson(epicReply->readAll()).object()
-                    ["data"].toObject()["Catalog"].toObject()
-                    ["searchStore"].toObject()["elements"].toArray();
-
-                if (!elements.isEmpty()) {
-                    QString foundTitle = elements.first().toObject()["title"].toString();
-                    QString normFound = normalizeTitle(foundTitle);
-                    QString normSearch = normalizeTitle(gameTitle);
-                    if (normFound == normSearch
-                        || normFound.startsWith(normSearch)
-                        || normSearch.startsWith(normFound)) {
-                        QJsonObject tp = elements.first().toObject()
-                            ["price"].toObject()["totalPrice"].toObject();
-                        int decimals = tp["currencyInfo"].toObject()["decimals"].toInt(2);
-                        double divisor = std::pow(10.0, decimals);
-                        double finalPrice = tp["discountPrice"].toInt() / divisor;
-                        double origPrice = tp["originalPrice"].toInt() / divisor;
-                        int discountAmt = tp["discount"].toInt();
-                        int discountPct = (origPrice > 0) ? qRound(discountAmt / divisor / origPrice * 100.0) : 0;
-
-                        if (finalPrice >= 0) {
-                            QVariantMap deal;
-                            deal["storeName"] = QStringLiteral("Epic Games");
-                            deal["price"] = QString::number(finalPrice, 'f', 2);
-                            deal["retailPrice"] = QString::number(origPrice, 'f', 2);
-                            deal["savings"] = QString::number(discountPct);
-                            deal["dealLink"] = QStringLiteral("https://store.epicgames.com/en-US/browse?q=")
-                                + QUrl::toPercentEncoding(gameTitle);
-                            deal["source"] = QStringLiteral("Epic Games");
-                            priceState->deals.append(deal);
-                        }
-                    }
-                }
-            }
+        if (bin.isEmpty() || appName.isEmpty()) {
+            qDebug() << "Epic (legendary): skipping price lookup for" << gameTitle
+                     << (bin.isEmpty() ? "— legendary not found" : "— no metadata match");
             priceState->pending--;
             checkDone();
-        });
+        } else {
+            QProcess *proc = new QProcess(this);
+            connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [proc, gameTitle, appName, priceState, checkDone]() {
+                proc->deleteLater();
+
+                QByteArray output = proc->readAllStandardOutput();
+                QJsonObject root = QJsonDocument::fromJson(output).object();
+
+                QJsonObject metadata = root["metadata"].toObject();
+                QJsonObject price = metadata["price"].toObject();
+                if (price.isEmpty()) price = root["price"].toObject();
+                QJsonObject totalPrice = price["totalPrice"].toObject();
+
+                if (!totalPrice.isEmpty()) {
+                    int decimals = totalPrice["currencyInfo"].toObject()["decimals"].toInt(2);
+                    double divisor = std::pow(10.0, decimals);
+                    double finalPrice = totalPrice["discountPrice"].toInt() / divisor;
+                    double origPrice = totalPrice["originalPrice"].toInt() / divisor;
+                    int discountAmt = totalPrice["discount"].toInt();
+                    int discountPct = (origPrice > 0) ? qRound(discountAmt / divisor / origPrice * 100.0) : 0;
+
+                    if (finalPrice >= 0) {
+                        QVariantMap deal;
+                        deal["storeName"] = QStringLiteral("Epic Games");
+                        deal["price"] = QString::number(finalPrice, 'f', 2);
+                        deal["retailPrice"] = QString::number(origPrice, 'f', 2);
+                        deal["savings"] = QString::number(discountPct);
+                        deal["dealLink"] = QStringLiteral("https://store.epicgames.com/en-US/p/") + appName;
+                        deal["source"] = QStringLiteral("Epic Games");
+                        priceState->deals.append(deal);
+                    }
+                } else {
+                    qDebug() << "Epic (legendary): no price data for" << gameTitle;
+                }
+                priceState->pending--;
+                checkDone();
+            });
+
+            QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+            env.insert("PYTHONUNBUFFERED", "1");
+            proc->setProcessEnvironment(env);
+            proc->start(bin, QStringList() << "info" << appName << "--json");
+        }
     }
 
     // ── 4. Green Man Gaming (Algolia search API) ──
