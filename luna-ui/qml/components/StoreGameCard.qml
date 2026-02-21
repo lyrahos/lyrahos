@@ -135,7 +135,9 @@ Item {
                 width: ratingRow.width + 16
                 height: 32
                 radius: 16
-                color: Qt.rgba(0, 0, 0, 0.65)
+                color: Qt.rgba(ThemeManager.getColor("background").r,
+                               ThemeManager.getColor("background").g,
+                               ThemeManager.getColor("background").b, 0.75)
 
                 Row {
                     id: ratingRow

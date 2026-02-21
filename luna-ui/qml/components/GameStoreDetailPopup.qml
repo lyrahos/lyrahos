@@ -401,7 +401,7 @@ Rectangle {
             radius: 28
             z: 10
             color: closeBtnArea.containsMouse
-                   ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(0, 0, 0, 0.6)
+                   ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
 
             Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -483,8 +483,8 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.leftMargin: 16
                         width: 44; height: 44; radius: 22
-                        color: prevArea.containsMouse ? Qt.rgba(0, 0, 0, 0.8) : Qt.rgba(0, 0, 0, 0.5)
-                        Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 22; font.bold: true; color: "#fff" }
+                        color: prevArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
+                        Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 22; font.bold: true; color: ThemeManager.getColor("textPrimary") }
                         MouseArea {
                             id: prevArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: fullContent.currentScreenshotIndex = fullContent.currentScreenshotIndex > 0 ? fullContent.currentScreenshotIndex - 1 : igdbScreenshots.length - 1
@@ -494,8 +494,8 @@ Rectangle {
                         visible: igdbScreenshots.length > 1
                         anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 16
                         width: 44; height: 44; radius: 22
-                        color: nextArea.containsMouse ? Qt.rgba(0, 0, 0, 0.8) : Qt.rgba(0, 0, 0, 0.5)
-                        Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 22; font.bold: true; color: "#fff" }
+                        color: nextArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
+                        Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 22; font.bold: true; color: ThemeManager.getColor("textPrimary") }
                         MouseArea {
                             id: nextArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: fullContent.currentScreenshotIndex = fullContent.currentScreenshotIndex < igdbScreenshots.length - 1 ? fullContent.currentScreenshotIndex + 1 : 0
@@ -830,7 +830,7 @@ Rectangle {
                                             case "gold":     return "#cfb53b"
                                             case "silver":   return "#a6a6a6"
                                             case "bronze":   return "#cd7f32"
-                                            case "borked":   return "#ff0000"
+                                            case "borked":   return "#ff6b6b"
                                             default:         return ThemeManager.getColor("textSecondary")
                                         }
                                     }
@@ -1054,7 +1054,7 @@ Rectangle {
                                                     case "gold":     return "#cfb53b"
                                                     case "silver":   return "#a6a6a6"
                                                     case "bronze":   return "#cd7f32"
-                                                    case "borked":   return "#ff0000"
+                                                    case "borked":   return "#ff6b6b"
                                                     default:         return "transparent"
                                                 }
                                             }

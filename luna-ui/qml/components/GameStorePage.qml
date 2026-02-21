@@ -259,7 +259,7 @@ Item {
     }
 
     function handleSearchResultsKeys(event) {
-        var cols = Math.max(1, Math.floor(mainFlickable.width / 220))
+        var cols = Math.max(1, Math.floor((mainFlickable.width - 80) / 220))
         var count = searchResults.length
         var idx = searchResultFocusIndex
 
@@ -284,6 +284,12 @@ Item {
             event.accepted = true; break
         }
     }
+
+    // Auto-scroll horizontal ListViews to show focused card
+    onNewReleaseFocusIndexChanged: if (newReleasesList.visible) newReleasesList.positionViewAtIndex(newReleaseFocusIndex, ListView.Contain)
+    onTopRatedFocusIndexChanged: if (topRatedList.visible) topRatedList.positionViewAtIndex(topRatedFocusIndex, ListView.Contain)
+    onDealsFocusIndexChanged: if (dealsList.visible) dealsList.positionViewAtIndex(dealsFocusIndex, ListView.Contain)
+    onTrendingFocusIndexChanged: if (trendingList.visible) trendingList.positionViewAtIndex(trendingFocusIndex, ListView.Contain)
 
     // Scroll focused items into view
     onNavZoneChanged: if (hasKeyboardFocus) ensureZoneVisible()
@@ -459,7 +465,9 @@ Item {
                                ThemeManager.getColor("surface").b, 0.85)
                 border.color: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar"))
                               ? ThemeManager.getColor("focus")
-                              : Qt.rgba(1, 1, 1, 0.06)
+                              : Qt.rgba(ThemeManager.getColor("surface").r,
+                                       ThemeManager.getColor("surface").g,
+                                       ThemeManager.getColor("surface").b, 0.5)
                 border.width: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar")) ? 2 : 1
                 Behavior on border.color { ColorAnimation { duration: 150 } }
 
@@ -1036,13 +1044,13 @@ Item {
 
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: nrLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: nrLeftArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: nrLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newReleasesList.flick(600, 0) }
                             }
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: nrRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: nrRightArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: nrRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newReleasesList.flick(-600, 0) }
                             }
@@ -1121,13 +1129,13 @@ Item {
                             spacing: 8
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: trLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: trLeftArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: trLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: topRatedList.flick(600, 0) }
                             }
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: trRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: trRightArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: trRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: topRatedList.flick(-600, 0) }
                             }
@@ -1197,13 +1205,13 @@ Item {
                             spacing: 8
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: dlLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: dlLeftArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: dlLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: dealsList.flick(600, 0) }
                             }
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: dlRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: dlRightArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: dlRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: dealsList.flick(-600, 0) }
                             }
@@ -1274,13 +1282,13 @@ Item {
                             spacing: 8
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: tLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: tLeftArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: tLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: trendingList.flick(600, 0) }
                             }
                             Rectangle {
                                 width: 44; height: 44; radius: 22
-                                color: tRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                color: tRightArea.containsMouse ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
                                 Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
                                 MouseArea { id: tRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: trendingList.flick(-600, 0) }
                             }
