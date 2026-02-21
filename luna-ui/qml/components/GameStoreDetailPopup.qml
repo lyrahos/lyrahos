@@ -236,6 +236,24 @@ Rectangle {
             detailPopup.dealsErrorMsg = ""
             detailPopup.loadingDeals = false
             detailPopup.rebuildAllDeals()
+
+            // Supplement CheapShark with stores it doesn't cover
+            // Build list of store names CheapShark already has deals for
+            var coveredStores = []
+            var deals = details.deals || []
+            for (var i = 0; i < deals.length; i++) {
+                if (deals[i].storeName)
+                    coveredStores.push(deals[i].storeName)
+            }
+
+            // Fetch prices from stores not covered by CheapShark
+            if (detailPopup.steamAppID !== "" ||
+                (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0) ||
+                detailPopup.gameTitle !== "") {
+                detailPopup.loadingStorePrices = true
+                StoreApi.fetchStorePrices(detailPopup.steamAppID, detailPopup.purchaseUrls,
+                                          detailPopup.gameTitle, coveredStores)
+            }
         }
 
         function onGameDealsError(error) {
@@ -243,7 +261,7 @@ Rectangle {
             detailPopup.dealsErrorMsg = error
             detailPopup.loadingDeals = false
 
-            // CheapShark failed — fall back to store price scraping
+            // CheapShark failed — fetch from all stores directly (no covered stores)
             if (detailPopup.steamAppID !== "" ||
                 (detailPopup.purchaseUrls && detailPopup.purchaseUrls.length > 0) ||
                 detailPopup.gameTitle !== "") {

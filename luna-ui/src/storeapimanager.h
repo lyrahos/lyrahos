@@ -32,9 +32,10 @@ public:
     Q_INVOKABLE bool hasBuiltInIGDBCredentials();
     Q_INVOKABLE QString getIGDBClientId();
 
-    // ── Store Price Scraping (fallback when CheapShark has no price) ──
+    // ── Store Price Scraping (supplements CheapShark with missing stores) ──
     Q_INVOKABLE void fetchStorePrices(const QString& steamAppId, const QVariantList& purchaseUrls,
-                                       const QString& gameTitle = QString());
+                                       const QString& gameTitle = QString(),
+                                       const QStringList& coveredStores = QStringList());
 
     // ── ProtonDB API ──
     Q_INVOKABLE void fetchProtonRating(const QString& steamAppId);
