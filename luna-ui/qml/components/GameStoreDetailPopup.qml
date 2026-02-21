@@ -213,13 +213,40 @@ Rectangle {
         onClicked: detailPopup.close()
     }
 
-    // Merge CheapShark + scraped deals into a single combined list
+    // Merge CheapShark + scraped deals into a single combined list,
+    // deduplicating so the same store doesn't appear twice.
     function rebuildAllDeals() {
+        // Canonical key for store-name matching (handles naming variants)
+        function storeKey(name) {
+            var n = (name || "").toLowerCase()
+            if (n.indexOf("steam") >= 0) return "steam"
+            if (n.indexOf("epic") >= 0) return "epic"
+            if (n.indexOf("green") >= 0 || n.indexOf("gmg") >= 0) return "gmg"
+            if (n.indexOf("gog") >= 0) return "gog"
+            if (n.indexOf("humble") >= 0) return "humble"
+            if (n.indexOf("fanatical") >= 0) return "fanatical"
+            return n.replace(/\s+/g, "")
+        }
+
         var combined = []
-        for (var i = 0; i < gameDeals.length; i++)
+        var seen = {}
+
+        // CheapShark deals first (preferred — includes redirect tracking)
+        for (var i = 0; i < gameDeals.length; i++) {
             combined.push(gameDeals[i])
-        for (var j = 0; j < scrapedDeals.length; j++)
-            combined.push(scrapedDeals[j])
+            var k = storeKey(gameDeals[i].storeName)
+            if (k) seen[k] = true
+        }
+
+        // Scraped deals: only add stores not already covered by CheapShark
+        for (var j = 0; j < scrapedDeals.length; j++) {
+            var sk = storeKey(scrapedDeals[j].storeName)
+            if (!sk || !seen[sk]) {
+                combined.push(scrapedDeals[j])
+                if (sk) seen[sk] = true
+            }
+        }
+
         allDeals = combined
     }
 
