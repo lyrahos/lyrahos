@@ -2401,7 +2401,8 @@ void GameManager::epicLoginWithCode(const QString& authorizationCode) {
             qDebug() << "Epic Games login via code successful";
             delete loginOutput;
             emit epicLoginSuccess();
-            fetchEpicLibrary();
+            // Note: the QML onEpicLoginSuccess handler calls
+            // fetchEpicLibrary() — don't duplicate it here.
             return;
         }
 

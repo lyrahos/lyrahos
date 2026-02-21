@@ -59,6 +59,8 @@ Rectangle {
         awaitingPolicyAcceptance = false
         browserHeaderFocused = false
         epicLoginWebView.url = "about:blank"
+        epicPopupWebView.url = "about:blank"
+        epicPopupWebView.visible = false
         visible = false
         closed()
     }
@@ -161,6 +163,8 @@ Rectangle {
             if (event.key === Qt.Key_Escape) {
                 epicWizard.browserHeaderFocused = false
                 epicLoginWebView.url = "about:blank"
+                epicPopupWebView.url = "about:blank"
+                epicPopupWebView.visible = false
                 epicWizard.epicBrowserOpen = false
                 event.accepted = true
                 return
@@ -1250,6 +1254,8 @@ Rectangle {
                 case "back":
                     epicWizard.browserHeaderFocused = false
                     epicLoginWebView.url = "about:blank"
+                    epicPopupWebView.url = "about:blank"
+                    epicPopupWebView.visible = false
                     epicWizard.epicBrowserOpen = false
                     return
                 }
@@ -1305,7 +1311,12 @@ Rectangle {
                 epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
-                if (epicLoginWebView.canGoBack) {
+                // If a popup overlay is open, close that first
+                if (epicPopupWebView.visible) {
+                    console.log("[epic-browser] closing popup overlay")
+                    epicPopupWebView.url = "about:blank"
+                    epicPopupWebView.visible = false
+                } else if (epicLoginWebView.canGoBack) {
                     console.log("[epic-browser] navigating back")
                     epicLoginWebView.goBack()
                 } else {
@@ -1376,6 +1387,8 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         epicLoginWebView.url = "about:blank"
+                        epicPopupWebView.url = "about:blank"
+                        epicPopupWebView.visible = false
                         epicWizard.epicBrowserOpen = false
                     }
                 }
@@ -1432,11 +1445,13 @@ Rectangle {
             profile: SharedBrowserProfile
             settings.focusOnNavigationEnabled: false
 
-            // Handle popup windows (e.g. "Sign in with Google/Apple/Facebook")
-            // by opening them in the same view instead of a new window.
+            // Open popups (e.g. social-login, CAPTCHA, verification) in a
+            // separate overlay view so the original Epic page stays alive and
+            // can receive the callback when the popup finishes.
             onNewWindowRequested: function(request) {
-                console.log("[epic-browser] Popup requested, opening in same view")
-                request.openIn(epicLoginWebView)
+                console.log("[epic-browser] Popup requested — opening in overlay view")
+                epicPopupWebView.visible = true
+                request.openIn(epicPopupWebView)
             }
 
             onLoadingChanged: function(loadRequest) {
@@ -1456,10 +1471,25 @@ Rectangle {
             onUrlChanged: {
                 var urlStr = url.toString()
                 console.log("[epic-browser] URL changed:", urlStr)
-                // The redirect URL after login contains the authorization code
+                // The redirect URL after login contains the authorization code.
+                // Check the URL query parameters first for an immediate match.
                 if (urlStr.indexOf("/id/api/redirect") !== -1) {
-                    console.log("[epic-browser] Detected redirect URL, polling for auth code...")
-                    epicAuthCodePollTimer.restart()
+                    console.log("[epic-browser] Detected redirect URL, checking for auth code...")
+                    var m = urlStr.match(/[?&]code=([a-f0-9]{32})/i)
+                    if (!m) m = urlStr.match(/[?&]authorizationCode=([a-f0-9]{32})/i)
+                    if (m) {
+                        console.log("[epic-browser] Got auth code from redirect URL")
+                        epicAuthCodePollTimer.stop()
+                        epicLoginWebView.url = "about:blank"
+                        epicPopupWebView.url = "about:blank"
+                        epicPopupWebView.visible = false
+                        epicWizard.epicBrowserOpen = false
+                        epicWizard.loginInProgress = true
+                        GameManager.epicLoginWithCode(m[1])
+                    } else {
+                        // Code not in URL — poll the page body
+                        epicAuthCodePollTimer.restart()
+                    }
                 }
                 // While awaiting privacy policy acceptance, do NOT auto-restart
                 // OAuth on URL changes.  The user needs to stay on Epic's site
@@ -1472,30 +1502,154 @@ Rectangle {
             }
         }
 
-        // Poll the redirect page for the authorization code JSON
+        // Overlay for popup windows opened by Epic's login page (social
+        // login, CAPTCHA, verification dialogs, etc.).  Keeping these in
+        // a separate WebEngineView means the original page stays loaded
+        // and can receive the post-login callback from the popup.
+        WebEngineView {
+            id: epicPopupWebView
+            anchors.fill: epicLoginWebView
+            z: 1
+            visible: false
+            profile: SharedBrowserProfile
+            settings.focusOnNavigationEnabled: false
+
+            // When the popup calls window.close(), hide the overlay so the
+            // original Epic page is visible again and can process the result.
+            onWindowCloseRequested: {
+                console.log("[epic-browser] Popup closed by page")
+                epicPopupWebView.url = "about:blank"
+                epicPopupWebView.visible = false
+            }
+
+            // Also watch for the auth redirect landing in the popup itself
+            onUrlChanged: {
+                var urlStr = url.toString()
+                console.log("[epic-browser-popup] URL changed:", urlStr)
+                if (urlStr.indexOf("/id/api/redirect") !== -1) {
+                    console.log("[epic-browser-popup] Auth redirect detected in popup")
+                    var m = urlStr.match(/[?&]code=([a-f0-9]{32})/i)
+                    if (!m) m = urlStr.match(/[?&]authorizationCode=([a-f0-9]{32})/i)
+                    if (m) {
+                        console.log("[epic-browser-popup] Got auth code from redirect URL")
+                        epicAuthCodePollTimer.stop()
+                        epicLoginWebView.url = "about:blank"
+                        epicPopupWebView.url = "about:blank"
+                        epicPopupWebView.visible = false
+                        epicWizard.epicBrowserOpen = false
+                        epicWizard.loginInProgress = true
+                        GameManager.epicLoginWithCode(m[1])
+                    } else {
+                        epicAuthCodePollTimer.restart()
+                    }
+                }
+            }
+
+            onLoadingChanged: function(loadRequest) {
+                console.log("[epic-browser-popup] loadingChanged:",
+                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
+                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
+                            "status=" + loadRequest.status,
+                            "url:", loadRequest.url)
+            }
+
+            // Nested popups: open in the same overlay
+            onNewWindowRequested: function(request) {
+                console.log("[epic-browser-popup] Nested popup, reusing overlay")
+                request.openIn(epicPopupWebView)
+            }
+
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                console.log("[epic-browser-popup-js]", message)
+            }
+        }
+
+        // Poll the redirect page for the authorization code.
+        // Epic's redirect page has changed formats over time:
+        //   - Old: raw JSON body  {"authorizationCode": "abc..."}
+        //   - New: HTML page with the code in a script block, data
+        //     attribute, hidden input, or URL query parameter.
+        // We try all of these to be resilient.
         Timer {
             id: epicAuthCodePollTimer
             interval: 1000
             repeat: true
             onTriggered: {
                 var urlStr = epicLoginWebView.url.toString()
+
+                // ── Check the URL itself first (no JS needed) ──
+                // Epic may redirect to .../redirect?code=... or
+                // include authorizationCode as a query parameter.
+                if (urlStr.indexOf("/id/api/redirect") !== -1) {
+                    var urlCodeMatch = urlStr.match(/[?&]code=([a-f0-9]{32})/i)
+                    if (!urlCodeMatch) urlCodeMatch = urlStr.match(/[?&]authorizationCode=([a-f0-9]{32})/i)
+                    if (urlCodeMatch) {
+                        console.log("[epic-browser] Got auth code from URL, length:", urlCodeMatch[1].length)
+                        epicAuthCodePollTimer.stop()
+                        epicLoginWebView.url = "about:blank"
+                        epicPopupWebView.url = "about:blank"
+                        epicPopupWebView.visible = false
+                        epicWizard.epicBrowserOpen = false
+                        epicWizard.loginInProgress = true
+                        GameManager.epicLoginWithCode(urlCodeMatch[1])
+                        return
+                    }
+                }
+
                 if (urlStr.indexOf("/id/api/redirect") === -1) return
 
+                // ── Scrape page content for the auth code ──
                 epicLoginWebView.runJavaScript(
                     "(function() {" +
+                    "  var text = document.body.innerText || document.body.textContent || '';" +
+                    "  var html = document.documentElement.innerHTML || '';" +
+                    "" +
+                    "  // Detect corrective action (privacy policy)" +
+                    "  if (text.indexOf('PRIVACY_POLICY_ACCEPTANCE') !== -1 ||" +
+                    "      html.indexOf('corrective_action') !== -1 ||" +
+                    "      html.indexOf('correctiveAction') !== -1) {" +
+                    "    return '__CORRECTIVE_ACTION__';" +
+                    "  }" +
+                    "" +
+                    "  // 1) Try parsing body as raw JSON (old format)" +
                     "  try {" +
-                    "    var text = document.body.innerText || document.body.textContent || '';" +
                     "    var json = JSON.parse(text);" +
-                    "    if (json.correctiveAction || " +
-                    "        (json.errorCode && json.errorCode.indexOf('corrective_action') !== -1) ||" +
-                    "        text.indexOf('PRIVACY_POLICY_ACCEPTANCE') !== -1) {" +
-                    "      return '__CORRECTIVE_ACTION__';" +
-                    "    }" +
                     "    if (json.authorizationCode) return json.authorizationCode;" +
                     "    if (json.code) return json.code;" +
+                    "    if (json.redirectUrl) {" +
+                    "      var m = json.redirectUrl.match(/[?&]code=([a-f0-9]{32})/i);" +
+                    "      if (m) return m[1];" +
+                    "    }" +
                     "  } catch(e) {}" +
-                    "  var m = (document.body.innerText || '').match(/authorizationCode[\"']?\\s*[:\\s]\\s*[\"']([a-f0-9]{32})[\"']/i);" +
-                    "  if (m) return m[1];" +
+                    "" +
+                    "  // 2) Search for code in page text via regex" +
+                    "  var patterns = [" +
+                    "    /authorizationCode[\"'\\s:]+([a-f0-9]{32})/i," +
+                    "    /\\\"code\\\"\\s*:\\s*\\\"([a-f0-9]{32})\\\"/i," +
+                    "    /['\"]authorizationCode['\"]\\s*[:,]\\s*['\"]([a-f0-9]{32})['\"]/" +
+                    "  ];" +
+                    "  for (var i = 0; i < patterns.length; i++) {" +
+                    "    var m = text.match(patterns[i]) || html.match(patterns[i]);" +
+                    "    if (m) return m[1];" +
+                    "  }" +
+                    "" +
+                    "  // 3) Check embedded JSON in <script> tags" +
+                    "  var scripts = document.querySelectorAll('script');" +
+                    "  for (var j = 0; j < scripts.length; j++) {" +
+                    "    var src = scripts[j].textContent || '';" +
+                    "    for (var k = 0; k < patterns.length; k++) {" +
+                    "      var sm = src.match(patterns[k]);" +
+                    "      if (sm) return sm[1];" +
+                    "    }" +
+                    "  }" +
+                    "" +
+                    "  // 4) Check hidden inputs or data attributes" +
+                    "  var codeEl = document.querySelector('[name=code],[name=authorizationCode],[data-code],[data-authorization-code]');" +
+                    "  if (codeEl) {" +
+                    "    var val = codeEl.value || codeEl.getAttribute('data-code') || codeEl.getAttribute('data-authorization-code');" +
+                    "    if (val && val.length >= 30) return val;" +
+                    "  }" +
+                    "" +
                     "  return null;" +
                     "})()",
                     function(code) {
@@ -1505,9 +1659,11 @@ Rectangle {
                             epicWizard.awaitingPolicyAcceptance = true
                             epicLoginWebView.url = "https://www.epicgames.com"
                         } else if (code && code.length > 10) {
-                            console.log("[epic-browser] Got authorization code, length:", code.length)
+                            console.log("[epic-browser] Got authorization code from page, length:", code.length)
                             epicAuthCodePollTimer.stop()
                             epicLoginWebView.url = "about:blank"
+                            epicPopupWebView.url = "about:blank"
+                            epicPopupWebView.visible = false
                             epicWizard.epicBrowserOpen = false
                             epicWizard.loginInProgress = true
                             GameManager.epicLoginWithCode(code)

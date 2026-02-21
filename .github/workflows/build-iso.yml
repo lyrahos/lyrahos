@@ -311,7 +311,8 @@ jobs:
                 gcc \
                 make \
                 qt6-qtwebsockets \
-                xdotool
+                xdotool \
+                pipx
 
               dnf clean all --installroot=/rootfs
 
