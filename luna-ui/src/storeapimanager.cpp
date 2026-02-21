@@ -1586,6 +1586,19 @@ QString StoreApiManager::getStoreName(int storeId)
 {
     if (m_storeNames.contains(storeId))
         return m_storeNames[storeId];
+
+    // Fallback names for key stores (used when fetchStores() hasn't completed)
+    static const QHash<int, QString> fallbackNames = {
+        {1, "Steam"}, {2, "GamersGate"}, {3, "GreenManGaming"},
+        {7, "GOG"}, {8, "Origin"}, {11, "Humble Store"},
+        {13, "Uplay"}, {15, "Fanatical"}, {21, "WinGameStore"},
+        {23, "GameBillet"}, {24, "Voidu"}, {25, "Epic Games Store"},
+        {27, "Gamesplanet"}, {29, "2Game"}, {30, "IndieGala"},
+        {33, "DLGamer"}, {34, "Noctre"}, {35, "DreamGame"},
+    };
+    if (fallbackNames.contains(storeId))
+        return fallbackNames[storeId];
+
     return "Store #" + QString::number(storeId);
 }
 

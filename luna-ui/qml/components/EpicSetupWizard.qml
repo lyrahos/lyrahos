@@ -65,6 +65,11 @@ Rectangle {
         closed()
     }
 
+    // Helper: returns the popup view when visible, else the main login view
+    function activeWebView() {
+        return epicPopupWebView.visible ? epicPopupWebView : epicLoginWebView
+    }
+
     onCurrentStepChanged: {
         wizFocusIndex = 0
         errorMessage = ""
@@ -1262,12 +1267,15 @@ Rectangle {
                 return
             }
 
+            // Route navigation to the popup when it's visible, otherwise main view
+            var view = epicPopupWebView.visible ? epicPopupWebView : epicLoginWebView
+
             switch (action) {
             case "navigate_up":
-                // When awaiting policy, check if we hit the top boundary
+                // When awaiting policy (main view only), check if we hit the top boundary
                 // so we can shift focus to the Retry button in the header.
-                if (epicWizard.awaitingPolicyAcceptance) {
-                    epicLoginWebView.runJavaScript(
+                if (epicWizard.awaitingPolicyAcceptance && !epicPopupWebView.visible) {
+                    view.runJavaScript(
                         "window.__lunaNav && window.__lunaNav.move('up')",
                         function(result) {
                             logResult(result)
@@ -1276,20 +1284,20 @@ Rectangle {
                             }
                         })
                 } else {
-                    epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
+                    view.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
                 }
                 break
             case "navigate_down":
-                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
+                view.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
                 break
             case "navigate_left":
-                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
+                view.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
                 break
             case "navigate_right":
-                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
+                view.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
                 break
             case "confirm":
-                epicLoginWebView.runJavaScript(
+                view.runJavaScript(
                     "window.__lunaNav && window.__lunaNav.activate()",
                     function(result) {
                         console.log("[epic-browser] activate result:", result)
@@ -1305,10 +1313,10 @@ Rectangle {
                     })
                 break
             case "scroll_up":
-                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
+                view.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
                 break
             case "scroll_down":
-                epicLoginWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
+                view.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
                 break
             case "back":
                 // If a popup overlay is open, close that first
@@ -1551,6 +1559,10 @@ Rectangle {
                             loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
                             "status=" + loadRequest.status,
                             "url:", loadRequest.url)
+                if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                    // Inject controller navigation overlay into the popup
+                    epicPopupNavInjectTimer.restart()
+                }
             }
 
             // Nested popups: open in the same overlay
@@ -1686,6 +1698,20 @@ Rectangle {
                     })
             }
         }
+
+        // Inject navigation overlay into popup windows (social login, etc.)
+        Timer {
+            id: epicPopupNavInjectTimer
+            interval: 800
+            repeat: false
+            onTriggered: {
+                console.log("[epic-browser-popup] injecting navigation overlay into popup")
+                epicPopupWebView.runJavaScript(epicWizard.navOverlayScript,
+                    function(result) {
+                        console.log("[epic-browser-popup] nav inject result:", result)
+                    })
+            }
+        }
     }
 
     // ─── Virtual Keyboard for Epic Browser ───
@@ -1697,7 +1723,8 @@ Rectangle {
             if (epicWizard.browserInputActive) {
                 epicWizard.browserInputActive = false
                 var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-                epicLoginWebView.runJavaScript(
+                var view = epicPopupWebView.visible ? epicPopupWebView : epicLoginWebView
+                view.runJavaScript(
                     "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
                     function(result) {
                         console.log("[epic-browser] setText result:", result)
