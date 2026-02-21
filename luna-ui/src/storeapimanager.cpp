@@ -25,6 +25,26 @@ static const QString TWITCH_TOKEN    = "https://id.twitch.tv/oauth2/token";
 static const QString STEAM_CDN       = "https://cdn.akamai.steamstatic.com/steam/apps";
 static const QString STEAM_STORE_API = "https://store.steampowered.com/api";
 
+static const QString IGDB_BROWSE_FIELDS =
+    "name,summary,cover.url,"
+    "screenshots.url,artworks.url,"
+    "genres.name,platforms.name,first_release_date,"
+    "total_rating,total_rating_count,"
+    "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
+    "external_games.uid,external_games.category,"
+    "websites.url,websites.category";
+
+static const QString IGDB_DETAIL_FIELDS =
+    "name,summary,storyline,cover.url,"
+    "screenshots.url,artworks.url,"
+    "genres.name,platforms.name,first_release_date,"
+    "rating,aggregated_rating,total_rating,total_rating_count,"
+    "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
+    "game_modes.name,themes.name,player_perspectives.name,"
+    "videos.video_id,"
+    "external_games.uid,external_games.category,"
+    "websites.url,websites.category";
+
 // Normalize a game title for fuzzy matching
 static QString normalizeTitle(const QString& title) {
     QString norm = title.toLower().trimmed();
@@ -1565,26 +1585,6 @@ void StoreApiManager::fetchBrowsePrices(QVariantList games, const QString& secti
 }
 
 // ─── IGDB Shared Fields & Parsing ───
-
-static const QString IGDB_BROWSE_FIELDS =
-    "name,summary,cover.url,"
-    "screenshots.url,artworks.url,"
-    "genres.name,platforms.name,first_release_date,"
-    "total_rating,total_rating_count,"
-    "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
-    "external_games.uid,external_games.category,"
-    "websites.url,websites.category";
-
-static const QString IGDB_DETAIL_FIELDS =
-    "name,summary,storyline,cover.url,"
-    "screenshots.url,artworks.url,"
-    "genres.name,platforms.name,first_release_date,"
-    "rating,aggregated_rating,total_rating,total_rating_count,"
-    "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
-    "game_modes.name,themes.name,player_perspectives.name,"
-    "videos.video_id,"
-    "external_games.uid,external_games.category,"
-    "websites.url,websites.category";
 
 QVariantMap StoreApiManager::parseIGDBGame(const QJsonObject& obj)
 {
