@@ -7,61 +7,53 @@ Item {
     id: storePage
 
     // ─── State ───
+    property var featuredGames: []
+    property var newReleases: []
+    property var topRated: []
     property var topDeals: []
     property var recentDeals: []
     property var searchResults: []
     property bool isSearching: false
+    property bool loadingFeatured: true
+    property bool loadingNewReleases: true
+    property bool loadingTopRated: true
     property bool loadingTopDeals: true
     property bool loadingRecentDeals: true
     property bool loadingSearch: false
     property string searchQuery: ""
-    property string currentSort: "Deal Rating"
     property int currentPage: 0
     property bool hasNetwork: GameManager.isNetworkAvailable()
-    property bool appendNextDeals: false  // true when "Load More" is pending
-    property string topDealsError: ""
-    property string recentDealsError: ""
+    property bool appendNextDeals: false
 
     // ─── Embedded Store Browser ───
     property bool storeBrowserOpen: false
     property string storeBrowserTitle: ""
     property bool storeBrowserInputActive: false
 
-    // Sort options
-    property var sortOptions: [
-        { label: "Best Deals",  value: "Deal Rating" },
-        { label: "Lowest Price", value: "Price" },
-        { label: "Highest Metacritic", value: "Metacritic" },
-        { label: "Best Reviews", value: "Reviews" },
-        { label: "Newest",      value: "recent" }
-    ]
-
     // ─── Keyboard Navigation ───
-    // Zones: "searchBar", "sortChips", "hero", "trending", "dealsGrid", "loadMore"
-    // Search mode zones: "searchBar", "backToStore", "searchResults"
+    // Zones: "searchBar", "hero", "newReleases", "topRated", "deals", "trending", "loadMore"
+    // Search mode: "searchBar", "backToStore", "searchResults"
     property string navZone: ""
-    property int sortChipFocusIndex: 0
     property int heroDotFocusIndex: 0
+    property int newReleaseFocusIndex: 0
+    property int topRatedFocusIndex: 0
+    property int dealsFocusIndex: 0
     property int trendingFocusIndex: 0
-    property int dealGridFocusIndex: 0
     property int searchResultFocusIndex: 0
     property bool hasKeyboardFocus: false
 
     signal requestNavFocus()
 
-    // Direct key handler — ensures controller events are processed
-    // even if parent-chain propagation through Loader/StackLayout fails
     Keys.onPressed: function(event) {
         handleStoreKeys(event)
     }
 
     function gainFocus() {
         hasKeyboardFocus = true
-        // Start at hero if available, else search bar
         if (isSearching) {
             navZone = "searchResults"
             searchResultFocusIndex = 0
-        } else if (topDeals.length > 0) {
+        } else if (featuredGames.length > 0) {
             navZone = "hero"
         } else {
             navZone = "searchBar"
@@ -74,7 +66,6 @@ Item {
         navZone = ""
     }
 
-    // Navigate to the next zone down
     function nextZone() {
         if (isSearching) {
             switch (navZone) {
@@ -82,84 +73,85 @@ Item {
             case "backToStore":
                 if (searchResults.length > 0) { navZone = "searchResults"; searchResultFocusIndex = 0 }
                 break
-            case "searchResults": break // bottom
+            case "searchResults": break
             }
         } else {
             switch (navZone) {
-            case "searchBar": navZone = "sortChips"; sortChipFocusIndex = 0; break
-            case "sortChips":
-                if (topDeals.length > 0) { navZone = "hero"; heroDotFocusIndex = heroBanner.featuredIndex }
+            case "searchBar":
+                if (featuredGames.length > 0) { navZone = "hero"; heroDotFocusIndex = heroBanner.featuredIndex }
+                else if (newReleases.length > 0) { navZone = "newReleases"; newReleaseFocusIndex = 0 }
                 break
             case "hero":
+                if (newReleases.length > 0) { navZone = "newReleases"; newReleaseFocusIndex = 0 }
+                else if (topRated.length > 0) { navZone = "topRated"; topRatedFocusIndex = 0 }
+                break
+            case "newReleases":
+                if (topRated.length > 0) { navZone = "topRated"; topRatedFocusIndex = 0 }
+                else if (topDeals.length > 0) { navZone = "deals"; dealsFocusIndex = 0 }
+                break
+            case "topRated":
+                if (topDeals.length > 0) { navZone = "deals"; dealsFocusIndex = 0 }
+                else if (recentDeals.length > 0) { navZone = "trending"; trendingFocusIndex = 0 }
+                break
+            case "deals":
                 if (recentDeals.length > 0) { navZone = "trending"; trendingFocusIndex = 0 }
-                else if (topDeals.length > 1) { navZone = "dealsGrid"; dealGridFocusIndex = 0 }
+                else navZone = "loadMore"
                 break
-            case "trending":
-                if (topDeals.length > 1 || (currentSort !== "Deal Rating" && topDeals.length > 0)) {
-                    navZone = "dealsGrid"; dealGridFocusIndex = 0
-                }
-                break
-            case "dealsGrid": navZone = "loadMore"; break
-            case "loadMore": break // bottom
+            case "trending": navZone = "loadMore"; break
+            case "loadMore": break
             }
         }
     }
 
-    // Navigate to the previous zone up
     function prevZone() {
         if (isSearching) {
             switch (navZone) {
-            case "searchBar": break // top — parent handles going to tab bar
+            case "searchBar": break
             case "backToStore": navZone = "searchBar"; break
             case "searchResults": navZone = "backToStore"; break
             }
         } else {
             switch (navZone) {
-            case "searchBar": break // top
-            case "sortChips": navZone = "searchBar"; break
-            case "hero":
-                navZone = "sortChips"
-                // Find the index of the currently active sort chip
-                for (var i = 0; i < sortOptions.length; i++) {
-                    if (sortOptions[i].value === currentSort) { sortChipFocusIndex = i; break }
-                }
+            case "searchBar": break
+            case "hero": navZone = "searchBar"; break
+            case "newReleases":
+                if (featuredGames.length > 0) navZone = "hero"
+                else navZone = "searchBar"
                 break
-            case "trending": navZone = "hero"; break
-            case "dealsGrid":
-                if (recentDeals.length > 0) navZone = "trending"
+            case "topRated":
+                if (newReleases.length > 0) navZone = "newReleases"
+                else if (featuredGames.length > 0) navZone = "hero"
+                else navZone = "searchBar"
+                break
+            case "deals":
+                if (topRated.length > 0) navZone = "topRated"
+                else if (newReleases.length > 0) navZone = "newReleases"
                 else navZone = "hero"
                 break
-            case "loadMore": navZone = "dealsGrid"; break
+            case "trending":
+                if (topDeals.length > 0) navZone = "deals"
+                else navZone = "topRated"
+                break
+            case "loadMore":
+                if (recentDeals.length > 0) navZone = "trending"
+                else if (topDeals.length > 0) navZone = "deals"
+                break
             }
         }
     }
 
     function handleStoreKeys(event) {
-        // If store browser is open, it handles input via Connections
-        if (storeBrowserOpen) {
-            event.accepted = true
-            return
-        }
-
-        // If virtual keyboard is open, it handles its own keys
-        if (storeVirtualKeyboard.visible) {
-            event.accepted = true
-            return
-        }
-
-        // If detail popup is open, let it handle keys
-        if (detailPopup.visible) {
-            detailPopup.handleKeys(event)
-            event.accepted = true
-            return
-        }
+        if (storeBrowserOpen) { event.accepted = true; return }
+        if (storeVirtualKeyboard.visible) { event.accepted = true; return }
+        if (detailPopup.visible) { detailPopup.handleKeys(event); event.accepted = true; return }
 
         switch (navZone) {
         case "searchBar": handleSearchBarKeys(event); break
-        case "sortChips": handleSortChipKeys(event); break
         case "hero": handleHeroKeys(event); break
-        case "trending": handleTrendingKeys(event); break
-        case "dealsGrid": handleDealsGridKeys(event); break
+        case "newReleases": handleHScrollKeys(event, "newReleases", newReleases, newReleaseFocusIndex, function(i) { newReleaseFocusIndex = i }); break
+        case "topRated": handleHScrollKeys(event, "topRated", topRated, topRatedFocusIndex, function(i) { topRatedFocusIndex = i }); break
+        case "deals": handleHScrollKeys(event, "deals", topDeals, dealsFocusIndex, function(i) { dealsFocusIndex = i }); break
+        case "trending": handleHScrollKeys(event, "trending", recentDeals, trendingFocusIndex, function(i) { trendingFocusIndex = i }); break
         case "loadMore": handleLoadMoreKeys(event); break
         case "backToStore": handleBackToStoreKeys(event); break
         case "searchResults": handleSearchResultsKeys(event); break
@@ -168,10 +160,7 @@ Item {
 
     function handleSearchBarKeys(event) {
         switch (event.key) {
-        case Qt.Key_Left:
-            requestNavFocus()
-            event.accepted = true
-            break
+        case Qt.Key_Left: requestNavFocus(); event.accepted = true; break
         case Qt.Key_Down:
             searchInput.focus = false
             nextZone()
@@ -180,8 +169,6 @@ Item {
             break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            // Open virtual keyboard instead of focusing raw TextInput
-            // (directly focusing TextInput freezes controller navigation)
             storeVirtualKeyboard.placeholderText = "Search games..."
             storeVirtualKeyboard.open(searchInput.text)
             event.accepted = true
@@ -189,39 +176,14 @@ Item {
         }
     }
 
-    function handleSortChipKeys(event) {
-        switch (event.key) {
-        case Qt.Key_Left:
-            if (sortChipFocusIndex > 0) sortChipFocusIndex--
-            else requestNavFocus()
-            event.accepted = true
-            break
-        case Qt.Key_Right:
-            if (sortChipFocusIndex < sortOptions.length - 1) sortChipFocusIndex++
-            event.accepted = true
-            break
-        case Qt.Key_Up: prevZone(); event.accepted = true; break
-        case Qt.Key_Down: nextZone(); event.accepted = true; break
-        case Qt.Key_Return:
-        case Qt.Key_Enter:
-            var opt = sortOptions[sortChipFocusIndex]
-            currentSort = opt.value
-            currentPage = 0
-            storePage.loadingTopDeals = true
-            StoreApi.fetchDeals(opt.value, 0, 30)
-            event.accepted = true
-            break
-        }
-    }
-
     function handleHeroKeys(event) {
-        var dotCount = Math.min(topDeals.length, 5)
+        var dotCount = Math.min(featuredGames.length, 5)
         switch (event.key) {
         case Qt.Key_Left:
             if (heroDotFocusIndex > 0) {
                 heroDotFocusIndex--
                 heroBanner.featuredIndex = heroDotFocusIndex
-                heroBanner.featuredDeal = topDeals[heroDotFocusIndex]
+                heroBanner.featuredGame = featuredGames[heroDotFocusIndex]
                 heroRotateTimer.restart()
             } else {
                 requestNavFocus()
@@ -232,7 +194,7 @@ Item {
             if (heroDotFocusIndex < dotCount - 1) {
                 heroDotFocusIndex++
                 heroBanner.featuredIndex = heroDotFocusIndex
-                heroBanner.featuredDeal = topDeals[heroDotFocusIndex]
+                heroBanner.featuredGame = featuredGames[heroDotFocusIndex]
                 heroRotateTimer.restart()
             }
             event.accepted = true
@@ -241,64 +203,30 @@ Item {
         case Qt.Key_Down: nextZone(); event.accepted = true; break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            if (heroBanner.featuredDeal) detailPopup.open(heroBanner.featuredDeal)
+            if (heroBanner.featuredGame) detailPopup.open(heroBanner.featuredGame)
             event.accepted = true
             break
         }
     }
 
-    function handleTrendingKeys(event) {
+    // Generic handler for horizontal scroll sections
+    function handleHScrollKeys(event, zone, dataArray, focusIdx, setIdx) {
         switch (event.key) {
         case Qt.Key_Left:
-            if (trendingFocusIndex > 0) trendingFocusIndex--
+            if (focusIdx > 0) setIdx(focusIdx - 1)
             else requestNavFocus()
             event.accepted = true
             break
         case Qt.Key_Right:
-            if (trendingFocusIndex < recentDeals.length - 1) trendingFocusIndex++
+            if (focusIdx < dataArray.length - 1) setIdx(focusIdx + 1)
             event.accepted = true
             break
         case Qt.Key_Up: prevZone(); event.accepted = true; break
         case Qt.Key_Down: nextZone(); event.accepted = true; break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            if (trendingFocusIndex >= 0 && trendingFocusIndex < recentDeals.length)
-                detailPopup.open(recentDeals[trendingFocusIndex])
-            event.accepted = true
-            break
-        }
-    }
-
-    function handleDealsGridKeys(event) {
-        var gridDeals = (currentSort === "Deal Rating" && topDeals.length > 1) ? topDeals.slice(1) : topDeals
-        var cols = Math.max(1, Math.floor(mainFlickable.width / (Math.floor((mainFlickable.width - 48) / 3) + 16)))
-        if (cols < 1) cols = 3
-        var count = gridDeals.length
-        var idx = dealGridFocusIndex
-
-        switch (event.key) {
-        case Qt.Key_Left:
-            if (idx % cols === 0) requestNavFocus()
-            else dealGridFocusIndex = idx - 1
-            event.accepted = true
-            break
-        case Qt.Key_Right:
-            if (idx < count - 1) dealGridFocusIndex = idx + 1
-            event.accepted = true
-            break
-        case Qt.Key_Up:
-            if (idx - cols < 0) prevZone()
-            else dealGridFocusIndex = idx - cols
-            event.accepted = true
-            break
-        case Qt.Key_Down:
-            if (idx + cols >= count) nextZone()
-            else dealGridFocusIndex = idx + cols
-            event.accepted = true
-            break
-        case Qt.Key_Return:
-        case Qt.Key_Enter:
-            if (idx >= 0 && idx < count) detailPopup.open(gridDeals[idx])
+            if (focusIdx >= 0 && focusIdx < dataArray.length)
+                detailPopup.open(dataArray[focusIdx])
             event.accepted = true
             break
         }
@@ -313,7 +241,7 @@ Item {
             currentPage++
             storePage.appendNextDeals = true
             storePage.loadingTopDeals = true
-            StoreApi.fetchDeals(currentSort, currentPage, 30)
+            StoreApi.fetchDeals("Deal Rating", currentPage, 30)
             event.accepted = true
             break
         }
@@ -326,14 +254,12 @@ Item {
         case Qt.Key_Left: requestNavFocus(); event.accepted = true; break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            clearSearch()
-            event.accepted = true
-            break
+            clearSearch(); event.accepted = true; break
         }
     }
 
     function handleSearchResultsKeys(event) {
-        var cols = 3
+        var cols = Math.max(1, Math.floor(mainFlickable.width / 220))
         var count = searchResults.length
         var idx = searchResultFocusIndex
 
@@ -341,99 +267,47 @@ Item {
         case Qt.Key_Left:
             if (idx % cols === 0) requestNavFocus()
             else searchResultFocusIndex = idx - 1
-            event.accepted = true
-            break
+            event.accepted = true; break
         case Qt.Key_Right:
             if (idx < count - 1) searchResultFocusIndex = idx + 1
-            event.accepted = true
-            break
+            event.accepted = true; break
         case Qt.Key_Up:
             if (idx - cols < 0) prevZone()
             else searchResultFocusIndex = idx - cols
-            event.accepted = true
-            break
+            event.accepted = true; break
         case Qt.Key_Down:
             if (idx + cols < count) searchResultFocusIndex = idx + cols
-            event.accepted = true
-            break
+            event.accepted = true; break
         case Qt.Key_Return:
         case Qt.Key_Enter:
             if (idx >= 0 && idx < count) detailPopup.open(searchResults[idx])
-            event.accepted = true
-            break
+            event.accepted = true; break
         }
     }
 
-    // Ensure focused items in grids/trending are scrolled into view
-    onDealGridFocusIndexChanged: if (navZone === "dealsGrid") ensureDealVisible(dealGridFocusIndex)
-    onTrendingFocusIndexChanged: if (navZone === "trending") ensureTrendingVisible(trendingFocusIndex)
-
-    function ensureDealVisible(idx) {
-        // Scroll mainFlickable so the focused deal card is visible
-        var cardW = Math.floor((mainFlickable.width - 48) / 3)
-        var cardH = cardW * 0.55
-        var cols = 3
-        var row = Math.floor(idx / cols)
-        // Approximate Y position of the deals grid within mainContent
-        var gridY = dealsGridSection.y + (row * (cardH + 16))
-        var viewTop = mainFlickable.contentY
-        var viewBottom = viewTop + mainFlickable.height
-        if (gridY < viewTop) mainFlickable.contentY = gridY - 20
-        else if (gridY + cardH > viewBottom) mainFlickable.contentY = gridY + cardH - mainFlickable.height + 20
-    }
-
-    function ensureTrendingVisible(idx) {
-        var targetX = idx * (420 + 16)
-        var viewLeft = trendingList.contentX
-        var viewRight = viewLeft + trendingList.width
-        if (targetX < viewLeft) trendingList.contentX = targetX - 10
-        else if (targetX + 420 > viewRight) trendingList.contentX = targetX + 420 - trendingList.width + 10
-    }
-
-    // Scroll the main Flickable so the active navZone is visible on screen
+    // Scroll focused items into view
     onNavZoneChanged: if (hasKeyboardFocus) ensureZoneVisible()
 
     function ensureZoneVisible() {
         var targetY = -1
         var targetH = 0
-
         switch (navZone) {
-        case "hero":
-            targetY = heroBanner.y
-            targetH = heroBanner.height
-            break
-        case "trending":
-            targetY = trendingSection.y
-            targetH = trendingSection.height
-            break
-        case "dealsGrid":
-            targetY = dealsGridSection.y
-            targetH = Math.min(dealsGridSection.height, mainFlickable.height)
-            break
-        case "loadMore":
-            // loadMore is at the bottom of dealsGridSection
-            targetY = dealsGridSection.y + dealsGridSection.height - 56
-            targetH = 56
-            break
-        default:
-            // searchBar, sortChips are above the Flickable; scroll to top
-            mainFlickable.contentY = 0
-            return
+        case "hero": targetY = heroBanner.y; targetH = heroBanner.height; break
+        case "newReleases": targetY = newReleasesSection.y; targetH = newReleasesSection.height; break
+        case "topRated": targetY = topRatedSection.y; targetH = topRatedSection.height; break
+        case "deals": targetY = dealsSection.y; targetH = dealsSection.height; break
+        case "trending": targetY = trendingSection.y; targetH = trendingSection.height; break
+        case "loadMore": targetY = loadMoreBtn.y; targetH = loadMoreBtn.height; break
+        default: mainFlickable.contentY = 0; return
         }
-
         if (targetY < 0) return
-
         var viewTop = mainFlickable.contentY
         var viewBottom = viewTop + mainFlickable.height
-
-        if (targetY < viewTop) {
-            mainFlickable.contentY = Math.max(0, targetY - 20)
-        } else if (targetY + targetH > viewBottom) {
-            mainFlickable.contentY = targetY + targetH - mainFlickable.height + 20
-        }
+        if (targetY < viewTop) mainFlickable.contentY = Math.max(0, targetY - 20)
+        else if (targetY + targetH > viewBottom) mainFlickable.contentY = targetY + targetH - mainFlickable.height + 20
     }
 
-    // Periodically check network status
+    // Network check
     Timer {
         id: storeNetworkCheck
         interval: 3000
@@ -442,70 +316,79 @@ Item {
         onTriggered: {
             var wasOffline = !storePage.hasNetwork
             storePage.hasNetwork = GameManager.isNetworkAvailable()
-            // Auto-load deals when coming back online
-            if (wasOffline && storePage.hasNetwork) {
-                storePage.loadingTopDeals = true
-                storePage.loadingRecentDeals = true
-                StoreApi.fetchDeals(storePage.currentSort, 0, 30)
-                StoreApi.fetchRecentDeals(20)
-            }
+            if (wasOffline && storePage.hasNetwork) loadAllData()
         }
+    }
+
+    function loadAllData() {
+        loadingFeatured = true
+        loadingNewReleases = true
+        loadingTopRated = true
+        loadingTopDeals = true
+        loadingRecentDeals = true
+        StoreApi.fetchIGDBFeatured()
+        StoreApi.fetchIGDBNewReleases()
+        StoreApi.fetchIGDBTopRated()
+        StoreApi.fetchDeals("Deal Rating", 0, 20)
+        StoreApi.fetchRecentDeals(20)
     }
 
     Component.onCompleted: {
         hasNetwork = GameManager.isNetworkAvailable()
-        if (hasNetwork) {
-            StoreApi.fetchDeals("Deal Rating", 0, 30)
-            StoreApi.fetchRecentDeals(20)
-        }
+        if (hasNetwork) loadAllData()
     }
 
     // ─── API Connections ───
     Connections {
         target: StoreApi
 
+        function onIgdbFeaturedReady(games) {
+            storePage.featuredGames = games
+            storePage.loadingFeatured = false
+        }
+        function onIgdbFeaturedError(error) {
+            storePage.loadingFeatured = false
+            console.warn("IGDB featured failed:", error)
+        }
+        function onIgdbNewReleasesReady(games) {
+            storePage.newReleases = games
+            storePage.loadingNewReleases = false
+        }
+        function onIgdbNewReleasesError(error) {
+            storePage.loadingNewReleases = false
+        }
+        function onIgdbTopRatedReady(games) {
+            storePage.topRated = games
+            storePage.loadingTopRated = false
+        }
+        function onIgdbTopRatedError(error) {
+            storePage.loadingTopRated = false
+        }
         function onDealsReady(deals) {
             if (storePage.isSearching) return
             if (storePage.appendNextDeals) {
-                // "Load More" — append new deals to existing list
                 storePage.topDeals = storePage.topDeals.concat(deals)
                 storePage.appendNextDeals = false
             } else {
                 storePage.topDeals = deals
             }
-            storePage.topDealsError = ""
             storePage.loadingTopDeals = false
         }
-
         function onDealsError(error) {
             storePage.loadingTopDeals = false
             storePage.appendNextDeals = false
-            storePage.topDealsError = error
-            console.warn("Failed to fetch deals:", error)
         }
-
         function onRecentDealsReady(deals) {
             storePage.recentDeals = deals
-            storePage.recentDealsError = ""
             storePage.loadingRecentDeals = false
         }
-
         function onRecentDealsError(error) {
             storePage.loadingRecentDeals = false
-            storePage.recentDealsError = error
         }
-
         function onSearchResultsReady(results) {
-            // Only show games that have a price (from CheapShark or scraped)
-            var filtered = []
-            for (var i = 0; i < results.length; i++) {
-                if (results[i].hasPrice === true)
-                    filtered.push(results[i])
-            }
-            storePage.searchResults = filtered
+            storePage.searchResults = results
             storePage.loadingSearch = false
         }
-
         function onSearchError(error) {
             storePage.loadingSearch = false
         }
@@ -534,7 +417,7 @@ Item {
 
         Text {
             text: "No Internet Connection"
-            font.pixelSize: 48
+            font.pixelSize: 44
             font.family: ThemeManager.getFont("heading")
             font.bold: true
             color: ThemeManager.getColor("textPrimary")
@@ -542,204 +425,116 @@ Item {
         }
 
         Text {
-            text: "Connect to the internet to browse game deals"
-            font.pixelSize: 28
+            text: "Connect to the internet to browse games"
+            font.pixelSize: 26
             font.family: ThemeManager.getFont("body")
             color: ThemeManager.getColor("textSecondary")
             Layout.alignment: Qt.AlignHCenter
         }
-
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: settingsBtnLabel.width + 56
-            Layout.preferredHeight: 64
-            radius: 14
-            color: settingsBtnArea.containsMouse
-                   ? Qt.darker(ThemeManager.getColor("primary"), 1.1)
-                   : ThemeManager.getColor("primary")
-
-            Behavior on color { ColorAnimation { duration: 150 } }
-
-            Text {
-                id: settingsBtnLabel
-                anchors.centerIn: parent
-                text: "Open Settings"
-                font.pixelSize: 28
-                font.family: ThemeManager.getFont("ui")
-                font.bold: true
-                color: "#ffffff"
-            }
-
-            MouseArea {
-                id: settingsBtnArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    navBar.currentIndex = 3
-                    navBar.sectionChanged("Settings")
-                }
-            }
-        }
     }
 
-    // ─── Main Layout ───
+    // ═══════════════════════════════════════════
+    // ─── MAIN LAYOUT ───
+    // ═══════════════════════════════════════════
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
         visible: storePage.hasNetwork
 
-        // ─── Top bar: Search + Sort ───
-        Rectangle {
+        // ─── Search Bar (Apple-style pill) ───
+        Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 76
-            color: "transparent"
+            Layout.preferredHeight: 72
+            Layout.leftMargin: 40
+            Layout.rightMargin: 40
 
-            RowLayout {
-                anchors.fill: parent
-                spacing: 16
+            Rectangle {
+                id: searchBarBg
+                anchors.centerIn: parent
+                width: Math.min(parent.width, 680)
+                height: 52
+                radius: 26
+                color: Qt.rgba(ThemeManager.getColor("surface").r,
+                               ThemeManager.getColor("surface").g,
+                               ThemeManager.getColor("surface").b, 0.85)
+                border.color: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar"))
+                              ? ThemeManager.getColor("focus")
+                              : Qt.rgba(1, 1, 1, 0.06)
+                border.width: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar")) ? 2 : 1
+                Behavior on border.color { ColorAnimation { duration: 150 } }
 
-                // Search bar
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 60
-                    radius: 14
-                    color: ThemeManager.getColor("surface")
-                    border.color: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar"))
-                                  ? ThemeManager.getColor("focus")
-                                  : Qt.rgba(1, 1, 1, 0.06)
-                    border.width: (searchInput.activeFocus || (hasKeyboardFocus && navZone === "searchBar")) ? 3 : 1
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 22
+                    anchors.rightMargin: 22
+                    spacing: 12
 
-                    Behavior on border.color { ColorAnimation { duration: 150 } }
+                    Text {
+                        text: "\u2315"
+                        font.pixelSize: 26
+                        color: ThemeManager.getColor("textSecondary")
+                        opacity: 0.6
+                    }
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 20
-                        anchors.rightMargin: 20
-                        spacing: 14
+                    TextInput {
+                        id: searchInput
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        verticalAlignment: TextInput.AlignVCenter
+                        font.pixelSize: 24
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textPrimary")
+                        clip: true
+                        selectByMouse: true
 
-                        // Search icon
-                        Text {
-                            text: "\u2315"
-                            font.pixelSize: 32
-                            color: ThemeManager.getColor("textSecondary")
-                        }
-
-                        TextInput {
-                            id: searchInput
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            verticalAlignment: TextInput.AlignVCenter
-                            font.pixelSize: 28
-                            font.family: ThemeManager.getFont("body")
-                            color: ThemeManager.getColor("textPrimary")
-                            clip: true
-                            selectByMouse: true
-
-                            onAccepted: {
-                                if (text.trim().length > 0) {
-                                    storePage.searchQuery = text.trim()
-                                    storePage.isSearching = true
-                                    storePage.loadingSearch = true
-                                    StoreApi.searchGames(text.trim())
-                                } else {
-                                    clearSearch()
-                                }
-                            }
-                        }
-
-                        // Placeholder
-                        Text {
-                            visible: searchInput.text === "" && !searchInput.activeFocus
-                            text: "Search games..."
-                            font.pixelSize: 28
-                            font.family: ThemeManager.getFont("body")
-                            color: ThemeManager.getColor("textSecondary")
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: searchInput.x
-                        }
-
-                        // Clear button
-                        Rectangle {
-                            visible: searchInput.text.length > 0
-                            Layout.preferredWidth: 48
-                            Layout.preferredHeight: 48
-                            radius: 24
-                            color: clearSearchArea.containsMouse
-                                   ? ThemeManager.getColor("hover") : "transparent"
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\u2715"
-                                font.pixelSize: 24
-                                color: ThemeManager.getColor("textSecondary")
-                            }
-
-                            MouseArea {
-                                id: clearSearchArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: clearSearch()
+                        onAccepted: {
+                            if (text.trim().length > 0) {
+                                storePage.searchQuery = text.trim()
+                                storePage.isSearching = true
+                                storePage.loadingSearch = true
+                                StoreApi.searchGames(text.trim())
+                            } else {
+                                clearSearch()
                             }
                         }
                     }
-                }
 
-                // Sort chips
-                Row {
-                    spacing: 10
-                    visible: !storePage.isSearching
+                    Text {
+                        visible: searchInput.text === "" && !searchInput.activeFocus
+                        text: "Search games..."
+                        font.pixelSize: 24
+                        font.family: ThemeManager.getFont("body")
+                        color: ThemeManager.getColor("textSecondary")
+                        opacity: 0.5
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: searchInput.x
+                    }
 
-                    Repeater {
-                        model: sortOptions
+                    Rectangle {
+                        visible: searchInput.text.length > 0
+                        Layout.preferredWidth: 36
+                        Layout.preferredHeight: 36
+                        radius: 18
+                        color: clearSearchArea.containsMouse ? ThemeManager.getColor("hover") : "transparent"
 
-                        Rectangle {
-                            property bool isKbFocused: hasKeyboardFocus && navZone === "sortChips" && sortChipFocusIndex === index
-                            width: sortChipText.width + 40
-                            height: 56
-                            radius: 12
-                            color: currentSort === modelData.value
-                                   ? ThemeManager.getColor("primary")
-                                   : ThemeManager.getColor("surface")
-                            border.color: (sortChipArea.containsMouse || isKbFocused)
-                                          ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (sortChipArea.containsMouse || isKbFocused) ? 3 : 0
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\u2715"
+                            font.pixelSize: 20
+                            color: ThemeManager.getColor("textSecondary")
+                        }
 
-                            Behavior on color { ColorAnimation { duration: 150 } }
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                            Text {
-                                id: sortChipText
-                                anchors.centerIn: parent
-                                text: modelData.label
-                                font.pixelSize: 24
-                                font.family: ThemeManager.getFont("ui")
-                                font.bold: currentSort === modelData.value
-                                color: currentSort === modelData.value
-                                       ? "#ffffff"
-                                       : ThemeManager.getColor("textSecondary")
-                            }
-
-                            MouseArea {
-                                id: sortChipArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    currentSort = modelData.value
-                                    currentPage = 0
-                                    storePage.loadingTopDeals = true
-                                    StoreApi.fetchDeals(modelData.value, 0, 30)
-                                }
-                            }
+                        MouseArea {
+                            id: clearSearchArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: clearSearch()
                         }
                     }
                 }
             }
         }
-
-        Item { height: 16; Layout.fillWidth: true }
 
         // ─── Content Area ───
         Flickable {
@@ -750,15 +545,12 @@ Item {
             clip: true
             flickableDirection: Flickable.VerticalFlick
             boundsBehavior: Flickable.StopAtBounds
-
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-            }
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
             ColumnLayout {
                 id: mainContent
                 width: mainFlickable.width
-                spacing: 32
+                spacing: 0
 
                 // ═══════════════════════════════
                 // Search Results Mode
@@ -766,17 +558,17 @@ Item {
                 ColumnLayout {
                     visible: storePage.isSearching
                     Layout.fillWidth: true
+                    Layout.leftMargin: 40
+                    Layout.rightMargin: 40
+                    Layout.topMargin: 16
                     spacing: 20
 
-                    // Search header
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 16
 
                         Text {
-                            text: loadingSearch
-                                  ? "Searching..."
-                                  : "Results for \"" + searchQuery + "\""
+                            text: loadingSearch ? "Searching..." : "Results for \u201C" + searchQuery + "\u201D"
                             font.pixelSize: 36
                             font.family: ThemeManager.getFont("heading")
                             font.bold: true
@@ -785,8 +577,8 @@ Item {
 
                         Text {
                             visible: !loadingSearch && searchResults.length > 0
-                            text: searchResults.length + " games found"
-                            font.pixelSize: 24
+                            text: searchResults.length + " games"
+                            font.pixelSize: 22
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                         }
@@ -795,20 +587,19 @@ Item {
 
                         Rectangle {
                             property bool isKbFocused: hasKeyboardFocus && navZone === "backToStore"
-                            Layout.preferredWidth: backLabel.width + 40
-                            Layout.preferredHeight: 56
-                            radius: 12
-                            color: ThemeManager.getColor("surface")
-                            border.color: (backBtnArea.containsMouse || isKbFocused)
-                                          ? ThemeManager.getColor("focus") : "transparent"
-                            border.width: (backBtnArea.containsMouse || isKbFocused) ? 3 : 0
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            Layout.preferredWidth: backLabel.width + 36
+                            Layout.preferredHeight: 44
+                            radius: 22
+                            color: (backBtnArea.containsMouse || isKbFocused)
+                                   ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
+                            border.color: isKbFocused ? ThemeManager.getColor("focus") : "transparent"
+                            border.width: isKbFocused ? 2 : 0
 
                             Text {
                                 id: backLabel
                                 anchors.centerIn: parent
                                 text: "Back to Store"
-                                font.pixelSize: 24
+                                font.pixelSize: 22
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: true
                                 color: ThemeManager.getColor("textPrimary")
@@ -824,69 +615,52 @@ Item {
                         }
                     }
 
-                    // Loading spinner
-                    ColumnLayout {
+                    // Loading
+                    Item {
                         visible: loadingSearch
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 200
                         Layout.alignment: Qt.AlignHCenter
-                        Layout.topMargin: 60
-                        spacing: 16
 
-                        Item {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth: 72
-                            Layout.preferredHeight: 72
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: 16
 
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: 72
-                                height: 72
-                                radius: 36
-                                color: "transparent"
-                                border.width: 5
-                                border.color: Qt.rgba(1, 1, 1, 0.1)
+                            Item {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 56
+                                Layout.preferredHeight: 56
 
                                 Rectangle {
-                                    width: 72
-                                    height: 72
-                                    radius: 36
-                                    color: "transparent"
-                                    border.width: 5
-                                    border.color: "transparent"
+                                    anchors.centerIn: parent; width: 56; height: 56; radius: 28
+                                    color: "transparent"; border.width: 4; border.color: Qt.rgba(1, 1, 1, 0.08)
 
                                     Rectangle {
-                                        width: 18
-                                        height: 5
-                                        radius: 2
-                                        color: ThemeManager.getColor("primary")
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.top: parent.top
-                                    }
-                                    Rectangle {
-                                        width: 5
-                                        height: 18
-                                        radius: 2
-                                        color: ThemeManager.getColor("primary")
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        anchors.right: parent.right
-                                    }
+                                        width: 56; height: 56; radius: 28
+                                        color: "transparent"; border.width: 4; border.color: "transparent"
 
-                                    RotationAnimation on rotation {
-                                        from: 0
-                                        to: 360
-                                        duration: 1200
-                                        loops: Animation.Infinite
-                                        running: loadingSearch
+                                        Rectangle {
+                                            width: 14; height: 4; radius: 2
+                                            color: ThemeManager.getColor("primary")
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            anchors.top: parent.top
+                                        }
+
+                                        RotationAnimation on rotation {
+                                            from: 0; to: 360; duration: 1000
+                                            loops: Animation.Infinite; running: loadingSearch
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "Searching IGDB & price sources..."
-                            font.pixelSize: 28
-                            font.family: ThemeManager.getFont("body")
-                            color: ThemeManager.getColor("textSecondary")
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: "Searching IGDB..."
+                                font.pixelSize: 24
+                                font.family: ThemeManager.getFont("body")
+                                color: ThemeManager.getColor("textSecondary")
+                            }
                         }
                     }
 
@@ -907,31 +681,31 @@ Item {
                         }
 
                         Text {
-                            text: "No Windows/Linux games with pricing found. Try a different search term."
+                            text: "Try a different search term"
                             font.pixelSize: 24
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                             Layout.alignment: Qt.AlignHCenter
-                            wrapMode: Text.WordWrap
-                            Layout.maximumWidth: 500
-                            horizontalAlignment: Text.AlignHCenter
                         }
                     }
 
-                    // Search results grid
+                    // Search results grid (portrait cards)
                     Flow {
                         visible: !loadingSearch && searchResults.length > 0
                         Layout.fillWidth: true
-                        spacing: 16
+                        spacing: 20
 
                         Repeater {
                             model: searchResults
 
                             StoreGameCard {
-                                width: Math.floor((mainFlickable.width - 64) / 3)
-                                height: width * 0.55
+                                width: 200
+                                height: 340
                                 gameTitle: modelData.title || ""
-                                headerImage: modelData.headerImage || modelData.coverUrl || modelData.thumb || ""
+                                coverImage: modelData.coverUrl || ""
+                                headerImage: modelData.headerImage || modelData.heroImage || ""
+                                genres: modelData.genres || ""
+                                developer: modelData.developer || ""
                                 salePrice: modelData.salePrice || modelData.cheapestPrice || ""
                                 normalPrice: modelData.normalPrice || ""
                                 savings: modelData.savings || ""
@@ -939,29 +713,31 @@ Item {
                                 steamRatingText: modelData.steamRatingText || ""
                                 steamAppID: modelData.steamAppID || ""
                                 gameID: modelData.cheapSharkGameID || ""
-                                storeID: modelData.storeID || ""
-                                dealRating: modelData.dealRating || ""
+                                rating: modelData.rating || 0
                                 isKeyboardFocused: hasKeyboardFocus && navZone === "searchResults" && searchResultFocusIndex === index
 
-                                onClicked: {
-                                    detailPopup.open(modelData)
-                                }
+                                onClicked: detailPopup.open(modelData)
                             }
                         }
                     }
+
+                    Item { Layout.preferredHeight: 32 }
                 }
 
                 // ═══════════════════════════════
-                // Normal Store Mode
+                // Normal Store Mode (IGDB-first)
                 // ═══════════════════════════════
 
-                // ─── Hero Banner (Featured Deal) ───
+                // ─── Hero Banner (Featured IGDB Game) ───
                 Rectangle {
                     id: heroBanner
-                    visible: !storePage.isSearching && topDeals.length > 0
+                    visible: !storePage.isSearching && (featuredGames.length > 0 || loadingFeatured)
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 420
-                    radius: 20
+                    Layout.preferredHeight: 480
+                    Layout.leftMargin: 40
+                    Layout.rightMargin: 40
+                    Layout.topMargin: 8
+                    radius: 24
                     clip: true
                     color: ThemeManager.getColor("surface")
                     border.color: (hasKeyboardFocus && navZone === "hero")
@@ -969,66 +745,52 @@ Item {
                     border.width: (hasKeyboardFocus && navZone === "hero") ? 3 : 0
                     Behavior on border.color { ColorAnimation { duration: 150 } }
 
-                    property var featuredDeal: topDeals.length > 0 ? topDeals[0] : null
+                    property var featuredGame: featuredGames.length > 0 ? featuredGames[0] : null
                     property int featuredIndex: 0
 
-                    // Auto-rotate featured game
                     Timer {
                         id: heroRotateTimer
-                        interval: 8000
-                        running: !storePage.isSearching && topDeals.length > 1 && storePage.visible
+                        interval: 7000
+                        running: !storePage.isSearching && featuredGames.length > 1 && storePage.visible
                         repeat: true
                         onTriggered: {
-                            heroBanner.featuredIndex = (heroBanner.featuredIndex + 1) % Math.min(topDeals.length, 5)
-                            heroBanner.featuredDeal = topDeals[heroBanner.featuredIndex]
+                            heroBanner.featuredIndex = (heroBanner.featuredIndex + 1) % Math.min(featuredGames.length, 5)
+                            heroBanner.featuredGame = featuredGames[heroBanner.featuredIndex]
                         }
                     }
 
-                    // Background image
+                    // Background artwork/screenshot (IGDB)
                     Image {
                         id: heroImage
                         anchors.fill: parent
-                        source: heroBanner.featuredDeal
-                                ? (heroBanner.featuredDeal.heroImage || heroBanner.featuredDeal.headerImage)
+                        source: heroBanner.featuredGame
+                                ? (heroBanner.featuredGame.heroImage || heroBanner.featuredGame.headerImage || "")
                                 : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: true
                         opacity: status === Image.Ready ? 1.0 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 500 } }
+                        Behavior on opacity { NumberAnimation { duration: 600 } }
                     }
 
-                    // Gradient overlays
+                    // Left gradient for text readability
                     Rectangle {
                         anchors.fill: parent
                         gradient: Gradient {
                             orientation: Gradient.Horizontal
-                            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.85) }
-                            GradientStop { position: 0.5; color: Qt.rgba(0, 0, 0, 0.4) }
+                            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.88) }
+                            GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.4) }
                             GradientStop { position: 1.0; color: "transparent" }
                         }
                     }
 
+                    // Bottom gradient
                     Rectangle {
                         anchors.fill: parent
                         gradient: Gradient {
                             GradientStop { position: 0.0; color: "transparent" }
-                            GradientStop { position: 0.8; color: Qt.rgba(0, 0, 0, 0.5) }
-                            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.8) }
-                        }
-                    }
-
-                    // Themed accent glow at top
-                    Rectangle {
-                        anchors.top: parent.top
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        height: 4
-                        gradient: Gradient {
-                            orientation: Gradient.Horizontal
-                            GradientStop { position: 0.0; color: ThemeManager.getColor("primary") }
-                            GradientStop { position: 0.5; color: ThemeManager.getColor("accent") }
-                            GradientStop { position: 1.0; color: ThemeManager.getColor("secondary") }
+                            GradientStop { position: 0.75; color: Qt.rgba(0, 0, 0, 0.3) }
+                            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.7) }
                         }
                     }
 
@@ -1036,34 +798,34 @@ Item {
                     ColumnLayout {
                         anchors.left: parent.left
                         anchors.bottom: parent.bottom
-                        anchors.leftMargin: 40
-                        anchors.bottomMargin: 36
+                        anchors.leftMargin: 48
+                        anchors.bottomMargin: 44
                         anchors.right: parent.horizontalCenter
-                        spacing: 10
+                        spacing: 12
 
-                        // Featured badge
+                        // "Featured" pill badge
                         Rectangle {
-                            Layout.preferredWidth: featuredLabel.width + 24
-                            Layout.preferredHeight: 38
-                            radius: 8
+                            Layout.preferredWidth: featuredLabel.width + 28
+                            Layout.preferredHeight: 34
+                            radius: 17
                             color: ThemeManager.getColor("primary")
 
                             Text {
                                 id: featuredLabel
                                 anchors.centerIn: parent
-                                text: "FEATURED DEAL"
-                                font.pixelSize: 22
+                                text: "FEATURED"
+                                font.pixelSize: 18
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: true
                                 color: "#ffffff"
-                                font.letterSpacing: 1.2
+                                font.letterSpacing: 1.5
                             }
                         }
 
-                        // Game title
+                        // Title
                         Text {
-                            text: heroBanner.featuredDeal ? heroBanner.featuredDeal.title : ""
-                            font.pixelSize: 48
+                            text: heroBanner.featuredGame ? heroBanner.featuredGame.title : ""
+                            font.pixelSize: 52
                             font.family: ThemeManager.getFont("heading")
                             font.bold: true
                             color: "#ffffff"
@@ -1071,67 +833,89 @@ Item {
                             Layout.fillWidth: true
                         }
 
-                        // Rating
+                        // Developer + Genre subtitle
                         Text {
-                            visible: heroBanner.featuredDeal &&
-                                     heroBanner.featuredDeal.steamRatingText !== "" &&
-                                     heroBanner.featuredDeal.steamRatingText !== "null"
-                            text: heroBanner.featuredDeal ? heroBanner.featuredDeal.steamRatingText : ""
-                            font.pixelSize: 24
+                            visible: heroBanner.featuredGame !== null
+                            text: {
+                                if (!heroBanner.featuredGame) return ""
+                                var parts = []
+                                if (heroBanner.featuredGame.developer) parts.push(heroBanner.featuredGame.developer)
+                                if (heroBanner.featuredGame.genres) parts.push(heroBanner.featuredGame.genres)
+                                return parts.join("  \u2022  ")
+                            }
+                            font.pixelSize: 22
                             font.family: ThemeManager.getFont("body")
-                            color: ThemeManager.getColor("textSecondary")
+                            color: Qt.rgba(1, 1, 1, 0.7)
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
                         }
 
-                        // Price row
+                        // Rating + Release date
                         RowLayout {
-                            spacing: 14
+                            spacing: 16
+                            visible: heroBanner.featuredGame !== null
 
-                            Rectangle {
-                                visible: {
-                                    if (!heroBanner.featuredDeal) return false
-                                    var s = parseFloat(heroBanner.featuredDeal.savings)
-                                    return !isNaN(s) && s > 0
-                                }
-                                Layout.preferredWidth: heroDiscText.width + 24
-                                Layout.preferredHeight: 44
-                                radius: 10
-                                color: "#4ade80"
+                            // Star rating
+                            Row {
+                                visible: heroBanner.featuredGame && heroBanner.featuredGame.rating > 0
+                                spacing: 6
 
                                 Text {
-                                    id: heroDiscText
-                                    anchors.centerIn: parent
-                                    text: heroBanner.featuredDeal
-                                          ? "-" + Math.round(parseFloat(heroBanner.featuredDeal.savings)) + "%"
-                                          : ""
-                                    font.pixelSize: 28
+                                    text: "\u2605"
+                                    font.pixelSize: 22
+                                    color: "#fbbf24"
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Text {
+                                    text: heroBanner.featuredGame ? Math.round(heroBanner.featuredGame.rating) : ""
+                                    font.pixelSize: 22
+                                    font.family: ThemeManager.getFont("ui")
                                     font.bold: true
-                                    color: "#0a0a0a"
+                                    color: "#ffffff"
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                             }
 
                             Text {
-                                visible: {
-                                    if (!heroBanner.featuredDeal) return false
-                                    var s = parseFloat(heroBanner.featuredDeal.savings)
-                                    return !isNaN(s) && s > 0
-                                }
-                                text: heroBanner.featuredDeal ? "$" + heroBanner.featuredDeal.normalPrice : ""
-                                font.pixelSize: 30
+                                visible: heroBanner.featuredGame && heroBanner.featuredGame.releaseDate
+                                text: heroBanner.featuredGame ? (heroBanner.featuredGame.releaseDate || "") : ""
+                                font.pixelSize: 22
                                 font.family: ThemeManager.getFont("ui")
-                                color: ThemeManager.getColor("textSecondary")
-                                font.strikeout: true
+                                color: Qt.rgba(1, 1, 1, 0.5)
                             }
+                        }
+
+                        // "View Game" button
+                        Rectangle {
+                            Layout.preferredWidth: viewBtnLabel.width + 48
+                            Layout.preferredHeight: 48
+                            Layout.topMargin: 6
+                            radius: 24
+                            color: heroViewArea.containsMouse
+                                   ? Qt.lighter(ThemeManager.getColor("primary"), 1.15)
+                                   : ThemeManager.getColor("primary")
+                            Behavior on color { ColorAnimation { duration: 150 } }
 
                             Text {
-                                text: {
-                                    if (!heroBanner.featuredDeal) return ""
-                                    if (heroBanner.featuredDeal.salePrice === "0.00") return "FREE"
-                                    return "$" + heroBanner.featuredDeal.salePrice
-                                }
-                                font.pixelSize: 44
+                                id: viewBtnLabel
+                                anchors.centerIn: parent
+                                text: "View Game"
+                                font.pixelSize: 22
                                 font.family: ThemeManager.getFont("ui")
                                 font.bold: true
-                                color: "#4ade80"
+                                color: "#ffffff"
+                            }
+
+                            MouseArea {
+                                id: heroViewArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (heroBanner.featuredGame)
+                                        detailPopup.open(heroBanner.featuredGame)
+                                }
                             }
                         }
                     }
@@ -1140,22 +924,20 @@ Item {
                     Row {
                         anchors.bottom: parent.bottom
                         anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottomMargin: 16
-                        spacing: 12
-                        visible: topDeals.length > 1
+                        anchors.bottomMargin: 20
+                        spacing: 10
+                        visible: featuredGames.length > 1
 
                         Repeater {
-                            model: Math.min(topDeals.length, 5)
+                            model: Math.min(featuredGames.length, 5)
 
                             Rectangle {
-                                width: heroBanner.featuredIndex === index ? 36 : 16
-                                height: 16
-                                radius: 8
+                                width: heroBanner.featuredIndex === index ? 32 : 10
+                                height: 10
+                                radius: 5
                                 color: heroBanner.featuredIndex === index
-                                       ? ThemeManager.getColor("primary")
-                                       : Qt.rgba(1, 1, 1, 0.3)
-
-                                Behavior on width { NumberAnimation { duration: 200 } }
+                                       ? "#ffffff" : Qt.rgba(1, 1, 1, 0.35)
+                                Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                                 Behavior on color { ColorAnimation { duration: 200 } }
 
                                 MouseArea {
@@ -1163,7 +945,7 @@ Item {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         heroBanner.featuredIndex = index
-                                        heroBanner.featuredDeal = topDeals[index]
+                                        heroBanner.featuredGame = featuredGames[index]
                                         heroRotateTimer.restart()
                                     }
                                 }
@@ -1171,187 +953,76 @@ Item {
                         }
                     }
 
-                    // Clickable overlay
+                    // Click overlay
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         z: -1
                         onClicked: {
-                            if (heroBanner.featuredDeal)
-                                detailPopup.open(heroBanner.featuredDeal)
+                            if (heroBanner.featuredGame) detailPopup.open(heroBanner.featuredGame)
                         }
                     }
                 }
 
                 // Hero loading placeholder
                 Rectangle {
-                    visible: !storePage.isSearching && loadingTopDeals
+                    visible: !storePage.isSearching && loadingFeatured && featuredGames.length === 0
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 420
-                    radius: 20
+                    Layout.preferredHeight: 480
+                    Layout.leftMargin: 40
+                    Layout.rightMargin: 40
+                    Layout.topMargin: 8
+                    radius: 24
                     color: ThemeManager.getColor("surface")
 
                     ColumnLayout {
                         anchors.centerIn: parent
                         spacing: 16
 
-                        // Spinning ring
                         Item {
                             Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth: 72
-                            Layout.preferredHeight: 72
+                            Layout.preferredWidth: 56; Layout.preferredHeight: 56
 
                             Rectangle {
-                                anchors.centerIn: parent
-                                width: 72
-                                height: 72
-                                radius: 36
-                                color: "transparent"
-                                border.width: 5
-                                border.color: Qt.rgba(1, 1, 1, 0.1)
+                                anchors.centerIn: parent; width: 56; height: 56; radius: 28
+                                color: "transparent"; border.width: 4; border.color: Qt.rgba(1, 1, 1, 0.06)
 
                                 Rectangle {
-                                    width: 72
-                                    height: 72
-                                    radius: 36
-                                    color: "transparent"
-                                    border.width: 5
-                                    border.color: "transparent"
-
-                                    Rectangle {
-                                        width: 18
-                                        height: 5
-                                        radius: 2
-                                        color: ThemeManager.getColor("primary")
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.top: parent.top
-                                    }
-                                    Rectangle {
-                                        width: 5
-                                        height: 18
-                                        radius: 2
-                                        color: ThemeManager.getColor("primary")
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        anchors.right: parent.right
-                                    }
-
-                                    RotationAnimation on rotation {
-                                        from: 0
-                                        to: 360
-                                        duration: 1200
-                                        loops: Animation.Infinite
-                                        running: loadingTopDeals
-                                    }
+                                    width: 56; height: 56; radius: 28
+                                    color: "transparent"; border.width: 4; border.color: "transparent"
+                                    Rectangle { width: 14; height: 4; radius: 2; color: ThemeManager.getColor("primary"); anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top }
+                                    RotationAnimation on rotation { from: 0; to: 360; duration: 1000; loops: Animation.Infinite; running: loadingFeatured }
                                 }
                             }
                         }
 
                         Text {
                             Layout.alignment: Qt.AlignHCenter
-                            text: "Loading deals..."
-                            font.pixelSize: 28
-                            font.family: ThemeManager.getFont("body")
+                            text: "Discovering games..."
+                            font.pixelSize: 24; font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                         }
                     }
                 }
 
-                // ─── Error State (deals failed to load) ───
+                // ─── New & Noteworthy (IGDB New Releases) ───
                 ColumnLayout {
-                    visible: !storePage.isSearching && !loadingTopDeals && topDeals.length === 0 && topDealsError !== ""
+                    id: newReleasesSection
+                    visible: !storePage.isSearching && (newReleases.length > 0 || loadingNewReleases)
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 320
+                    Layout.topMargin: 40
                     spacing: 16
 
-                    Item { Layout.fillHeight: true }
-
-                    Text {
-                        text: "Failed to load deals"
-                        font.pixelSize: 36
-                        font.family: ThemeManager.getFont("heading")
-                        font.bold: true
-                        color: ThemeManager.getColor("textPrimary")
-                        Layout.alignment: Qt.AlignHCenter
-                    }
-
-                    Text {
-                        text: topDealsError
-                        font.pixelSize: 24
-                        font.family: ThemeManager.getFont("body")
-                        color: ThemeManager.getColor("textSecondary")
-                        Layout.alignment: Qt.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        Layout.maximumWidth: 500
-                        horizontalAlignment: Text.AlignHCenter
-                    }
-
-                    Rectangle {
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: retryLabel.width + 48
-                        Layout.preferredHeight: 56
-                        radius: 12
-                        color: retryArea.containsMouse
-                               ? ThemeManager.getColor("primary")
-                               : ThemeManager.getColor("surface")
-                        border.color: ThemeManager.getColor("primary")
-                        border.width: 2
-
-                        Behavior on color { ColorAnimation { duration: 150 } }
-
-                        Text {
-                            id: retryLabel
-                            anchors.centerIn: parent
-                            text: "Retry"
-                            font.pixelSize: 24
-                            font.family: ThemeManager.getFont("ui")
-                            font.bold: true
-                            color: retryArea.containsMouse
-                                   ? "#ffffff"
-                                   : ThemeManager.getColor("textPrimary")
-                        }
-
-                        MouseArea {
-                            id: retryArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                storePage.topDealsError = ""
-                                storePage.recentDealsError = ""
-                                storePage.loadingTopDeals = true
-                                storePage.loadingRecentDeals = true
-                                storePage.currentPage = 0
-                                StoreApi.fetchDeals(storePage.currentSort, 0, 30)
-                                StoreApi.fetchRecentDeals(20)
-                            }
-                        }
-                    }
-
-                    Item { Layout.fillHeight: true }
-                }
-
-                // ─── Trending Deals Section (horizontal scroll) ───
-                ColumnLayout {
-                    id: trendingSection
-                    visible: !storePage.isSearching && recentDeals.length > 0
-                    Layout.fillWidth: true
-                    spacing: 16
-
+                    // Section header
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 12
-
-                        // Accent dot
-                        Rectangle {
-                            Layout.preferredWidth: 6
-                            Layout.preferredHeight: 28
-                            radius: 3
-                            color: ThemeManager.getColor("accent")
-                        }
+                        Layout.leftMargin: 40
+                        Layout.rightMargin: 40
+                        spacing: 0
 
                         Text {
-                            text: "Trending Now"
-                            font.pixelSize: 36
+                            text: "New & Noteworthy"
+                            font.pixelSize: 34
                             font.family: ThemeManager.getFont("heading")
                             font.bold: true
                             color: ThemeManager.getColor("textPrimary")
@@ -1360,69 +1031,207 @@ Item {
                         Item { Layout.fillWidth: true }
 
                         // Scroll arrows
-                        Rectangle {
-                            Layout.preferredWidth: 56
-                            Layout.preferredHeight: 56
-                            radius: 12
-                            color: trendLeftArea.containsMouse
-                                   ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
+                        Row {
+                            spacing: 8
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: "<"
-                                font.pixelSize: 28
-                                font.bold: true
-                                color: ThemeManager.getColor("textPrimary")
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: nrLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: nrLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newReleasesList.flick(600, 0) }
                             }
-
-                            MouseArea {
-                                id: trendLeftArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: trendingList.flick(800, 0)
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.preferredWidth: 56
-                            Layout.preferredHeight: 56
-                            radius: 12
-                            color: trendRightArea.containsMouse
-                                   ? ThemeManager.getColor("hover") : ThemeManager.getColor("surface")
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: ">"
-                                font.pixelSize: 28
-                                font.bold: true
-                                color: ThemeManager.getColor("textPrimary")
-                            }
-
-                            MouseArea {
-                                id: trendRightArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: trendingList.flick(-800, 0)
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: nrRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: nrRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: newReleasesList.flick(-600, 0) }
                             }
                         }
                     }
 
-                    ListView {
-                        id: trendingList
+                    // Loading placeholder
+                    Item {
+                        visible: loadingNewReleases && newReleases.length === 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 280
+                        Layout.preferredHeight: 340
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Loading new releases..."
+                            font.pixelSize: 22; font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                        }
+                    }
+
+                    ListView {
+                        id: newReleasesList
+                        visible: newReleases.length > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 340
+                        Layout.leftMargin: 40
                         orientation: ListView.Horizontal
-                        spacing: 16
+                        spacing: 20
                         clip: true
-                        model: recentDeals
+                        model: newReleases
                         boundsBehavior: Flickable.StopAtBounds
 
                         delegate: StoreGameCard {
-                            width: 420
-                            height: 260
+                            width: 200
+                            height: 340
                             gameTitle: modelData.title || ""
+                            coverImage: modelData.coverUrl || ""
+                            headerImage: modelData.headerImage || ""
+                            genres: modelData.genres || ""
+                            developer: modelData.developer || ""
+                            salePrice: modelData.salePrice || modelData.cheapestPrice || ""
+                            normalPrice: modelData.normalPrice || ""
+                            savings: modelData.savings || ""
+                            rating: modelData.rating || 0
+                            isKeyboardFocused: hasKeyboardFocus && navZone === "newReleases" && newReleaseFocusIndex === index
+                            onClicked: detailPopup.open(modelData)
+                        }
+                    }
+                }
+
+                // ─── Top Rated (IGDB Aggregated Rating) ───
+                ColumnLayout {
+                    id: topRatedSection
+                    visible: !storePage.isSearching && (topRated.length > 0 || loadingTopRated)
+                    Layout.fillWidth: true
+                    Layout.topMargin: 40
+                    spacing: 16
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 40
+                        Layout.rightMargin: 40
+                        spacing: 0
+
+                        Text {
+                            text: "Top Rated"
+                            font.pixelSize: 34
+                            font.family: ThemeManager.getFont("heading")
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Row {
+                            spacing: 8
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: trLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: trLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: topRatedList.flick(600, 0) }
+                            }
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: trRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: trRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: topRatedList.flick(-600, 0) }
+                            }
+                        }
+                    }
+
+                    Item {
+                        visible: loadingTopRated && topRated.length === 0
+                        Layout.fillWidth: true; Layout.preferredHeight: 340
+                        Text { anchors.centerIn: parent; text: "Loading top rated..."; font.pixelSize: 22; font.family: ThemeManager.getFont("body"); color: ThemeManager.getColor("textSecondary") }
+                    }
+
+                    ListView {
+                        id: topRatedList
+                        visible: topRated.length > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 340
+                        Layout.leftMargin: 40
+                        orientation: ListView.Horizontal
+                        spacing: 20
+                        clip: true
+                        model: topRated
+                        boundsBehavior: Flickable.StopAtBounds
+
+                        delegate: StoreGameCard {
+                            width: 200; height: 340
+                            gameTitle: modelData.title || ""
+                            coverImage: modelData.coverUrl || ""
+                            headerImage: modelData.headerImage || ""
+                            genres: modelData.genres || ""
+                            developer: modelData.developer || ""
+                            salePrice: modelData.salePrice || ""
+                            normalPrice: modelData.normalPrice || ""
+                            savings: modelData.savings || ""
+                            rating: modelData.rating || modelData.aggregatedRating || 0
+                            isKeyboardFocused: hasKeyboardFocus && navZone === "topRated" && topRatedFocusIndex === index
+                            onClicked: detailPopup.open(modelData)
+                        }
+                    }
+                }
+
+                // ─── Best Deals (CheapShark) ───
+                ColumnLayout {
+                    id: dealsSection
+                    visible: !storePage.isSearching && (topDeals.length > 0 || loadingTopDeals)
+                    Layout.fillWidth: true
+                    Layout.topMargin: 40
+                    spacing: 16
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 40
+                        Layout.rightMargin: 40
+                        spacing: 0
+
+                        Text {
+                            text: "Best Deals"
+                            font.pixelSize: 34
+                            font.family: ThemeManager.getFont("heading")
+                            font.bold: true
+                            color: ThemeManager.getColor("textPrimary")
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Row {
+                            spacing: 8
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: dlLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: dlLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: dealsList.flick(600, 0) }
+                            }
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: dlRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: dlRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: dealsList.flick(-600, 0) }
+                            }
+                        }
+                    }
+
+                    Item {
+                        visible: loadingTopDeals && topDeals.length === 0
+                        Layout.fillWidth: true; Layout.preferredHeight: 340
+                        Text { anchors.centerIn: parent; text: "Loading deals..."; font.pixelSize: 22; font.family: ThemeManager.getFont("body"); color: ThemeManager.getColor("textSecondary") }
+                    }
+
+                    ListView {
+                        id: dealsList
+                        visible: topDeals.length > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 340
+                        Layout.leftMargin: 40
+                        orientation: ListView.Horizontal
+                        spacing: 20
+                        clip: true
+                        model: topDeals
+                        boundsBehavior: Flickable.StopAtBounds
+
+                        delegate: StoreGameCard {
+                            width: 200; height: 340
+                            gameTitle: modelData.title || ""
+                            coverImage: modelData.capsuleImage || ""
                             headerImage: modelData.headerImage || modelData.thumb || ""
                             salePrice: modelData.salePrice || ""
                             normalPrice: modelData.normalPrice || ""
@@ -1431,229 +1240,181 @@ Item {
                             steamRatingText: modelData.steamRatingText || ""
                             steamAppID: modelData.steamAppID || ""
                             gameID: modelData.gameID || ""
-                            storeID: modelData.storeID || ""
-                            dealRating: modelData.dealRating || ""
-                            isKeyboardFocused: hasKeyboardFocus && navZone === "trending" && trendingFocusIndex === index
-
+                            isKeyboardFocused: hasKeyboardFocus && navZone === "deals" && dealsFocusIndex === index
                             onClicked: detailPopup.open(modelData)
                         }
                     }
                 }
 
-                // ─── Top Deals Grid ───
+                // ─── Trending Now (Recent Deals) ───
                 ColumnLayout {
-                    id: dealsGridSection
-                    visible: !storePage.isSearching && topDeals.length > 0
+                    id: trendingSection
+                    visible: !storePage.isSearching && recentDeals.length > 0
                     Layout.fillWidth: true
+                    Layout.topMargin: 40
                     spacing: 16
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 12
-
-                        Rectangle {
-                            Layout.preferredWidth: 6
-                            Layout.preferredHeight: 28
-                            radius: 3
-                            color: ThemeManager.getColor("primary")
-                        }
+                        Layout.leftMargin: 40
+                        Layout.rightMargin: 40
+                        spacing: 0
 
                         Text {
-                            text: {
-                                switch (currentSort) {
-                                    case "Deal Rating": return "Top Deals"
-                                    case "Price":       return "Lowest Prices"
-                                    case "Metacritic":  return "Highest Rated"
-                                    case "Reviews":     return "Most Reviewed"
-                                    case "recent":      return "Newest Deals"
-                                    default:            return "Deals"
-                                }
-                            }
-                            font.pixelSize: 36
+                            text: "Trending Now"
+                            font.pixelSize: 34
                             font.family: ThemeManager.getFont("heading")
                             font.bold: true
                             color: ThemeManager.getColor("textPrimary")
                         }
 
-                        Text {
-                            text: topDeals.length + " deals"
-                            font.pixelSize: 24
-                            font.family: ThemeManager.getFont("body")
-                            color: ThemeManager.getColor("textSecondary")
-                        }
-
                         Item { Layout.fillWidth: true }
+
+                        Row {
+                            spacing: 8
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: tLeftArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276E"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: tLeftArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: trendingList.flick(600, 0) }
+                            }
+                            Rectangle {
+                                width: 44; height: 44; radius: 22
+                                color: tRightArea.containsMouse ? ThemeManager.getColor("hover") : Qt.rgba(1, 1, 1, 0.04)
+                                Text { anchors.centerIn: parent; text: "\u276F"; font.pixelSize: 20; font.bold: true; color: ThemeManager.getColor("textSecondary") }
+                                MouseArea { id: tRightArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: trendingList.flick(-600, 0) }
+                            }
+                        }
                     }
 
-                    // Grid of deal cards
-                    Flow {
+                    ListView {
+                        id: trendingList
                         Layout.fillWidth: true
-                        spacing: 16
+                        Layout.preferredHeight: 340
+                        Layout.leftMargin: 40
+                        orientation: ListView.Horizontal
+                        spacing: 20
+                        clip: true
+                        model: recentDeals
+                        boundsBehavior: Flickable.StopAtBounds
 
-                        Repeater {
-                            // Skip first deal (shown in hero) for "Deal Rating" sort
-                            model: {
-                                if (currentSort === "Deal Rating" && topDeals.length > 1)
-                                    return topDeals.slice(1)
-                                return topDeals
-                            }
-
-                            StoreGameCard {
-                                width: Math.floor((mainFlickable.width - 48) / 3)
-                                height: width * 0.55
-                                gameTitle: modelData.title || ""
-                                headerImage: modelData.headerImage || modelData.thumb || ""
-                                salePrice: modelData.salePrice || ""
-                                normalPrice: modelData.normalPrice || ""
-                                savings: modelData.savings || ""
-                                metacriticScore: modelData.metacriticScore || ""
-                                steamRatingText: modelData.steamRatingText || ""
-                                steamAppID: modelData.steamAppID || ""
-                                gameID: modelData.gameID || ""
-                                storeID: modelData.storeID || ""
-                                dealRating: modelData.dealRating || ""
-                                isKeyboardFocused: hasKeyboardFocus && navZone === "dealsGrid" && dealGridFocusIndex === index
-
-                                onClicked: detailPopup.open(modelData)
-                            }
-                        }
-                    }
-
-                    // Load more button
-                    Rectangle {
-                        property bool isKbFocused: hasKeyboardFocus && navZone === "loadMore"
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: loadMoreLabel.width + 56
-                        Layout.preferredHeight: 56
-                        Layout.topMargin: 12
-                        radius: 12
-                        color: (loadMoreArea.containsMouse || isKbFocused)
-                               ? ThemeManager.getColor("primary")
-                               : ThemeManager.getColor("surface")
-                        border.color: (loadMoreArea.containsMouse || isKbFocused)
-                                      ? ThemeManager.getColor("focus")
-                                      : Qt.rgba(ThemeManager.getColor("primary").r,
-                                                ThemeManager.getColor("primary").g,
-                                                ThemeManager.getColor("primary").b, 0.4)
-                        border.width: (loadMoreArea.containsMouse || isKbFocused) ? 3 : 2
-
-                        Behavior on color { ColorAnimation { duration: 200 } }
-                        Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                        Text {
-                            id: loadMoreLabel
-                            anchors.centerIn: parent
-                            text: "Load More Deals"
-                            font.pixelSize: 24
-                            font.family: ThemeManager.getFont("ui")
-                            font.bold: true
-                            color: (loadMoreArea.containsMouse || parent.isKbFocused)
-                                   ? "#ffffff"
-                                   : ThemeManager.getColor("textPrimary")
-                        }
-
-                        MouseArea {
-                            id: loadMoreArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                currentPage++
-                                storePage.appendNextDeals = true
-                                storePage.loadingTopDeals = true
-                                StoreApi.fetchDeals(currentSort, currentPage, 30)
-                            }
+                        delegate: StoreGameCard {
+                            width: 200; height: 340
+                            gameTitle: modelData.title || ""
+                            coverImage: modelData.capsuleImage || ""
+                            headerImage: modelData.headerImage || modelData.thumb || ""
+                            salePrice: modelData.salePrice || ""
+                            normalPrice: modelData.normalPrice || ""
+                            savings: modelData.savings || ""
+                            metacriticScore: modelData.metacriticScore || ""
+                            steamAppID: modelData.steamAppID || ""
+                            isKeyboardFocused: hasKeyboardFocus && navZone === "trending" && trendingFocusIndex === index
+                            onClicked: detailPopup.open(modelData)
                         }
                     }
                 }
 
-                // ─── IGDB Status / Setup ───
+                // ─── Load More ───
+                Rectangle {
+                    id: loadMoreBtn
+                    property bool isKbFocused: hasKeyboardFocus && navZone === "loadMore"
+                    visible: !storePage.isSearching && topDeals.length > 0
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: loadMoreLabel.width + 56
+                    Layout.preferredHeight: 48
+                    Layout.topMargin: 32
+                    radius: 24
+                    color: (loadMoreArea.containsMouse || isKbFocused)
+                           ? ThemeManager.getColor("primary")
+                           : "transparent"
+                    border.color: (loadMoreArea.containsMouse || isKbFocused)
+                                  ? ThemeManager.getColor("primary")
+                                  : Qt.rgba(ThemeManager.getColor("primary").r,
+                                            ThemeManager.getColor("primary").g,
+                                            ThemeManager.getColor("primary").b, 0.4)
+                    border.width: 2
+                    Behavior on color { ColorAnimation { duration: 200 } }
 
-                // Active state: IGDB credentials are available (built-in or user-configured)
+                    Text {
+                        id: loadMoreLabel
+                        anchors.centerIn: parent
+                        text: "Load More Deals"
+                        font.pixelSize: 22
+                        font.family: ThemeManager.getFont("ui")
+                        font.bold: true
+                        color: (loadMoreArea.containsMouse || loadMoreBtn.isKbFocused)
+                               ? "#ffffff" : ThemeManager.getColor("textPrimary")
+                    }
+
+                    MouseArea {
+                        id: loadMoreArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            currentPage++
+                            storePage.appendNextDeals = true
+                            storePage.loadingTopDeals = true
+                            StoreApi.fetchDeals("Deal Rating", currentPage, 30)
+                        }
+                    }
+                }
+
+                // ─── IGDB Status ───
                 Rectangle {
                     visible: !storePage.isSearching && StoreApi.hasIGDBCredentials()
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 64
-                    radius: 12
-                    color: ThemeManager.getColor("surface")
+                    Layout.preferredHeight: 52
+                    Layout.leftMargin: 40
+                    Layout.rightMargin: 40
+                    Layout.topMargin: 32
+                    radius: 14
+                    color: Qt.rgba(ThemeManager.getColor("surface").r,
+                                   ThemeManager.getColor("surface").g,
+                                   ThemeManager.getColor("surface").b, 0.5)
 
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 20
                         anchors.rightMargin: 20
-                        spacing: 14
+                        spacing: 12
 
-                        Rectangle {
-                            Layout.preferredWidth: 12
-                            Layout.preferredHeight: 12
-                            radius: 6
-                            color: "#4ade80"
-                        }
+                        Rectangle { Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4; color: "#34c759" }
 
                         Text {
-                            text: "IGDB"
-                            font.pixelSize: 24
+                            text: "Powered by IGDB"
+                            font.pixelSize: 20
                             font.family: ThemeManager.getFont("ui")
                             font.bold: true
-                            color: ThemeManager.getColor("textPrimary")
-                        }
-
-                        Text {
-                            text: StoreApi.hasBuiltInIGDBCredentials()
-                                  ? "Active (built-in)" : "Active (custom)"
-                            font.pixelSize: 22
-                            font.family: ThemeManager.getFont("ui")
-                            color: ThemeManager.getColor("textSecondary")
-                        }
-
-                        Text {
-                            text: "IGDB-powered search, descriptions, screenshots & ratings enabled"
-                            font.pixelSize: 22
-                            font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                             opacity: 0.7
                         }
 
-                        Item { Layout.fillWidth: true }
-
-                        // Reset to built-in (only if user overrode and built-in exists)
-                        Rectangle {
-                            visible: StoreApi.hasBuiltInIGDBCredentials() && !StoreApi.hasBuiltInIGDBCredentials()
-                            Layout.preferredWidth: resetLabel.width + 28
-                            Layout.preferredHeight: 40
-                            radius: 8
-                            color: "transparent"
-                            border.color: Qt.rgba(1, 1, 1, 0.12)
-                            border.width: 1
-
-                            Text {
-                                id: resetLabel
-                                anchors.centerIn: parent
-                                text: "Reset to built-in"
-                                font.pixelSize: 22
-                                font.family: ThemeManager.getFont("ui")
-                                color: ThemeManager.getColor("textSecondary")
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: StoreApi.clearIGDBCredentials()
-                            }
+                        Text {
+                            text: "Game data, artwork, screenshots & ratings from IGDB.com"
+                            font.pixelSize: 20
+                            font.family: ThemeManager.getFont("body")
+                            color: ThemeManager.getColor("textSecondary")
+                            opacity: 0.5
                         }
+
+                        Item { Layout.fillWidth: true }
                     }
                 }
 
-                // Setup state: No credentials available, prompt user
+                // ─── IGDB Setup (no credentials) ───
                 Rectangle {
                     visible: !storePage.isSearching && !StoreApi.hasIGDBCredentials()
                     Layout.fillWidth: true
                     Layout.preferredHeight: igdbSetupCol.height + 40
-                    radius: 14
+                    Layout.leftMargin: 40
+                    Layout.rightMargin: 40
+                    Layout.topMargin: 32
+                    radius: 18
                     color: ThemeManager.getColor("surface")
                     border.color: Qt.rgba(ThemeManager.getColor("accent").r,
                                           ThemeManager.getColor("accent").g,
-                                          ThemeManager.getColor("accent").b, 0.3)
+                                          ThemeManager.getColor("accent").b, 0.2)
                     border.width: 1
 
                     ColumnLayout {
@@ -1661,14 +1422,14 @@ Item {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: 20
-                        spacing: 12
+                        anchors.margins: 24
+                        spacing: 14
 
                         RowLayout {
-                            spacing: 12
+                            spacing: 14
 
                             Text {
-                                text: "Enhance with IGDB"
+                                text: "Connect IGDB"
                                 font.pixelSize: 28
                                 font.family: ThemeManager.getFont("heading")
                                 font.bold: true
@@ -1676,16 +1437,16 @@ Item {
                             }
 
                             Rectangle {
-                                Layout.preferredWidth: optLabel.width + 16
-                                Layout.preferredHeight: 28
-                                radius: 6
+                                Layout.preferredWidth: optLabel.width + 18
+                                Layout.preferredHeight: 26
+                                radius: 13
                                 color: ThemeManager.getColor("accent")
 
                                 Text {
                                     id: optLabel
                                     anchors.centerIn: parent
                                     text: "OPTIONAL"
-                                    font.pixelSize: 18
+                                    font.pixelSize: 16
                                     font.bold: true
                                     color: "#0a0a0a"
                                     font.letterSpacing: 0.8
@@ -1694,125 +1455,104 @@ Item {
                         }
 
                         Text {
-                            text: "Add your Twitch developer credentials to enable IGDB-powered search " +
-                                  "with rich game descriptions, screenshots, and platform filtering. " +
+                            text: "Add your Twitch developer credentials to enable IGDB-powered browsing " +
+                                  "with game artwork, screenshots, ratings, and developer info. " +
                                   "Register at dev.twitch.tv"
-                            font.pixelSize: 24
+                            font.pixelSize: 22
                             font.family: ThemeManager.getFont("body")
                             color: ThemeManager.getColor("textSecondary")
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
-                        }
-
-                        Text {
-                            text: "Credentials are encrypted on disk and bound to this device."
-                            font.pixelSize: 22
-                            font.family: ThemeManager.getFont("ui")
-                            color: ThemeManager.getColor("textSecondary")
-                            opacity: 0.6
+                            lineHeight: 1.4
                         }
 
                         RowLayout {
                             spacing: 12
 
-                            // Client ID input
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 56
-                                radius: 10
+                                Layout.preferredHeight: 48
+                                radius: 24
                                 color: ThemeManager.getColor("hover")
-                                border.color: igdbClientIdInput.activeFocus
-                                              ? ThemeManager.getColor("focus") : "transparent"
-                                border.width: igdbClientIdInput.activeFocus ? 3 : 0
+                                border.color: igdbClientIdInput.activeFocus ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: igdbClientIdInput.activeFocus ? 2 : 0
 
                                 TextInput {
                                     id: igdbClientIdInput
                                     anchors.fill: parent
-                                    anchors.margins: 14
+                                    anchors.margins: 16
                                     verticalAlignment: TextInput.AlignVCenter
-                                    font.pixelSize: 24
+                                    font.pixelSize: 22
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textPrimary")
                                     clip: true
                                 }
-
                                 Text {
-                                    anchors.fill: parent
-                                    anchors.margins: 14
+                                    anchors.fill: parent; anchors.margins: 16
                                     verticalAlignment: Text.AlignVCenter
                                     visible: igdbClientIdInput.text === "" && !igdbClientIdInput.activeFocus
                                     text: "Client ID"
-                                    font.pixelSize: 24
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
+                                    font.pixelSize: 22; font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("textSecondary"); opacity: 0.5
                                 }
                             }
 
-                            // Client Secret input
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 56
-                                radius: 10
+                                Layout.preferredHeight: 48
+                                radius: 24
                                 color: ThemeManager.getColor("hover")
-                                border.color: igdbSecretInput.activeFocus
-                                              ? ThemeManager.getColor("focus") : "transparent"
-                                border.width: igdbSecretInput.activeFocus ? 3 : 0
+                                border.color: igdbSecretInput.activeFocus ? ThemeManager.getColor("focus") : "transparent"
+                                border.width: igdbSecretInput.activeFocus ? 2 : 0
 
                                 TextInput {
                                     id: igdbSecretInput
                                     anchors.fill: parent
-                                    anchors.margins: 14
+                                    anchors.margins: 16
                                     verticalAlignment: TextInput.AlignVCenter
-                                    font.pixelSize: 24
+                                    font.pixelSize: 22
                                     font.family: ThemeManager.getFont("body")
                                     color: ThemeManager.getColor("textPrimary")
                                     echoMode: TextInput.Password
                                     clip: true
                                 }
-
                                 Text {
-                                    anchors.fill: parent
-                                    anchors.margins: 14
+                                    anchors.fill: parent; anchors.margins: 16
                                     verticalAlignment: Text.AlignVCenter
                                     visible: igdbSecretInput.text === "" && !igdbSecretInput.activeFocus
                                     text: "Client Secret"
-                                    font.pixelSize: 24
-                                    font.family: ThemeManager.getFont("body")
-                                    color: ThemeManager.getColor("textSecondary")
+                                    font.pixelSize: 22; font.family: ThemeManager.getFont("body")
+                                    color: ThemeManager.getColor("textSecondary"); opacity: 0.5
                                 }
                             }
 
-                            // Save button
                             Rectangle {
-                                Layout.preferredWidth: saveBtnLabel.width + 40
-                                Layout.preferredHeight: 56
-                                radius: 10
+                                Layout.preferredWidth: saveBtnLabel.width + 44
+                                Layout.preferredHeight: 48
+                                radius: 24
                                 color: (igdbClientIdInput.text.length > 0 && igdbSecretInput.text.length > 0)
-                                       ? ThemeManager.getColor("accent")
-                                       : ThemeManager.getColor("surface")
+                                       ? ThemeManager.getColor("primary") : ThemeManager.getColor("surface")
 
                                 Text {
                                     id: saveBtnLabel
                                     anchors.centerIn: parent
                                     text: "Save"
-                                    font.pixelSize: 24
+                                    font.pixelSize: 22
                                     font.family: ThemeManager.getFont("ui")
                                     font.bold: true
                                     color: (igdbClientIdInput.text.length > 0 && igdbSecretInput.text.length > 0)
-                                           ? "#0a0a0a" : ThemeManager.getColor("textSecondary")
+                                           ? "#ffffff" : ThemeManager.getColor("textSecondary")
                                 }
 
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (igdbClientIdInput.text.length > 0 &&
-                                            igdbSecretInput.text.length > 0) {
-                                            StoreApi.setIGDBCredentials(
-                                                igdbClientIdInput.text.trim(),
-                                                igdbSecretInput.text.trim())
+                                        if (igdbClientIdInput.text.length > 0 && igdbSecretInput.text.length > 0) {
+                                            StoreApi.setIGDBCredentials(igdbClientIdInput.text.trim(), igdbSecretInput.text.trim())
                                             igdbClientIdInput.text = ""
                                             igdbSecretInput.text = ""
+                                            loadAllData()
                                         }
                                     }
                                 }
@@ -1822,7 +1562,7 @@ Item {
                 }
 
                 // Bottom spacer
-                Item { Layout.preferredHeight: 32 }
+                Item { Layout.preferredHeight: 48 }
             }
         }
     }
@@ -1833,7 +1573,6 @@ Item {
         anchors.fill: parent
 
         onOpenDealUrl: function(url, storeName) {
-            console.log("[store-browser] opening deal URL:", url, "store:", storeName)
             storePage.storeBrowserTitle = storeName || "Store"
             storeBrowserWebView.url = url
             storePage.storeBrowserOpen = true
@@ -1841,7 +1580,6 @@ Item {
     }
 
     // ─── Embedded Store Browser ───
-    // Navigation overlay script – identical to the one in SteamSetupWizard.
     readonly property string navOverlayScript: "
 (function() {
     if (window.__lunaNav) return;
@@ -1882,19 +1620,6 @@ Item {
                 && pr.width < 500 && pr.height < 120) {
                 r = pr;
             }
-        }
-        var tag = el.tagName.toLowerCase();
-        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select'
-            && tag !== 'img' && tag !== 'video') {
-            try {
-                var range = document.createRange();
-                range.selectNodeContents(el);
-                var tr = range.getBoundingClientRect();
-                if (tr.width > 0 && tr.height > 0
-                    && tr.width < r.width * 0.75) {
-                    r = tr;
-                }
-            } catch(e) {}
         }
         return r;
     }
@@ -2030,60 +1755,35 @@ Item {
     scanElements();
     if (elements.length > 0) updateHighlight();
     window.__lunaNav = nav;
-    console.log('__luna:nav-ready count:' + elements.length);
     return 'ready:' + elements.length;
 })();
 "
 
-    // Controller → Embedded Store Browser navigation
     Connections {
         target: ControllerManager
         enabled: storePage.storeBrowserOpen && !storeBrowserVK.visible
         function onActionTriggered(action) {
-            function logResult(result) {
-                console.log("[store-browser] nav result:", result)
-            }
+            function logResult(result) { console.log("[store-browser] nav:", result) }
             switch (action) {
-            case "navigate_up":
-                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult)
-                break
-            case "navigate_down":
-                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult)
-                break
-            case "navigate_left":
-                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult)
-                break
-            case "navigate_right":
-                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult)
-                break
+            case "navigate_up":    storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('up')", logResult); break
+            case "navigate_down":  storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('down')", logResult); break
+            case "navigate_left":  storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('left')", logResult); break
+            case "navigate_right": storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.move('right')", logResult); break
             case "confirm":
-                storeBrowserWebView.runJavaScript(
-                    "window.__lunaNav && window.__lunaNav.activate()",
-                    function(result) {
-                        console.log("[store-browser] activate result:", result)
-                        if (result && result.toString().indexOf("input:") === 0) {
-                            var parts = result.toString().split(":")
-                            var inputType = parts[1] || "text"
-                            var currentVal = parts.slice(2).join(":")
-                            var isPassword = (inputType === "password")
-                            storePage.storeBrowserInputActive = true
-                            storeBrowserVK.placeholderText = isPassword ? "Enter password..." : "Type here..."
-                            storeBrowserVK.open(currentVal, isPassword)
-                        }
-                    })
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.activate()", function(result) {
+                    if (result && result.toString().indexOf("input:") === 0) {
+                        var parts = result.toString().split(":")
+                        var inputType = parts[1] || "text"
+                        var currentVal = parts.slice(2).join(":")
+                        storePage.storeBrowserInputActive = true
+                        storeBrowserVK.placeholderText = (inputType === "password") ? "Enter password..." : "Type here..."
+                        storeBrowserVK.open(currentVal, inputType === "password")
+                    }
+                })
                 break
-            case "scroll_up":
-                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult)
-                break
-            case "scroll_down":
-                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult)
-                break
-            case "back":
-                console.log("[store-browser] closing browser")
-                storePage.storeBrowserOpen = false
-                break
-            default:
-                break
+            case "scroll_up":  storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('up')", logResult); break
+            case "scroll_down": storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.scrollPage('down')", logResult); break
+            case "back": storePage.storeBrowserOpen = false; break
             }
         }
     }
@@ -2095,7 +1795,6 @@ Item {
         z: 600
         color: ThemeManager.getColor("background")
 
-        // Header bar
         Rectangle {
             id: storeBrowserHeader
             anchors.top: parent.top
@@ -2114,7 +1813,6 @@ Item {
                 color: ThemeManager.getColor("textPrimary")
             }
 
-            // Back hint
             Text {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -2126,9 +1824,6 @@ Item {
             }
         }
 
-        // SharedBrowserProfile is a QWebEngineProfile created in C++
-        // (main.cpp) with storageName "luna-browser" passed to the
-        // constructor, guaranteeing disk persistence from the start.
         WebEngineView {
             id: storeBrowserWebView
             anchors.top: storeBrowserHeader.bottom
@@ -2140,17 +1835,8 @@ Item {
             settings.focusOnNavigationEnabled: false
 
             onLoadingChanged: function(loadRequest) {
-                console.log("[store-browser] loadingChanged:",
-                            loadRequest.status === WebEngineView.LoadSucceededStatus ? "SUCCESS" :
-                            loadRequest.status === WebEngineView.LoadFailedStatus ? "FAILED" :
-                            "status=" + loadRequest.status,
-                            "url:", loadRequest.url)
-                if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
+                if (loadRequest.status === WebEngineView.LoadSucceededStatus)
                     storeBrowserNavInjectTimer.restart()
-                }
-            }
-            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
-                console.log("[store-browser-js]", message)
             }
         }
 
@@ -2159,16 +1845,12 @@ Item {
             interval: 800
             repeat: false
             onTriggered: {
-                console.log("[store-browser] injecting navigation overlay")
-                storeBrowserWebView.runJavaScript(storePage.navOverlayScript,
-                    function(result) {
-                        console.log("[store-browser] nav inject result:", result)
-                    })
+                storeBrowserWebView.runJavaScript(storePage.navOverlayScript, function(result) {})
             }
         }
     }
 
-    // ─── Virtual Keyboard for Store Browser ───
+    // Virtual Keyboard for Store Browser
     VirtualKeyboard {
         id: storeBrowserVK
         anchors.fill: parent
@@ -2178,22 +1860,14 @@ Item {
             if (storePage.storeBrowserInputActive) {
                 storePage.storeBrowserInputActive = false
                 var escaped = typedText.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-                storeBrowserWebView.runJavaScript(
-                    "window.__lunaNav && window.__lunaNav.setText('" + escaped + "')",
-                    function(result) {
-                        console.log("[store-browser] setText result:", result)
-                    })
+                storeBrowserWebView.runJavaScript("window.__lunaNav && window.__lunaNav.setText('" + escaped + "')", function(r) {})
             }
             storePage.forceActiveFocus()
         }
-
-        onCancelled: {
-            storePage.storeBrowserInputActive = false
-            storePage.forceActiveFocus()
-        }
+        onCancelled: { storePage.storeBrowserInputActive = false; storePage.forceActiveFocus() }
     }
 
-    // ─── Virtual Keyboard for Search ───
+    // Virtual Keyboard for Search
     VirtualKeyboard {
         id: storeVirtualKeyboard
         anchors.fill: parent
@@ -2209,14 +1883,9 @@ Item {
             }
             storePage.forceActiveFocus()
         }
-
-        onCancelled: {
-            navZone = "searchBar"
-            storePage.forceActiveFocus()
-        }
+        onCancelled: { navZone = "searchBar"; storePage.forceActiveFocus() }
     }
 
-    // ─── Helper Functions ───
     function clearSearch() {
         searchInput.text = ""
         storePage.searchQuery = ""

@@ -283,17 +283,12 @@ void StoreApiManager::searchGames(const QString& title)
             req.setTransferTimeout(15000);
 
             // Search IGDB filtered to Windows (6) and Linux (3) platforms
-            // Include websites for purchase links (13=Steam, 15=Itch, 16=Epic, 17=GOG)
             QString body = QString(
                 "search \"%1\"; "
-                "fields name,summary,cover.url,screenshots.url,"
-                "genres.name,platforms.name,first_release_date,rating,"
-                "aggregated_rating,total_rating,"
-                "external_games.uid,external_games.category,"
-                "websites.url,websites.category; "
+                "fields %2; "
                 "where platforms = (6,3); "
                 "limit 30;"
-            ).arg(title);
+            ).arg(title, IGDB_BROWSE_FIELDS);
 
             QNetworkReply *reply = m_nam->post(req, body.toUtf8());
 
@@ -310,105 +305,14 @@ void StoreApiManager::searchGames(const QString& title)
 
                 QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
                 for (const auto& val : arr) {
-                    QJsonObject obj = val.toObject();
-                    QVariantMap game;
-                    game["igdbId"] = obj["id"].toInt();
-                    game["title"]  = obj["name"].toString();
-                    game["summary"] = obj["summary"].toString();
-                    game["rating"]  = obj["total_rating"].toDouble();
-                    game["aggregatedRating"] = obj["aggregated_rating"].toDouble();
+                    QVariantMap game = parseIGDBGame(val.toObject());
 
-                    // Release date
-                    if (obj.contains("first_release_date")) {
-                        qint64 ts = obj["first_release_date"].toInteger();
-                        game["releaseDate"] = QDateTime::fromSecsSinceEpoch(ts).toString("MMM d, yyyy");
-                    }
-
-                    // Cover URL
-                    if (obj.contains("cover")) {
-                        QString coverUrl = obj["cover"].toObject()["url"].toString();
-                        if (coverUrl.startsWith("//"))
-                            coverUrl = "https:" + coverUrl;
-                        coverUrl.replace("t_thumb", "t_cover_big");
-                        game["coverUrl"] = coverUrl;
-                        // Also use as header image fallback
-                        QString headerUrl = coverUrl;
-                        headerUrl.replace("t_cover_big", "t_screenshot_big");
-                        game["igdbHeaderUrl"] = headerUrl;
-                    }
-
-                    // Screenshots
-                    QVariantList screenshots;
-                    QJsonArray ssArr = obj["screenshots"].toArray();
-                    for (const auto& ss : ssArr) {
-                        QString ssUrl = ss.toObject()["url"].toString();
-                        if (ssUrl.startsWith("//"))
-                            ssUrl = "https:" + ssUrl;
-                        ssUrl.replace("t_thumb", "t_screenshot_big");
-                        screenshots.append(ssUrl);
-                    }
-                    game["screenshots"] = screenshots;
-
-                    // Genres
-                    QStringList genres;
-                    QJsonArray genreArr = obj["genres"].toArray();
-                    for (const auto& g : genreArr)
-                        genres.append(g.toObject()["name"].toString());
-                    game["genres"] = genres.join(", ");
-
-                    // Platforms
-                    QStringList platforms;
-                    QJsonArray platArr = obj["platforms"].toArray();
-                    for (const auto& p : platArr)
-                        platforms.append(p.toObject()["name"].toString());
-                    game["platforms"] = platforms.join(", ");
-
-                    // Extract Steam App ID from external_games (category 1 = Steam)
-                    QJsonArray extArr = obj["external_games"].toArray();
-                    for (const auto& ext : extArr) {
-                        QJsonObject extObj = ext.toObject();
-                        if (extObj["category"].toInt() == 1) {
-                            game["steamAppID"] = extObj["uid"].toString();
-                            break;
-                        }
-                    }
-
-                    // Extract purchase URLs from websites
-                    // Categories: 13=Steam, 15=Itch.io, 16=Epic Games, 17=GOG
-                    QVariantList purchaseUrls;
-                    QJsonArray webArr = obj["websites"].toArray();
-                    for (const auto& web : webArr) {
-                        QJsonObject webObj = web.toObject();
-                        int cat = webObj["category"].toInt();
-                        QString webUrl = webObj["url"].toString();
-                        if (webUrl.isEmpty()) continue;
-
-                        QString storeName;
-                        switch (cat) {
-                            case 13: storeName = "Steam"; break;
-                            case 15: storeName = "Itch.io"; break;
-                            case 16: storeName = "Epic Games"; break;
-                            case 17: storeName = "GOG"; break;
-                            default: continue;
-                        }
-                        QVariantMap link;
-                        link["storeName"] = storeName;
-                        link["url"] = webUrl;
-                        link["category"] = cat;
-                        purchaseUrls.append(link);
-                    }
-                    game["purchaseUrls"] = purchaseUrls;
-
-                    // Build image URLs from Steam App ID if available
+                    // Also set Steam image URLs if we have a Steam App ID
                     QString appId = game["steamAppID"].toString();
                     if (!appId.isEmpty() && appId != "0") {
-                        game["headerImage"] = getSteamHeaderUrl(appId);
-                        game["heroImage"]   = getSteamHeroUrl(appId);
+                        if (!game.contains("headerImage") || game["headerImage"].toString().isEmpty())
+                            game["headerImage"] = getSteamHeaderUrl(appId);
                         game["capsuleImage"] = getSteamCapsuleUrl(appId);
-                    } else if (game.contains("coverUrl")) {
-                        game["headerImage"] = game["igdbHeaderUrl"];
-                        game["heroImage"]   = game["igdbHeaderUrl"];
-                        game["capsuleImage"] = game["coverUrl"];
                     }
 
                     state->igdbResults.append(game);
@@ -1369,6 +1273,304 @@ void StoreApiManager::fetchStorePrices(const QString& steamAppId, const QVariant
     }
 }
 
+// ─── IGDB Shared Fields & Parsing ───
+
+static const QString IGDB_BROWSE_FIELDS =
+    "name,summary,cover.url,"
+    "screenshots.url,artworks.url,"
+    "genres.name,platforms.name,first_release_date,"
+    "total_rating,total_rating_count,"
+    "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
+    "external_games.uid,external_games.category,"
+    "websites.url,websites.category";
+
+static const QString IGDB_DETAIL_FIELDS =
+    "name,summary,storyline,cover.url,"
+    "screenshots.url,artworks.url,"
+    "genres.name,platforms.name,first_release_date,"
+    "rating,aggregated_rating,total_rating,total_rating_count,"
+    "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
+    "game_modes.name,themes.name,player_perspectives.name,"
+    "videos.video_id,"
+    "external_games.uid,external_games.category,"
+    "websites.url,websites.category";
+
+QVariantMap StoreApiManager::parseIGDBGame(const QJsonObject& obj)
+{
+    QVariantMap game;
+    game["igdbId"] = obj["id"].toInt();
+    game["title"]  = obj["name"].toString();
+    game["summary"] = obj["summary"].toString();
+    if (obj.contains("storyline"))
+        game["storyline"] = obj["storyline"].toString();
+    game["rating"]  = obj["total_rating"].toDouble();
+    if (obj.contains("aggregated_rating"))
+        game["aggregatedRating"] = obj["aggregated_rating"].toDouble();
+
+    // Release date
+    if (obj.contains("first_release_date")) {
+        qint64 ts = obj["first_release_date"].toInteger();
+        game["releaseDate"] = QDateTime::fromSecsSinceEpoch(ts).toString("MMM d, yyyy");
+        game["releaseDateTimestamp"] = ts;
+    }
+
+    // Cover URL
+    if (obj.contains("cover")) {
+        QString coverUrl = obj["cover"].toObject()["url"].toString();
+        if (coverUrl.startsWith("//"))
+            coverUrl = "https:" + coverUrl;
+        coverUrl.replace("t_thumb", "t_cover_big");
+        game["coverUrl"] = coverUrl;
+    }
+
+    // Screenshots
+    QVariantList screenshots;
+    QJsonArray ssArr = obj["screenshots"].toArray();
+    for (const auto& ss : ssArr) {
+        QString ssUrl = ss.toObject()["url"].toString();
+        if (ssUrl.startsWith("//"))
+            ssUrl = "https:" + ssUrl;
+        ssUrl.replace("t_thumb", "t_screenshot_big");
+        screenshots.append(ssUrl);
+    }
+    game["screenshots"] = screenshots;
+
+    // Artworks
+    QVariantList artworks;
+    QJsonArray awArr = obj["artworks"].toArray();
+    for (const auto& aw : awArr) {
+        QString awUrl = aw.toObject()["url"].toString();
+        if (awUrl.startsWith("//"))
+            awUrl = "https:" + awUrl;
+        awUrl.replace("t_thumb", "t_1080p");
+        artworks.append(awUrl);
+    }
+    game["artworks"] = artworks;
+
+    // Genres
+    QStringList genres;
+    QJsonArray genreArr = obj["genres"].toArray();
+    for (const auto& g : genreArr)
+        genres.append(g.toObject()["name"].toString());
+    game["genres"] = genres.join(", ");
+
+    // Platforms
+    QStringList platforms;
+    QJsonArray platArr = obj["platforms"].toArray();
+    for (const auto& p : platArr)
+        platforms.append(p.toObject()["name"].toString());
+    game["platforms"] = platforms.join(", ");
+
+    // Involved companies (developer / publisher)
+    QString developer, publisher;
+    QJsonArray icArr = obj["involved_companies"].toArray();
+    for (const auto& ic : icArr) {
+        QJsonObject icObj = ic.toObject();
+        QString companyName = icObj["company"].toObject()["name"].toString();
+        if (icObj["developer"].toBool() && developer.isEmpty())
+            developer = companyName;
+        if (icObj["publisher"].toBool() && publisher.isEmpty())
+            publisher = companyName;
+    }
+    game["developer"] = developer;
+    game["publisher"] = publisher;
+
+    // Game modes
+    QStringList gameModes;
+    QJsonArray gmArr = obj["game_modes"].toArray();
+    for (const auto& gm : gmArr)
+        gameModes.append(gm.toObject()["name"].toString());
+    game["gameModes"] = gameModes.join(", ");
+
+    // Themes
+    QStringList themes;
+    QJsonArray thArr = obj["themes"].toArray();
+    for (const auto& t : thArr)
+        themes.append(t.toObject()["name"].toString());
+    game["themes"] = themes.join(", ");
+
+    // Player perspectives
+    QStringList perspectives;
+    QJsonArray ppArr = obj["player_perspectives"].toArray();
+    for (const auto& pp : ppArr)
+        perspectives.append(pp.toObject()["name"].toString());
+    game["playerPerspectives"] = perspectives.join(", ");
+
+    // Videos (YouTube IDs)
+    QVariantList videos;
+    QJsonArray vidArr = obj["videos"].toArray();
+    for (const auto& v : vidArr)
+        videos.append(v.toObject()["video_id"].toString());
+    game["videos"] = videos;
+
+    // Extract Steam App ID from external_games
+    QJsonArray extArr = obj["external_games"].toArray();
+    for (const auto& ext : extArr) {
+        QJsonObject extObj = ext.toObject();
+        if (extObj["category"].toInt() == 1) {
+            game["steamAppID"] = extObj["uid"].toString();
+            break;
+        }
+    }
+
+    // Purchase URLs from websites
+    QVariantList purchaseUrls;
+    QJsonArray webArr = obj["websites"].toArray();
+    for (const auto& web : webArr) {
+        QJsonObject webObj = web.toObject();
+        int cat = webObj["category"].toInt();
+        QString webUrl = webObj["url"].toString();
+        if (webUrl.isEmpty()) continue;
+
+        QString storeName;
+        switch (cat) {
+            case 13: storeName = "Steam"; break;
+            case 15: storeName = "Itch.io"; break;
+            case 16: storeName = "Epic Games"; break;
+            case 17: storeName = "GOG"; break;
+            default: continue;
+        }
+        QVariantMap link;
+        link["storeName"] = storeName;
+        link["url"] = webUrl;
+        link["category"] = cat;
+        purchaseUrls.append(link);
+    }
+    game["purchaseUrls"] = purchaseUrls;
+
+    // Build hero image from best available source
+    if (!artworks.isEmpty()) {
+        game["heroImage"] = artworks[0].toString();
+    } else if (!screenshots.isEmpty()) {
+        QString heroUrl = screenshots[0].toString();
+        heroUrl.replace("t_screenshot_big", "t_1080p");
+        game["heroImage"] = heroUrl;
+    } else if (game.contains("coverUrl")) {
+        QString heroUrl = game["coverUrl"].toString();
+        heroUrl.replace("t_cover_big", "t_720p");
+        game["heroImage"] = heroUrl;
+    }
+
+    // Also set headerImage (for card backgrounds): prefer screenshot, then cover
+    QString appId = game["steamAppID"].toString();
+    if (!appId.isEmpty() && appId != "0") {
+        game["headerImage"] = getSteamHeaderUrl(appId);
+    } else if (!screenshots.isEmpty()) {
+        game["headerImage"] = screenshots[0].toString();
+    } else {
+        game["headerImage"] = game.value("heroImage").toString();
+    }
+
+    return game;
+}
+
+// ─── IGDB Browse (shared fetch logic) ───
+
+void StoreApiManager::fetchIGDBBrowse(const QString& query,
+                                       std::function<void(QVariantList)> onSuccess,
+                                       std::function<void(QString)> onError)
+{
+    if (m_igdbClientId.isEmpty() || m_igdbClientSecret.isEmpty()) {
+        onError("IGDB credentials not configured");
+        return;
+    }
+
+    refreshIGDBToken([this, query, onSuccess, onError]() {
+        QUrl url(IGDB_BASE + "/games");
+        QNetworkRequest req(url);
+        req.setHeader(QNetworkRequest::ContentTypeHeader, "text/plain");
+        req.setRawHeader("Client-ID", m_igdbClientId.toUtf8());
+        req.setRawHeader("Authorization", ("Bearer " + m_igdbAccessToken).toUtf8());
+        req.setTransferTimeout(15000);
+
+        QNetworkReply *reply = m_nam->post(req, query.toUtf8());
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply, onSuccess, onError]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                onError(reply->errorString());
+                return;
+            }
+
+            QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
+            QVariantList games;
+            for (const auto& val : arr) {
+                games.append(parseIGDBGame(val.toObject()));
+            }
+            onSuccess(games);
+        });
+    });
+}
+
+void StoreApiManager::fetchIGDBFeatured()
+{
+    QString query = QString(
+        "fields %1; "
+        "where total_rating != null & total_rating_count > 5 "
+        "& category = 0 & platforms = (6,3) & cover != null & screenshots != null; "
+        "sort total_rating desc; "
+        "limit 20;"
+    ).arg(IGDB_BROWSE_FIELDS);
+
+    fetchIGDBBrowse(query,
+        [this](QVariantList games) { emit igdbFeaturedReady(games); },
+        [this](const QString& err) { emit igdbFeaturedError(err); });
+}
+
+void StoreApiManager::fetchIGDBNewReleases()
+{
+    qint64 sixMonthsAgo = QDateTime::currentSecsSinceEpoch() - (180LL * 24 * 60 * 60);
+    qint64 now = QDateTime::currentSecsSinceEpoch();
+
+    QString query = QString(
+        "fields %1; "
+        "where first_release_date > %2 & first_release_date < %3 "
+        "& category = 0 & platforms = (6,3) & cover != null; "
+        "sort first_release_date desc; "
+        "limit 20;"
+    ).arg(IGDB_BROWSE_FIELDS)
+     .arg(sixMonthsAgo)
+     .arg(now);
+
+    fetchIGDBBrowse(query,
+        [this](QVariantList games) { emit igdbNewReleasesReady(games); },
+        [this](const QString& err) { emit igdbNewReleasesError(err); });
+}
+
+void StoreApiManager::fetchIGDBTopRated()
+{
+    QString query = QString(
+        "fields %1; "
+        "where aggregated_rating != null & aggregated_rating_count > 3 "
+        "& category = 0 & platforms = (6,3) & cover != null; "
+        "sort aggregated_rating desc; "
+        "limit 20;"
+    ).arg(IGDB_BROWSE_FIELDS);
+
+    fetchIGDBBrowse(query,
+        [this](QVariantList games) { emit igdbTopRatedReady(games); },
+        [this](const QString& err) { emit igdbTopRatedError(err); });
+}
+
+QString StoreApiManager::getIGDBImageUrl(const QString& imageUrl, const QString& size)
+{
+    if (imageUrl.isEmpty()) return QString();
+    QString result = imageUrl;
+    // Replace any known size token with the requested one
+    static const QStringList sizeTokens = {
+        "t_thumb", "t_cover_small", "t_cover_big", "t_cover_big_2x",
+        "t_screenshot_med", "t_screenshot_big", "t_screenshot_huge",
+        "t_720p", "t_1080p", "t_logo_med", "t_micro"
+    };
+    for (const QString& token : sizeTokens) {
+        if (result.contains(token)) {
+            result.replace(token, size);
+            break;
+        }
+    }
+    return result;
+}
+
 // ─── IGDB API ───
 
 void StoreApiManager::fetchIGDBGameInfo(const QString& gameName)
@@ -1378,7 +1580,6 @@ void StoreApiManager::fetchIGDBGameInfo(const QString& gameName)
         return;
     }
 
-    // Ensure we have a valid token, then make the request
     refreshIGDBToken([this, gameName]() {
         QUrl url(IGDB_BASE + "/games");
         QNetworkRequest req(url);
@@ -1387,14 +1588,11 @@ void StoreApiManager::fetchIGDBGameInfo(const QString& gameName)
         req.setRawHeader("Authorization", ("Bearer " + m_igdbAccessToken).toUtf8());
         req.setTransferTimeout(15000);
 
-        // IGDB uses POST with a body query
         QString body = QString(
             "search \"%1\"; "
-            "fields name,summary,storyline,cover.url,screenshots.url,"
-            "genres.name,platforms.name,first_release_date,rating,"
-            "aggregated_rating,total_rating; "
+            "fields %2; "
             "limit 1;"
-        ).arg(gameName);
+        ).arg(gameName, IGDB_DETAIL_FIELDS);
 
         QNetworkReply *reply = m_nam->post(req, body.toUtf8());
 
@@ -1411,57 +1609,9 @@ void StoreApiManager::fetchIGDBGameInfo(const QString& gameName)
                 return;
             }
 
-            QJsonObject obj = arr.first().toObject();
-            QVariantMap info;
-            info["name"]        = obj["name"].toString();
-            info["summary"]     = obj["summary"].toString();
-            info["storyline"]   = obj["storyline"].toString();
-            info["rating"]      = obj["rating"].toDouble();
-            info["totalRating"] = obj["total_rating"].toDouble();
-            info["aggregatedRating"] = obj["aggregated_rating"].toDouble();
-
-            // Release date
-            if (obj.contains("first_release_date")) {
-                qint64 ts = obj["first_release_date"].toInteger();
-                info["releaseDate"] = QDateTime::fromSecsSinceEpoch(ts).toString("MMM d, yyyy");
-            }
-
-            // Cover URL (IGDB returns //images.igdb.com/... — prepend https:)
-            if (obj.contains("cover")) {
-                QString coverUrl = obj["cover"].toObject()["url"].toString();
-                if (coverUrl.startsWith("//"))
-                    coverUrl = "https:" + coverUrl;
-                // Get higher resolution: replace t_thumb with t_cover_big
-                coverUrl.replace("t_thumb", "t_cover_big");
-                info["coverUrl"] = coverUrl;
-            }
-
-            // Screenshots
-            QVariantList screenshots;
-            QJsonArray ssArr = obj["screenshots"].toArray();
-            for (const auto& ss : ssArr) {
-                QString ssUrl = ss.toObject()["url"].toString();
-                if (ssUrl.startsWith("//"))
-                    ssUrl = "https:" + ssUrl;
-                ssUrl.replace("t_thumb", "t_screenshot_big");
-                screenshots.append(ssUrl);
-            }
-            info["screenshots"] = screenshots;
-
-            // Genres
-            QStringList genres;
-            QJsonArray genreArr = obj["genres"].toArray();
-            for (const auto& g : genreArr)
-                genres.append(g.toObject()["name"].toString());
-            info["genres"] = genres.join(", ");
-
-            // Platforms
-            QStringList platforms;
-            QJsonArray platArr = obj["platforms"].toArray();
-            for (const auto& p : platArr)
-                platforms.append(p.toObject()["name"].toString());
-            info["platforms"] = platforms.join(", ");
-
+            QVariantMap info = parseIGDBGame(arr.first().toObject());
+            // Map fields for backward compat with detail popup
+            info["totalRating"] = info["rating"];
             emit igdbGameInfoReady(info);
         });
     });

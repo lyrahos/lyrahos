@@ -2,16 +2,16 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Rectangle {
+Item {
     id: storeCard
-    width: 240
-    height: 160
-    radius: 16
-    color: ThemeManager.getColor("cardBackground")
-    clip: true
+    width: 200
+    height: 340
 
     property string gameTitle: ""
+    property string coverImage: ""
     property string headerImage: ""
+    property string genres: ""
+    property string developer: ""
     property string salePrice: ""
     property string normalPrice: ""
     property string savings: ""
@@ -21,187 +21,242 @@ Rectangle {
     property string gameID: ""
     property string storeID: ""
     property string dealRating: ""
-    property bool isKeyboardFocused: false  // Set by parent when selected via keyboard
+    property double rating: 0
+    property bool isKeyboardFocused: false
 
     signal clicked()
 
-    // Background image
-    Image {
-        id: bgImage
+    // Use cover image (IGDB portrait) as primary, fall back to header
+    readonly property string displayImage: coverImage !== "" ? coverImage : headerImage
+
+    // ─── Card Container ───
+    Rectangle {
+        id: cardBg
         anchors.fill: parent
-        source: headerImage
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        cache: true
-        opacity: status === Image.Ready ? 1.0 : 0.0
-        sourceSize.width: storeCard.width * 2
-        sourceSize.height: storeCard.height * 2
+        radius: 18
+        color: "transparent"
+        clip: true
 
-        Behavior on opacity { NumberAnimation { duration: 300 } }
-    }
+        // Scale on hover/focus
+        scale: (mouseArea.containsMouse || isKeyboardFocused) ? 1.03 : 1.0
+        Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
 
-    // Placeholder when image hasn't loaded or failed
-    Rectangle {
-        anchors.fill: parent
-        visible: bgImage.status !== Image.Ready
-        color: ThemeManager.getColor("surface")
+        // Cover art (portrait, fills card top area)
+        Rectangle {
+            id: coverContainer
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: parent.height - infoSection.height
+            radius: 18
+            clip: true
+            color: ThemeManager.getColor("surface")
 
-        Text {
-            anchors.centerIn: parent
-            text: gameTitle.length > 0 ? gameTitle.charAt(0).toUpperCase() : "?"
-            font.pixelSize: 56
-            font.bold: true
-            color: ThemeManager.getColor("primary")
-            opacity: 0.5
-        }
-    }
+            Image {
+                id: coverImg
+                anchors.fill: parent
+                source: displayImage
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                cache: true
+                sourceSize.width: storeCard.width * 2
+                sourceSize.height: coverContainer.height * 2
+                opacity: status === Image.Ready ? 1.0 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 400 } }
+            }
 
-    // Gradient overlay for text readability
-    Rectangle {
-        anchors.fill: parent
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "transparent" }
-            GradientStop { position: 0.3; color: "transparent" }
-            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.9) }
-        }
-    }
+            // Placeholder while loading
+            Item {
+                anchors.fill: parent
+                visible: coverImg.status !== Image.Ready
 
-    // Hover glow overlay
-    Rectangle {
-        anchors.fill: parent
-        color: Qt.rgba(ThemeManager.getColor("primary").r,
-                       ThemeManager.getColor("primary").g,
-                       ThemeManager.getColor("primary").b, 0.0)
-        opacity: (mouseArea.containsMouse || isKeyboardFocused) ? 0.15 : 0.0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
-    }
+                Rectangle {
+                    anchors.fill: parent
+                    color: ThemeManager.getColor("surface")
+                    radius: 18
+                }
 
-    // Discount badge (top-right)
-    Rectangle {
-        visible: {
-            var s = parseFloat(savings)
-            return !isNaN(s) && s > 0
-        }
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: 12
-        anchors.rightMargin: 12
-        width: discountText.width + 28
-        height: 44
-        radius: 10
-        color: "#4ade80"
+                Text {
+                    anchors.centerIn: parent
+                    text: gameTitle.length > 0 ? gameTitle.charAt(0).toUpperCase() : "?"
+                    font.pixelSize: 48
+                    font.family: ThemeManager.getFont("heading")
+                    font.bold: true
+                    color: ThemeManager.getColor("primary")
+                    opacity: 0.3
+                }
+            }
 
-        Text {
-            id: discountText
-            anchors.centerIn: parent
-            text: "-" + Math.round(parseFloat(savings)) + "%"
-            font.pixelSize: 24
-            font.family: ThemeManager.getFont("ui")
-            font.bold: true
-            color: "#0a0a0a"
-        }
-    }
+            // Subtle vignette at bottom for depth
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: parent.height * 0.35
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.25) }
+                }
+            }
 
-    // Metacritic badge (top-left)
-    Rectangle {
-        visible: metacriticScore !== "" && metacriticScore !== "0"
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.topMargin: 12
-        anchors.leftMargin: 12
-        width: 56
-        height: 56
-        radius: 10
-        color: {
-            var score = parseInt(metacriticScore)
-            if (score >= 75) return Qt.rgba(0.29, 0.85, 0.37, 0.9)
-            if (score >= 50) return Qt.rgba(1.0, 0.82, 0.24, 0.9)
-            return Qt.rgba(1.0, 0.42, 0.42, 0.9)
-        }
-
-        Text {
-            anchors.centerIn: parent
-            text: metacriticScore
-            font.pixelSize: 24
-            font.family: ThemeManager.getFont("ui")
-            font.bold: true
-            color: "#0a0a0a"
-        }
-    }
-
-    // Bottom content: title + price
-    ColumnLayout {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 16
-        spacing: 6
-
-        // Game title
-        Text {
-            Layout.fillWidth: true
-            text: gameTitle
-            font.pixelSize: 28
-            font.family: ThemeManager.getFont("body")
-            font.bold: true
-            color: "#ffffff"
-            elide: Text.ElideRight
-            maximumLineCount: 1
-        }
-
-        // Price row
-        RowLayout {
-            spacing: 12
-
-            // Strikethrough original price
-            Text {
+            // Discount badge (top-right, pill shape)
+            Rectangle {
                 visible: {
                     var s = parseFloat(savings)
                     return !isNaN(s) && s > 0
                 }
-                text: "$" + normalPrice
-                font.pixelSize: 24
-                font.family: ThemeManager.getFont("ui")
-                color: ThemeManager.getColor("textSecondary")
-                font.strikeout: true
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: 10
+                anchors.rightMargin: 10
+                width: discountText.width + 20
+                height: 32
+                radius: 16
+                color: "#34c759"
+
+                Text {
+                    id: discountText
+                    anchors.centerIn: parent
+                    text: "-" + Math.round(parseFloat(savings)) + "%"
+                    font.pixelSize: 18
+                    font.family: ThemeManager.getFont("ui")
+                    font.bold: true
+                    color: "#ffffff"
+                }
             }
 
-            // Sale price (scraped prices fill in automatically via re-emit)
+            // Rating badge (top-left, small pill)
+            Rectangle {
+                visible: rating > 0
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.topMargin: 10
+                anchors.leftMargin: 10
+                width: ratingRow.width + 16
+                height: 32
+                radius: 16
+                color: Qt.rgba(0, 0, 0, 0.65)
+
+                Row {
+                    id: ratingRow
+                    anchors.centerIn: parent
+                    spacing: 4
+
+                    Text {
+                        text: "\u2605"
+                        font.pixelSize: 16
+                        color: "#fbbf24"
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                        text: Math.round(rating)
+                        font.pixelSize: 16
+                        font.family: ThemeManager.getFont("ui")
+                        font.bold: true
+                        color: "#ffffff"
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
+
+            // Focus ring (drawn on top of cover)
+            Rectangle {
+                anchors.fill: parent
+                radius: 18
+                color: "transparent"
+                border.color: (mouseArea.containsMouse || isKeyboardFocused)
+                              ? ThemeManager.getColor("focus") : "transparent"
+                border.width: (mouseArea.containsMouse || isKeyboardFocused) ? 3 : 0
+                Behavior on border.color { ColorAnimation { duration: 200 } }
+            }
+        }
+
+        // ─── Info Section (below cover) ───
+        ColumnLayout {
+            id: infoSection
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+            anchors.topMargin: 10
+            spacing: 3
+            height: titleText.implicitHeight + subtitleText.implicitHeight + priceRow.height + 16
+
+            // Game title
             Text {
+                id: titleText
+                Layout.fillWidth: true
+                text: gameTitle
+                font.pixelSize: 20
+                font.family: ThemeManager.getFont("body")
+                font.weight: Font.DemiBold
+                color: ThemeManager.getColor("textPrimary")
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+
+            // Genre / Developer subtitle
+            Text {
+                id: subtitleText
+                Layout.fillWidth: true
                 text: {
-                    if (salePrice === "0.00") return "FREE"
-                    if (salePrice !== "") return "$" + salePrice
+                    if (genres !== "") return genres
+                    if (developer !== "") return developer
                     return ""
                 }
-                visible: salePrice !== ""
-                font.pixelSize: 28
-                font.family: ThemeManager.getFont("ui")
-                font.bold: true
-                color: {
-                    if (salePrice === "0.00") return "#4ade80"
-                    var s = parseFloat(savings)
-                    if (!isNaN(s) && s > 0) return "#4ade80"
-                    return ThemeManager.getColor("textPrimary")
-                }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            // Steam rating
-            Text {
-                visible: steamRatingText !== "" && steamRatingText !== "null"
-                text: steamRatingText
-                font.pixelSize: 22
+                visible: text !== ""
+                font.pixelSize: 16
                 font.family: ThemeManager.getFont("ui")
                 color: ThemeManager.getColor("textSecondary")
-                opacity: 0.8
+                elide: Text.ElideRight
+                maximumLineCount: 1
+            }
+
+            // Price row
+            RowLayout {
+                id: priceRow
+                Layout.fillWidth: true
+                spacing: 8
+
+                // Sale price
+                Text {
+                    text: {
+                        if (salePrice === "0.00") return "Free"
+                        if (salePrice !== "") return "$" + salePrice
+                        return ""
+                    }
+                    visible: salePrice !== ""
+                    font.pixelSize: 18
+                    font.family: ThemeManager.getFont("ui")
+                    font.bold: true
+                    color: {
+                        if (salePrice === "0.00") return "#34c759"
+                        var s = parseFloat(savings)
+                        if (!isNaN(s) && s > 0) return "#34c759"
+                        return ThemeManager.getColor("textPrimary")
+                    }
+                }
+
+                // Strikethrough original
+                Text {
+                    visible: {
+                        var s = parseFloat(savings)
+                        return !isNaN(s) && s > 0
+                    }
+                    text: "$" + normalPrice
+                    font.pixelSize: 16
+                    font.family: ThemeManager.getFont("ui")
+                    color: ThemeManager.getColor("textSecondary")
+                    font.strikeout: true
+                    opacity: 0.7
+                }
+
+                Item { Layout.fillWidth: true }
             }
         }
     }
-
-    // Hover/focus effect
-    scale: (mouseArea.containsMouse || isKeyboardFocused) ? 1.04 : 1.0
-    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
     MouseArea {
         id: mouseArea
@@ -209,17 +264,5 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: storeCard.clicked()
-    }
-
-    // Focus border - drawn last so it renders on top of image/gradient overlays
-    Rectangle {
-        anchors.fill: parent
-        radius: storeCard.radius
-        color: "transparent"
-        border.color: (mouseArea.containsMouse || isKeyboardFocused)
-                      ? ThemeManager.getColor("focus")
-                      : "transparent"
-        border.width: (mouseArea.containsMouse || isKeyboardFocused) ? 3 : 0
-        Behavior on border.color { ColorAnimation { duration: 150 } }
     }
 }
