@@ -351,6 +351,7 @@ Item {
         function onIgdbFeaturedReady(games) {
             storePage.featuredGames = games
             storePage.loadingFeatured = false
+            StoreApi.fetchBrowsePrices(games, "featured")
         }
         function onIgdbFeaturedError(error) {
             storePage.loadingFeatured = false
@@ -359,6 +360,7 @@ Item {
         function onIgdbNewReleasesReady(games) {
             storePage.newReleases = games
             storePage.loadingNewReleases = false
+            StoreApi.fetchBrowsePrices(games, "newReleases")
         }
         function onIgdbNewReleasesError(error) {
             storePage.loadingNewReleases = false
@@ -366,9 +368,16 @@ Item {
         function onIgdbTopRatedReady(games) {
             storePage.topRated = games
             storePage.loadingTopRated = false
+            StoreApi.fetchBrowsePrices(games, "topRated")
         }
         function onIgdbTopRatedError(error) {
             storePage.loadingTopRated = false
+        }
+
+        function onBrowsePricesReady(section, games) {
+            if (section === "featured") storePage.featuredGames = games
+            else if (section === "newReleases") storePage.newReleases = games
+            else if (section === "topRated") storePage.topRated = games
         }
         function onDealsReady(deals) {
             if (storePage.isSearching) return

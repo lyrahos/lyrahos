@@ -43,6 +43,9 @@ public:
                                        const QString& gameTitle = QString(),
                                        const QStringList& coveredStores = QStringList());
 
+    // ── Browse Price Enrichment (batch-enrich IGDB browse results with prices) ──
+    Q_INVOKABLE void fetchBrowsePrices(QVariantList games, const QString& section);
+
     // ── ProtonDB API ──
     Q_INVOKABLE void fetchProtonRating(const QString& steamAppId);
 
@@ -71,6 +74,9 @@ signals:
     // Store price scraping
     void storePricesReady(QVariantList deals);
     void storePricesError(const QString& error);
+
+    // Browse price enrichment
+    void browsePricesReady(const QString& section, QVariantList games);
 
     // IGDB
     void igdbGameInfoReady(QVariantMap gameInfo);
