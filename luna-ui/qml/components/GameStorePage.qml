@@ -933,12 +933,14 @@ Item {
                                 gameTitle: modelData.title || ""
                                 headerImage: modelData.headerImage || modelData.coverUrl || modelData.thumb || ""
                                 salePrice: modelData.salePrice || modelData.cheapestPrice || ""
-                                normalPrice: ""
+                                normalPrice: modelData.normalPrice || ""
                                 savings: modelData.savings || ""
-                                metacriticScore: ""
-                                steamRatingText: modelData.genres || ""
+                                metacriticScore: modelData.metacriticScore || ""
+                                steamRatingText: modelData.steamRatingText || ""
                                 steamAppID: modelData.steamAppID || ""
                                 gameID: modelData.cheapSharkGameID || ""
+                                storeID: modelData.storeID || ""
+                                dealRating: modelData.dealRating || ""
                                 isKeyboardFocused: hasKeyboardFocus && navZone === "searchResults" && searchResultFocusIndex === index
 
                                 onClicked: {

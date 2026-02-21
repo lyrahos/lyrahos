@@ -421,11 +421,13 @@ void StoreApiManager::searchGames(const QString& title)
     }
 
     // ── 2. CheapShark search (for price data + CheapShark game IDs) ──
+    // Use the /deals endpoint instead of /games to get rich metadata
+    // (metacritic, steam rating, savings, normal price, deal rating).
     {
-        QUrl url(CHEAPSHARK_BASE + "/games");
+        QUrl url(CHEAPSHARK_BASE + "/deals");
         QUrlQuery query;
         query.addQueryItem("title", title);
-        query.addQueryItem("limit", "60");
+        query.addQueryItem("pageSize", "120");
         url.setQuery(query);
 
         QNetworkRequest req(url);
@@ -444,15 +446,39 @@ void StoreApiManager::searchGames(const QString& title)
             }
 
             QJsonArray arr = QJsonDocument::fromJson(reply->readAll()).array();
+            QHash<QString, int> gameDedup;  // gameID → index in cheapSharkResults
             for (const auto& val : arr) {
                 QJsonObject obj = val.toObject();
-                QVariantMap game;
-                game["gameID"]     = obj["gameID"].toString();
-                game["title"]      = obj["external"].toString();
-                game["cheapest"]   = obj["cheapest"].toString();
-                game["steamAppID"] = obj["steamAppID"].toString();
-                game["thumb"]      = obj["thumb"].toString();
-                state->cheapSharkResults.append(game);
+                QString gameId = obj["gameID"].toString();
+
+                QVariantMap deal;
+                deal["gameID"]       = gameId;
+                deal["title"]        = obj["title"].toString();
+                deal["cheapest"]     = obj["salePrice"].toString();
+                deal["salePrice"]    = obj["salePrice"].toString();
+                deal["normalPrice"]  = obj["normalPrice"].toString();
+                deal["savings"]      = obj["savings"].toString();
+                deal["metacriticScore"]    = obj["metacriticScore"].toString();
+                deal["steamRatingText"]    = obj["steamRatingText"].toString();
+                deal["steamRatingPercent"] = obj["steamRatingPercent"].toString();
+                deal["dealRating"]   = obj["dealRating"].toString();
+                deal["storeID"]      = obj["storeID"].toString();
+                deal["steamAppID"]   = obj["steamAppID"].toString();
+                deal["thumb"]        = obj["thumb"].toString();
+
+                // Deduplicate: keep cheapest deal per game
+                if (gameDedup.contains(gameId)) {
+                    int existingIdx = gameDedup[gameId];
+                    QVariantMap existing = state->cheapSharkResults[existingIdx].toMap();
+                    double existingPrice = existing["salePrice"].toString().toDouble();
+                    double newPrice = obj["salePrice"].toString().toDouble();
+                    if (newPrice < existingPrice) {
+                        state->cheapSharkResults[existingIdx] = deal;
+                    }
+                } else {
+                    gameDedup[gameId] = state->cheapSharkResults.size();
+                    state->cheapSharkResults.append(deal);
+                }
             }
 
             state->completedCount++;
@@ -503,6 +529,23 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             if (!csPrice.isEmpty()) {
                 cheapestPrice = csPrice;
             }
+            // Copy rich deal metadata from CheapShark /deals response
+            auto copyIfPresent = [&](const QString& key) {
+                QString val = cs[key].toString();
+                if (!val.isEmpty() && val != "0" && val != "null")
+                    game[key] = val;
+            };
+            copyIfPresent("metacriticScore");
+            copyIfPresent("steamRatingText");
+            copyIfPresent("steamRatingPercent");
+            copyIfPresent("dealRating");
+            copyIfPresent("storeID");
+            QString csNormalPrice = cs["normalPrice"].toString();
+            if (!csNormalPrice.isEmpty())
+                game["normalPrice"] = csNormalPrice;
+            QString csSavings = cs["savings"].toString();
+            if (!csSavings.isEmpty())
+                savings = csSavings;
             // Propagate Steam App ID from CheapShark if we didn't have one
             if (steamId.isEmpty() || steamId == "0") {
                 QString csAppId = cs["steamAppID"].toString();
@@ -542,6 +585,13 @@ void StoreApiManager::mergeSearchResults(std::shared_ptr<SearchMergeState> state
             game["cheapSharkGameID"] = cs["gameID"];
             game["cheapestPrice"] = cs["cheapest"];
             game["salePrice"]     = cs["cheapest"];
+            game["normalPrice"]   = cs["normalPrice"];
+            game["savings"]       = cs["savings"];
+            game["metacriticScore"]    = cs["metacriticScore"];
+            game["steamRatingText"]    = cs["steamRatingText"];
+            game["steamRatingPercent"] = cs["steamRatingPercent"];
+            game["dealRating"]   = cs["dealRating"];
+            game["storeID"]      = cs["storeID"];
             game["hasPrice"]      = true;
 
             QString appId = cs["steamAppID"].toString();
