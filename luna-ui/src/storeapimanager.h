@@ -26,16 +26,25 @@ public:
 
     // ── IGDB API ──
     Q_INVOKABLE void fetchIGDBGameInfo(const QString& gameName);
+    Q_INVOKABLE void fetchIGDBFeatured();
+    Q_INVOKABLE void fetchIGDBNewReleases();
+    Q_INVOKABLE void fetchIGDBTopRated();
     Q_INVOKABLE void setIGDBCredentials(const QString& clientId, const QString& clientSecret);
     Q_INVOKABLE void clearIGDBCredentials();
     Q_INVOKABLE bool hasIGDBCredentials();
     Q_INVOKABLE bool hasBuiltInIGDBCredentials();
     Q_INVOKABLE QString getIGDBClientId();
 
+    // ── IGDB Image Helpers ──
+    Q_INVOKABLE QString getIGDBImageUrl(const QString& imageUrl, const QString& size);
+
     // ── Store Price Scraping (supplements CheapShark with missing stores) ──
     Q_INVOKABLE void fetchStorePrices(const QString& steamAppId, const QVariantList& purchaseUrls,
                                        const QString& gameTitle = QString(),
                                        const QStringList& coveredStores = QStringList());
+
+    // ── Browse Price Enrichment (batch-enrich IGDB browse results with prices) ──
+    Q_INVOKABLE void fetchBrowsePrices(QVariantList games, const QString& section);
 
     // ── ProtonDB API ──
     Q_INVOKABLE void fetchProtonRating(const QString& steamAppId);
@@ -66,10 +75,19 @@ signals:
     void storePricesReady(QVariantList deals);
     void storePricesError(const QString& error);
 
+    // Browse price enrichment
+    void browsePricesReady(const QString& section, QVariantList games);
+
     // IGDB
     void igdbGameInfoReady(QVariantMap gameInfo);
     void igdbGameInfoError(const QString& error);
     void igdbCredentialsSaved();
+    void igdbFeaturedReady(QVariantList games);
+    void igdbFeaturedError(const QString& error);
+    void igdbNewReleasesReady(QVariantList games);
+    void igdbNewReleasesError(const QString& error);
+    void igdbTopRatedReady(QVariantList games);
+    void igdbTopRatedError(const QString& error);
 
     // ProtonDB
     void protonRatingReady(const QString& steamAppId, QVariantMap rating);
@@ -103,6 +121,10 @@ private:
     void saveIGDBCredentials();
     void refreshIGDBToken(std::function<void()> onReady);
     QString igdbCredentialsPath() const;
+    QVariantMap parseIGDBGame(const QJsonObject& obj);
+    void fetchIGDBBrowse(const QString& query,
+                         std::function<void(QVariantList)> onSuccess,
+                         std::function<void(QString)> onError);
 };
 
 #endif
